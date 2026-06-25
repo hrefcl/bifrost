@@ -1,0 +1,17 @@
+# Dependencias y artefactos generados
+node_modules
+dist
+coverage
+*.tsbuildinfo
+pnpm-lock.yaml
+
+# Mockups/diseño (no es código del producto)
+maqueta
+
+# Docs largas (prosa, no código) y binarios
+docs
+*.docx
+*.png
+
+# Logs
+*.log

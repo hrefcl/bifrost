@@ -1,0 +1,35 @@
+name: E2E
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# El E2E full-stack es AUTÓNOMO: Playwright levanta la API real contra
+# mongodb-memory-server + Redis mock (ioredis-mock) + transportes IMAP/SMTP fake
+# (ver packages/api/e2e/server.ts) y el dev server de la web. No requiere servicios
+# externos de Mongo/Redis ni secretos: el server E2E provee sus propios valores.
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable corepack
+        run: corepack enable && corepack prepare pnpm@9.15.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm --filter @webmail6/web exec playwright install --with-deps
+
+      - name: Run E2E tests
+        run: pnpm test:e2e
