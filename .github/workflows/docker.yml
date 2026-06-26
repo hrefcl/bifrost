@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+  # En PR se CONSTRUYEN las imágenes (sin push, ver `push:` en cada step) para validar los
+  # Dockerfiles ANTES del merge — sin esto, una rotura del build sólo se detectaba al pushear
+  # a main. Cubre parte de TD-DOCKER-VERIFY (el `docker build` real corre en CI).
+  pull_request:
+    branches: [main]
 
 permissions:
   contents: read
