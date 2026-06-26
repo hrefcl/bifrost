@@ -110,6 +110,19 @@ por-fase no ven. **Corregido en esta ronda** (con boot real re-verificado):
   de `1:*` en carpetas grandes.
 - **TD-AUTH-MINOR** — Ventana de crash entre GETDEL y emisión en la rotación; TTL absoluto
   de refresh (hoy deslizante sin tope); `isNew` no atómico con el upsert (cosmético).
+- **TD-AUTH-CONCURRENT-REFRESH (MEDIUM, hallado en re-auditoría jun 2026)** — `rotateRefreshToken`
+  usa GETDEL atómico (una rotación gana) + reuse-detection (revoca la familia si el token ya fue
+  consumido). Pero dos refresh **concurrentes con la MISMA cookie** (multi-tab: los tabs comparten
+  cookie; el single-flight del front es por-instancia, no cruza tabs) hacen que el perdedor reciba
+  `null` y revoque la familia, pudiendo **nukear el token nuevo del ganador** según el interleaving
+  → ambos tabs deslogueados. Ventana angosta (refresh simultáneo real) y recuperable (la cookie ya
+  es la nueva). NO reproducible con `ioredis-mock` (ordena determinista); requiere repro contra
+  Redis real. Fix correcto (NO un parche): **reuse-leeway** estilo Auth0 — al rotar, marcar el
+  rawId predecesor con TTL corto (p.ej. `refreshgrace:{familyId}:{hash(rawId)}` 10–30s); en el
+  camino `null`, si existe la marca de grace → concurrencia benigna → devolver `null` SIN revocar
+  la familia; sin marca → reuse/robo real → revocar. Requiere review de seguridad B/C/D (no
+  rush-patch del backbone de auth). El test concurrente actual sólo asierta "uno gana", no la
+  supervivencia del ganador.
 - **TD-FE-MINOR** — Bloqueo/proxy de imágenes remotas en emails (privacidad/tracking) según
   preferencia de usuario; fallback de carpeta Trash localizado; tests de componente Vue.
 - **TD-STREAM** — Streaming real de adjuntos / `bodyParts` selectivos (hoy se carga el RFC822
