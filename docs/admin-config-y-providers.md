@@ -161,6 +161,11 @@ rate-limit del upload.
 - El admin es la **cuenta creada por el setup inicial** (no "el primer login"). Si no hay
   admin, bootstrap **transaccional** (lock) para evitar carrera de dos primeros logins.
 - `requireAdmin` **consulta la DB** (`user.role`), no confía sólo en el claim del JWT.
+- **Recuperación** (el "flag de reinstall" estilo WordPress, para no quedar afuera): un
+  comando del **lado del servidor** `pnpm --filter @webmail6/api admin:grant <email>` (o env
+  `ADMIN_BOOTSTRAP_EMAIL` leído sólo al boot) que marca/restaura un admin. **Nunca expuesto en
+  la web** → requiere acceso al servidor (filesystem/CLI), igual que resetear WP por wp-cli.
+  Así, perder el admin se arregla con acceso al server, no abre una puerta web.
 
 ### G. Feature-gate también en backend
 Ocultar la UI NO alcanza: los endpoints de provisión/admin devuelven **403** si el provider
