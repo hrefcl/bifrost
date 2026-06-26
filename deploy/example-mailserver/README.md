@@ -44,7 +44,7 @@ y solito:
 
 ✅ Al terminar te muestra un resumen con los próximos pasos.
 
-> ¿Preferís a mano? Está todo explicado en `MANUAL.md`. Pero el `setup.sh` lo hace por vos.
+> ¿Preferís a mano? Mirá el `docker-compose.yml` (está comentado). Pero el `setup.sh` lo hace por vos.
 
 ---
 
@@ -100,7 +100,7 @@ Abrí **`https://webmail.tudominio.com`** y logueá con:
 
 La **primera cuenta que crees es la de admin** → desde Settings vas a poder configurar el
 resto (incluido **dónde se guardan los adjuntos**: mismo servidor / S3 / …) con un wizard.
-Ver `../../docs/storage-y-admin-config.md`.
+Ver `../../docs/admin-config-y-providers.md`.
 
 ---
 
