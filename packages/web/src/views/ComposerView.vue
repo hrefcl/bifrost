@@ -49,8 +49,11 @@ function buildQuote(orig: Email, body: EmailBody): string {
   return `<br><br><blockquote style="margin:0 0 0 8px;border-left:2px solid #ccc;padding-left:8px;color:#666">On ${escapeHtml(when)}, ${escapeHtml(who)} wrote:<br>${inner}</blockquote>`;
 }
 
-/** Precarga el composer para responder/reenviar el email original (replyTo/forward query). */
-async function prefillFromOriginal(originalId: string, mode: 'reply' | 'forward'): Promise<void> {
+/** Precarga el composer para responder/responder-a-todos/reenviar el email original. */
+async function prefillFromOriginal(
+  originalId: string,
+  mode: 'reply' | 'replyAll' | 'forward'
+): Promise<void> {
   const [{ data: orig }, { data: origBody }] = await Promise.all([
     api.get<Email>(`/emails/${originalId}`),
     api.get<EmailBody>(`/emails/${originalId}/body`),
@@ -59,8 +62,21 @@ async function prefillFromOriginal(originalId: string, mode: 'reply' | 'forward'
   // en multi-cuenta, enviar desde la cuenta equivocada filtra el From y rompe el threading.
   form.value.accountId = orig.accountId;
   const subject = orig.subject;
-  if (mode === 'reply') {
+  if (mode === 'reply' || mode === 'replyAll') {
     form.value.to = orig.from.address;
+    if (mode === 'replyAll') {
+      // Reply-all: CC = (To + CC del original) menos uno mismo y menos el remitente (ya en To),
+      // deduplicado. Evita auto-CCarte y duplicar destinatarios.
+      const self = accounts.value.find((a) => a.id === orig.accountId)?.email.toLowerCase();
+      const fromAddr = orig.from.address.toLowerCase();
+      const extras = [...orig.to, ...(orig.cc ?? [])]
+        .map((a) => a.address)
+        .filter((addr) => {
+          const low = addr.toLowerCase();
+          return low !== self && low !== fromAddr;
+        });
+      form.value.cc = [...new Set(extras)].join(', ');
+    }
     form.value.subject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
     replyContext.value = {
       emailId: orig.id,
@@ -91,8 +107,10 @@ onMounted(async () => {
     } else {
       // Composer nuevo: si viene de Reply/Forward, precargar desde el email original.
       const replyTo = route.query.replyTo ? String(route.query.replyTo) : null;
+      const replyAll = route.query.replyAll ? String(route.query.replyAll) : null;
       const forward = route.query.forward ? String(route.query.forward) : null;
       if (replyTo) await prefillFromOriginal(replyTo, 'reply');
+      else if (replyAll) await prefillFromOriginal(replyAll, 'replyAll');
       else if (forward) await prefillFromOriginal(forward, 'forward');
     }
   } catch {

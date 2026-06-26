@@ -2,8 +2,11 @@
 import { ref, onMounted, computed } from 'vue';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { useCalendarStore } from '@/stores/calendar';
+import { api } from '@/lib/http';
+import type { Account } from '@webmail6/shared';
 
 const store = useCalendarStore();
+const accounts = ref<Account[]>([]);
 const showForm = ref(false);
 const form = ref({
   accountId: '',
@@ -31,8 +34,15 @@ const rangeEnd = computed(() => {
   return d.toISOString();
 });
 
-onMounted(() => {
+onMounted(async () => {
   void store.fetchEvents(rangeStart.value, rangeEnd.value);
+  try {
+    const { data } = await api.get<Account[]>('/accounts');
+    accounts.value = data;
+    if (data.length > 0) form.value.accountId = data[0].id;
+  } catch {
+    // sin cuentas → el select queda vacío; submit lo valida (required)
+  }
 });
 
 async function submit() {
@@ -79,13 +89,11 @@ async function submit() {
           required
           class="input"
         />
-        <input
-          v-model="form.accountId"
-          type="text"
-          placeholder="Account ID"
-          required
-          class="input"
-        />
+        <select v-model="form.accountId" required class="input">
+          <option v-for="account in accounts" :key="account.id" :value="account.id">
+            {{ account.email }}
+          </option>
+        </select>
         <div class="grid grid-cols-2 gap-2">
           <input v-model="form.startDate" type="datetime-local" required class="input" />
           <input v-model="form.endDate" type="datetime-local" required class="input" />
