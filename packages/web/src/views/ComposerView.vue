@@ -5,11 +5,13 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import RichTextEditor from '@/components/RichTextEditor.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
+import { useAuthStore } from '@/stores/auth';
 import type { Account, Draft, Email, EmailBody } from '@webmail6/shared';
 
 const router = useRouter();
 const route = useRoute();
 const draftStore = useDraftStore();
+const auth = useAuthStore();
 
 const draftId = ref<string | null>(route.params.draftId ? String(route.params.draftId) : null);
 const accounts = ref<Account[]>([]);
@@ -113,6 +115,13 @@ onMounted(async () => {
       if (replyTo) await prefillFromOriginal(replyTo, 'reply');
       else if (replyAll) await prefillFromOriginal(replyAll, 'replyAll');
       else if (forward) await prefillFromOriginal(forward, 'forward');
+
+      // Firma: si está activada, se antepone (queda sobre la cita en reply/forward, estilo
+      // Gmail). Con un párrafo vacío arriba para escribir. El backend la sirve ya saneada.
+      const prefs = auth.user?.preferences;
+      if (prefs?.autoIncludeSignature && prefs.defaultSignature) {
+        form.value.bodyHtml = `<p></p>${prefs.defaultSignature}${form.value.bodyHtml}`;
+      }
     }
   } catch {
     error.value = 'Failed to load composer';

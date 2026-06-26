@@ -12,7 +12,9 @@ const emit = defineEmits<{ 'update:modelValue': [value: string] }>();
 const editor = useEditor({
   content: props.modelValue,
   extensions: [
-    StarterKit,
+    // StarterKit ya incluye Link; lo desactivamos ahí y lo añadimos con NUESTRA config
+    // (sin abrir al click, rel/target seguros) para evitar el extension duplicado.
+    StarterKit.configure({ link: false }),
     Link.configure({
       openOnClick: false,
       autolink: true,

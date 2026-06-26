@@ -64,13 +64,19 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   // El filtro coincide con el índice único ({primaryEmail}); retry ante carrera.
   const before = await User.findOne({ primaryEmail: input.email }).lean();
   const isNew = !before;
+  // `??` sólo cubría undefined: el form de login manda displayName:'' → quedaba vacío y el
+  // usuario violaba `required` (rompía cualquier user.save() posterior). Normalizamos: vacío/
+  // sólo-espacios cae al prefijo del email.
+  const trimmedName = input.displayName?.trim();
+  const displayName =
+    trimmedName && trimmedName.length > 0 ? trimmedName : input.email.split('@')[0];
   const user = await withDupRetry(() =>
     User.findOneAndUpdate(
       { primaryEmail: input.email },
       {
         $setOnInsert: {
           primaryEmail: input.email,
-          displayName: input.displayName ?? input.email.split('@')[0],
+          displayName,
         },
         $set: { lastLoginAt: new Date() },
       },

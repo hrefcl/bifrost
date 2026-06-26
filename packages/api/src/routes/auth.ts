@@ -10,6 +10,7 @@ import {
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
+import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
 import { randomToken } from '../config/crypto.js';
 import type { LoginRequest, LoginResponse, RefreshResponse } from '@webmail6/shared';
 
@@ -29,6 +30,13 @@ const loginSchema = z.object({
 // request.body llega `undefined` en runtime (aunque el tipo Body de Fastify diga lo
 // contrario). Sin el default, z.object().parse(undefined) tiraría 400 y rompería
 // restore() en cada reload (sesión válida → /login). `refreshToken` sigue opcional.
+const preferencesPatchSchema = z
+  .object({
+    defaultSignature: z.string().max(50_000).optional(),
+    autoIncludeSignature: z.boolean().optional(),
+  })
+  .strict();
+
 const refreshBodySchema = z
   .object({
     // Normaliza "" → undefined: un refreshToken vacío del body debe caer a la cookie
@@ -138,6 +146,37 @@ export default function authRoutes(fastify: FastifyInstance) {
         isPrimary: a.isPrimary,
         status: a.status,
       })),
+    };
+  });
+
+  // Actualiza preferencias del usuario (hoy: firma HTML por defecto + auto-inclusión). El
+  // `defaultSignature` se SANEA (es HTML que se embebe en correos salientes) con la misma
+  // política que el body de los emails. `.strict()` rechaza claves inesperadas (anti mass-assign).
+  fastify.patch('/me/preferences', async (request, reply) => {
+    const body = preferencesPatchSchema.parse(request.body);
+    // Update DIRIGIDO con $set de los paths nestados: actualiza SÓLO las prefs provistas, sin
+    // re-validar el documento entero (un `user.save()` fallaría si OTRO campo, p.ej.
+    // displayName, quedó inválido al crearse el usuario — no es asunto de este endpoint).
+    const set: Record<string, unknown> = {};
+    if (body.defaultSignature !== undefined) {
+      set['preferences.defaultSignature'] = sanitizeEmailHtml(body.defaultSignature);
+    }
+    if (body.autoIncludeSignature !== undefined) {
+      set['preferences.autoIncludeSignature'] = body.autoIncludeSignature;
+    }
+    const user = await User.findByIdAndUpdate(
+      request.user.userId,
+      { $set: set },
+      { new: true, runValidators: true }
+    );
+    if (!user) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
+    }
+    return {
+      defaultSignature: user.preferences.defaultSignature,
+      autoIncludeSignature: user.preferences.autoIncludeSignature,
     };
   });
 }

@@ -187,3 +187,30 @@ test('interceptor de refresh: access token vencido se renueva solo (401 → refr
   // El retry transparente repuebla la cuenta en el composer → la app sigue usable.
   await expect(page.locator('select')).toContainText('e2e@example.com', { timeout: 15_000 });
 });
+
+test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', async ({ page }) => {
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  // Settings → escribir y guardar la firma (único editor de la página).
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Saludos, Equipo A E2E');
+  const patch = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/auth/me/preferences') &&
+      r.request().method() === 'PATCH' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Save signature' }).click();
+  await patch;
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  // Componer nuevo → la firma debe auto-incluirse en el editor del cuerpo.
+  await page.getByRole('link', { name: 'Inbox' }).click();
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await expect(page.locator('.ProseMirror')).toContainText('Saludos, Equipo A E2E', {
+    timeout: 15_000,
+  });
+});
