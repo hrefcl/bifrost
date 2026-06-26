@@ -50,6 +50,16 @@ const UserSchema = new Schema<IUser>(
   { timestamps: true }
 );
 
+// Auto-cura `displayName` (required) ante cualquier save(): si quedó vacío/sólo-espacios
+// (p.ej. usuarios legacy creados antes del fix del login), cae al prefijo del email. Sin
+// esto, un user.save() de un doc con displayName vacío rompería con ValidationError.
+UserSchema.pre('save', function (next) {
+  if (!this.displayName || this.displayName.trim().length === 0) {
+    this.displayName = this.primaryEmail.split('@')[0];
+  }
+  next();
+});
+
 // NOTA: se eliminó el índice TTL sobre createdAt (expireAfterSeconds: 63072000).
 // Borraba TODOS los usuarios a los 2 años de creados sin considerar actividad
 // (createdAt nunca cambia) → pérdida de datos catastrófica (H-DATA-TTL). La

@@ -53,6 +53,30 @@ describe('PATCH /api/auth/me/preferences (firma)', () => {
     await app.close();
   });
 
+  it('sanea vectores XSS en la firma: javascript:, handlers inline, iframe', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'xss@test.com' });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me/preferences',
+      headers: authHeaders(app, user._id.toString()),
+      payload: {
+        defaultSignature:
+          '<a href="javascript:alert(1)">x</a>' +
+          '<img src=x onerror="alert(1)">' +
+          '<iframe src="https://evil"></iframe>' +
+          '<b onclick="evil()">ok</b>',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const sig = (JSON.parse(res.body) as { defaultSignature: string }).defaultSignature;
+    expect(sig).not.toContain('javascript:');
+    expect(sig).not.toContain('onerror');
+    expect(sig).not.toContain('onclick');
+    expect(sig).not.toContain('<iframe');
+    await app.close();
+  });
+
   it('rechaza claves inesperadas (.strict → 400, anti mass-assignment)', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'sig2@test.com' });

@@ -18,6 +18,19 @@ const editor = useEditor({
     Link.configure({
       openOnClick: false,
       autolink: true,
+      // Defensa cliente (además del saneo del backend): sólo http/https/mailto. Bloquea
+      // que se inserte un href javascript:/data: desde el editor.
+      protocols: ['http', 'https', 'mailto'],
+      isAllowedUri: (url) => {
+        try {
+          // base relativa: un href relativo resuelve a https (permitido); javascript:/data:
+          // conservan su protocolo y se rechazan.
+          const proto = new URL(url, 'https://placeholder.local').protocol;
+          return proto === 'http:' || proto === 'https:' || proto === 'mailto:';
+        } catch {
+          return false;
+        }
+      },
       HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
     }),
   ],
