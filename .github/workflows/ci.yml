@@ -33,6 +33,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # `@webmail6/shared` resuelve sus tipos desde dist (types: ./dist/index.d.ts). En un
+      # checkout limpio dist no existe, así que typecheck/lint/test de api y web no pueden
+      # resolver el paquete. Se construye primero (en orden de dependencias lo necesitan todos).
+      - name: Build shared package
+        run: pnpm --filter @webmail6/shared build
+
       - name: Typecheck
         run: pnpm typecheck
 
