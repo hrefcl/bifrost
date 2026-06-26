@@ -1,0 +1,184 @@
+import { test, expect, type Page } from '@playwright/test';
+
+/**
+ * E2E full-stack (TD-E2E): login → sync → leer → enviar contra la API REAL
+ * (Mongo memory-server + Redis mock + IMAP/SMTP fake, ver packages/api/e2e/server.ts).
+ *
+ * El frontend no dispara sync por sí mismo todavía (deuda: auto-sync/SSE), así que el
+ * test cumple ese rol llamando los endpoints de sync con el access token del login —
+ * exactamente como lo haría el worker de fondo. Todo lo demás (render del inbox, lectura
+ * del body, composición y envío) recorre la UI real.
+ */
+
+const LOGIN = {
+  email: 'e2e@example.com',
+  password: 'irrelevant-the-imap-is-faked',
+};
+
+interface LoginResult {
+  accessToken: string;
+  accountId: string;
+}
+
+async function loginViaUi(page: Page): Promise<LoginResult> {
+  await page.goto('/login');
+  await page.fill('input[type="email"]', LOGIN.email);
+  await page.fill('input[type="password"]', LOGIN.password);
+
+  const loginResp = page.waitForResponse(
+    (r) => r.url().includes('/api/auth/login') && r.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: /sign in/i }).click();
+  const resp = await loginResp;
+  expect(resp.status(), 'login should succeed (fake IMAP accepts)').toBe(200);
+
+  const data = (await resp.json()) as {
+    accessToken: string;
+    accounts: { id: string }[];
+  };
+  expect(data.accounts.length).toBeGreaterThan(0);
+  return { accessToken: data.accessToken, accountId: data.accounts[0].id };
+}
+
+/** Dispara el sync (folders + cada folder) vía API, como haría el worker de fondo. */
+async function syncMailbox(page: Page, { accessToken, accountId }: LoginResult): Promise<void> {
+  const headers = { Authorization: `Bearer ${accessToken}` };
+
+  const folderSync = await page.request.post(`/api/accounts/${accountId}/sync/folders`, {
+    headers,
+  });
+  expect(folderSync.ok(), 'folder list sync').toBeTruthy();
+
+  const foldersResp = await page.request.get(`/api/accounts/${accountId}/folders`, { headers });
+  expect(foldersResp.ok(), 'list folders').toBeTruthy();
+  const folders = (await foldersResp.json()) as { id: string }[];
+  expect(folders.length).toBeGreaterThan(0);
+
+  for (const folder of folders) {
+    const headerSync = await page.request.post(
+      `/api/accounts/${accountId}/folders/${folder.id}/sync`,
+      { headers }
+    );
+    expect(headerSync.ok(), `header sync of folder ${folder.id}`).toBeTruthy();
+  }
+}
+
+test('full flow: login → sync → read email body → compose & send', async ({ page }) => {
+  // 1) LOGIN (UI real). Tras login el inbox monta y carga cuentas (aún sin folders).
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  // 2) SYNC (API real → fake IMAP → Mongo), como haría el worker de fondo.
+  await syncMailbox(page, session);
+
+  // Recarga: main.ts restaura la sesión por la cookie httpOnly de refresh y el inbox vuelve
+  // a leer de Mongo los folders/emails recién sincronizados.
+  await page.reload();
+
+  // 3) LEER: seleccionar INBOX (determinista) y abrir un email renderiza su body.
+  await page.getByText('INBOX', { exact: true }).click();
+  await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible({ timeout: 15_000 });
+
+  // Abrir el email dispara GET /body (parse+sanitize reales) y, como estaba no-leído,
+  // un PATCH /flags {seen:true} — verificamos ese efecto secundario sobre el backend.
+  // Filtra status 200: con el TTL corto del server E2E, una request podría dar 401→retry;
+  // queremos el resultado final exitoso, no el 401 intermedio que el interceptor rescata.
+  const flagsResp = page.waitForResponse(
+    (r) =>
+      /\/api\/emails\/.+\/flags$/.test(r.url()) &&
+      r.request().method() === 'PATCH' &&
+      r.status() === 200
+  );
+  await page.getByText('Welcome to Webmail 6.0').click();
+
+  // El detalle renderiza el HTML saneado por el backend (postal-mime + sanitize-html).
+  await expect(page.getByRole('heading', { name: 'Welcome to Webmail 6.0' })).toBeVisible();
+  await expect(page.getByText('Hello from the', { exact: false })).toBeVisible({ timeout: 15_000 });
+  expect((await flagsResp).status(), 'marcar como leído debe persistir (PATCH /flags)').toBe(200);
+
+  // 4) ENVIAR: componer un correo nuevo y enviarlo (API real → fake SMTP + APPEND a Sent).
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await page.fill('input[placeholder="To"]', 'destinatario@example.com');
+  await page.fill('input[placeholder="Subject"]', 'Hola desde el E2E');
+  await page.fill('textarea[placeholder="Write your message..."]', 'Cuerpo de prueba E2E.');
+
+  const sendResp = page.waitForResponse(
+    (r) =>
+      /\/api\/drafts\/.+\/send$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+  await sendResp; // 200 garantizado por el predicado (envío real → fake SMTP)
+
+  // El composer navega de vuelta al inbox sólo si el envío fue exitoso.
+  await expect(page).toHaveURL(/\/$|\/#?$/);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible();
+});
+
+test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', async ({ page }) => {
+  // Antes este flujo estaba ROTO: ComposerView ignoraba route.query.replyTo → clic en Reply
+  // abría un composer en blanco. Verifica la precarga + que el threading llega al backend.
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  await page.getByText('INBOX', { exact: true }).click();
+  await page.getByText('Welcome to Webmail 6.0').click();
+  await expect(page.getByRole('heading', { name: 'Welcome to Webmail 6.0' })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // Reply → composer precargado (esto era exactamente lo que no funcionaba).
+  await page.getByRole('button', { name: 'Reply' }).click();
+  await expect(page.locator('input[placeholder="To"]')).toHaveValue('alice@example.com');
+  await expect(page.locator('input[placeholder="Subject"]')).toHaveValue(
+    'Re: Welcome to Webmail 6.0'
+  );
+
+  // Al enviar, el front crea el draft (POST /drafts) con el threading. Interceptamos esa
+  // respuesta: prueba que replyToMessageId llegó al backend y se persistió (el backend pondrá
+  // In-Reply-To/References al enviar). Verificamos en el create porque /drafts no lista enviados.
+  const createResp = page.waitForResponse(
+    (r) => r.url().endsWith('/api/drafts') && r.request().method() === 'POST' && r.status() === 200
+  );
+  const sendResp = page.waitForResponse(
+    (r) =>
+      /\/api\/drafts\/.+\/send$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const created = (await (await createResp).json()) as { replyTo?: { messageId?: string } };
+  expect(created.replyTo?.messageId, 'el draft de respuesta debe enlazar al mensaje original').toBe(
+    '<seed-1@example.com>'
+  );
+  await sendResp;
+});
+
+test('interceptor de refresh: access token vencido se renueva solo (401 → refresh → retry)', async ({
+  page,
+}) => {
+  // El server E2E emite access tokens con TTL corto (JWT_ACCESS_TTL=3s). Tras vencer, la
+  // PRIMERA petición autenticada da 401 y el interceptor de axios debe renovar con la
+  // cookie (single-flight) y reintentar de forma transparente. Sin esto la sesión moriría
+  // a los 15min en producción pese a la cookie de refresh viva.
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  // Dejar vencer el access token (TTL=3s).
+  await page.waitForTimeout(3_500);
+
+  // Acción autenticada nueva (composer → GET /accounts). Su 1ª request vence con 401 y el
+  // interceptor la rescata con un POST /auth/refresh + retry.
+  const refreshAfterExpiry = page.waitForResponse(
+    (r) => r.url().includes('/api/auth/refresh') && r.request().method() === 'POST'
+  );
+  await page.getByRole('button', { name: 'Compose' }).click();
+  expect((await refreshAfterExpiry).status(), 'el interceptor debe renovar el token').toBe(200);
+
+  // El retry transparente repuebla la cuenta en el composer → la app sigue usable.
+  await expect(page.locator('select')).toContainText('e2e@example.com', { timeout: 15_000 });
+});

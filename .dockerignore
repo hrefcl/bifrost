@@ -1,0 +1,14 @@
+# Mantener el contexto de build chico y sin basura/secretos.
+**/node_modules
+**/dist
+**/coverage
+**/test-results
+**/playwright-report
+.git
+.github
+.env
+.env.*
+!.env.example
+*.log
+docs
+maqueta

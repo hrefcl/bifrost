@@ -1,0 +1,23 @@
+FROM node:22-alpine AS base
+RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
+WORKDIR /app
+
+# pnpm-lock.yaml es OBLIGATORIO para --frozen-lockfile (antes faltaba → fallaba el build).
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/api/package.json packages/api/
+RUN pnpm install --frozen-lockfile
+
+COPY tsconfig.base.json ./
+COPY packages/shared/src packages/shared/src
+COPY packages/shared/tsconfig.json packages/shared/
+COPY packages/api/src packages/api/src
+# tsconfig.build.json lo usa `tsc -p tsconfig.build.json` del build (antes faltaba).
+COPY packages/api/tsconfig.json packages/api/tsconfig.build.json packages/api/
+
+RUN pnpm --filter @webmail6/shared build
+RUN pnpm --filter @webmail6/api build
+
+WORKDIR /app/packages/api
+EXPOSE 3000
+CMD ["node", "dist/index.js"]
