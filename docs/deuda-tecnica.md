@@ -4,6 +4,21 @@ Registro vivo de los follow-ups detectados durante F3.0–F3.9 por el equipo A/B
 No bloquean el cierre de las fases (cada una quedó APPROVED por B/C/D), pero deben
 atenderse antes de declarar el producto **production-ready**.
 
+## Re-auditoría 3 rondas (jun 2026, post-PR #1 verde)
+
+Protocolo arquitecto / auditor hostil / operador-3AM. **Sin HIGH nuevos** — verificado
+(no confiado en los .md):
+- **Arquitecto:** CI+E2E en verde en GitHub (PR #1); no reinvención (sanitize-html, Fastify,
+  imapflow, ioredis-mock). Tooling de lint/format determinista y completo.
+- **Auditor hostil (XSS, máxima superficie = HTML de email atacante-controlado):** el sanitizador
+  (`lib/sanitizeHtml.ts`, sanitize-html) es correcto: allowedTags sin script/iframe/style/svg/object;
+  sin `on*` ni `style` attr; schemes sólo http/https/mailto (bloquea `javascript:`/`data:`); `a` con
+  `rel=noopener noreferrer target=_blank`. CSP `script-src 'self'` como 2ª capa. (Img remoto/tracking
+  = privacidad MED, ya es follow-up F4.)
+- **Operador 3AM:** build de producción sirve y hace SPA-fallback (nginx `try_files … /index.html`
+  + verificado con `vite preview` en `/settings`, sin refresh-404); `index.html` referencia assets
+  que existen en disco (code-splitting OK); nginx CSP/anti-spoof-XFF/bloqueo de `/api/metrics` OK.
+
 ## Re-auditoría adversarial (post-F3.9, jun 2026)
 
 Barrida hostil de sistema completo por B+D buscando lo transversal que las reviews
