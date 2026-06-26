@@ -138,6 +138,9 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
   await expect(page.locator('input[placeholder="Subject"]')).toHaveValue(
     'Re: Welcome to Webmail 6.0'
   );
+  // El cuerpo original citado debe RENDERIZARSE en el editor TipTap (path watch→setContent):
+  // sin esto un reply saldría con cuerpo vacío y nadie lo notaría.
+  await expect(page.locator('.ProseMirror')).toContainText('Hello from the');
 
   // Al enviar, el front crea el draft (POST /drafts) con el threading. Interceptamos esa
   // respuesta: prueba que replyToMessageId llegó al backend y se persistió (el backend pondrá
