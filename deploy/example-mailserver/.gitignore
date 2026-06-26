@@ -1,0 +1,7 @@
+# Secretos y artefactos de runtime — NUNCA commitear
+secrets/
+letsencrypt/
+maildata/
+mailstate/
+maillogs/
+config/
