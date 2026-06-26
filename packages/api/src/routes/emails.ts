@@ -28,6 +28,7 @@ function serializeEmail(email: IEmail): EmailDto {
     references: email.references,
     threadId: email.threadId,
     from: email.from,
+    replyTo: email.replyTo,
     to: email.to,
     cc: email.cc,
     bcc: email.bcc,

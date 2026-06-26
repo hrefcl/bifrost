@@ -10,6 +10,7 @@ export interface IEmail extends Document {
   references?: string[];
   threadId?: string;
   from: Address;
+  replyTo?: Address;
   to: Address[];
   cc?: Address[];
   bcc?: Address[];
@@ -58,6 +59,7 @@ const EmailSchema = new Schema<IEmail>(
     references: { type: [String] },
     threadId: { type: String, index: true },
     from: { type: AddressSchema, required: true },
+    replyTo: { type: AddressSchema },
     to: { type: [AddressSchema], required: true },
     cc: { type: [AddressSchema] },
     bcc: { type: [AddressSchema] },
