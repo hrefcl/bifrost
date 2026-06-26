@@ -1,8 +1,10 @@
 name: CI
 
 on:
+  # Push a CUALQUIER rama: valida también ramas feature/stacked cuyo PR no apunta a main
+  # (esos PRs no disparan el trigger pull_request:[main] → quedaban sin CI).
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
