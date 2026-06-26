@@ -2,13 +2,16 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichTextEditor from '@/components/RichTextEditor.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
+import { useAuthStore } from '@/stores/auth';
 import type { Account, Draft, Email, EmailBody } from '@webmail6/shared';
 
 const router = useRouter();
 const route = useRoute();
 const draftStore = useDraftStore();
+const auth = useAuthStore();
 
 const draftId = ref<string | null>(route.params.draftId ? String(route.params.draftId) : null);
 const accounts = ref<Account[]>([]);
@@ -63,19 +66,34 @@ async function prefillFromOriginal(
   form.value.accountId = orig.accountId;
   const subject = orig.subject;
   if (mode === 'reply' || mode === 'replyAll') {
-    form.value.to = orig.from.address;
+    const self = accounts.value.find((a) => a.id === orig.accountId)?.email.toLowerCase();
+    const fromAddr = orig.from.address.toLowerCase();
+    // Si respondés tu PROPIO correo enviado (from = vos), el "To" va a los destinatarios
+    // originales, no a vos mismo. Si no, va al remitente.
+    if (self && fromAddr === self) {
+      const origTo = orig.to.map((a) => a.address).filter((a) => a.toLowerCase() !== self);
+      form.value.to = (origTo.length > 0 ? origTo : [orig.from.address]).join(', ');
+    } else {
+      form.value.to = orig.from.address;
+    }
     if (mode === 'replyAll') {
-      // Reply-all: CC = (To + CC del original) menos uno mismo y menos el remitente (ya en To),
-      // deduplicado. Evita auto-CCarte y duplicar destinatarios.
-      const self = accounts.value.find((a) => a.id === orig.accountId)?.email.toLowerCase();
-      const fromAddr = orig.from.address.toLowerCase();
-      const extras = [...orig.to, ...(orig.cc ?? [])]
-        .map((a) => a.address)
-        .filter((addr) => {
-          const low = addr.toLowerCase();
-          return low !== self && low !== fromAddr;
-        });
-      form.value.cc = [...new Set(extras)].join(', ');
+      // CC = (To + CC originales) menos uno mismo, menos el remitente, menos quien ya está en
+      // To, dedup CASE-INSENSITIVE (Bob@x y bob@x son el mismo destinatario).
+      const inTo = new Set(
+        form.value.to
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      );
+      const seen = new Set<string>();
+      const cc: string[] = [];
+      for (const a of [...orig.to, ...(orig.cc ?? [])]) {
+        const low = a.address.toLowerCase();
+        if (low === self || low === fromAddr || inTo.has(low) || seen.has(low)) continue;
+        seen.add(low);
+        cc.push(a.address);
+      }
+      form.value.cc = cc.join(', ');
     }
     form.value.subject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
     replyContext.value = {
@@ -112,6 +130,13 @@ onMounted(async () => {
       if (replyTo) await prefillFromOriginal(replyTo, 'reply');
       else if (replyAll) await prefillFromOriginal(replyAll, 'replyAll');
       else if (forward) await prefillFromOriginal(forward, 'forward');
+
+      // Firma: si está activada, se antepone (queda sobre la cita en reply/forward, estilo
+      // Gmail). Con un párrafo vacío arriba para escribir. El backend la sirve ya saneada.
+      const prefs = auth.user?.preferences;
+      if (prefs?.autoIncludeSignature && prefs.defaultSignature) {
+        form.value.bodyHtml = `<p></p>${prefs.defaultSignature}${form.value.bodyHtml}`;
+      }
     }
   } catch {
     error.value = 'Failed to load composer';
@@ -190,12 +215,7 @@ async function send() {
         <input v-model="form.cc" type="text" placeholder="Cc" class="input" />
         <input v-model="form.bcc" type="text" placeholder="Bcc" class="input" />
         <input v-model="form.subject" type="text" placeholder="Subject" class="input" />
-        <textarea
-          v-model="form.bodyHtml"
-          rows="12"
-          placeholder="Write your message..."
-          class="input resize-none"
-        />
+        <RichTextEditor v-model="form.bodyHtml" />
       </div>
     </div>
   </AppLayout>

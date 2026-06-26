@@ -100,7 +100,9 @@ test('full flow: login → sync → read email body → compose & send', async (
   await page.getByRole('button', { name: 'Compose' }).click();
   await page.fill('input[placeholder="To"]', 'destinatario@example.com');
   await page.fill('input[placeholder="Subject"]', 'Hola desde el E2E');
-  await page.fill('textarea[placeholder="Write your message..."]', 'Cuerpo de prueba E2E.');
+  // Cuerpo: editor enriquecido TipTap (contenteditable .ProseMirror), no un textarea.
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Cuerpo de prueba E2E.');
 
   const sendResp = page.waitForResponse(
     (r) =>
@@ -136,6 +138,9 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
   await expect(page.locator('input[placeholder="Subject"]')).toHaveValue(
     'Re: Welcome to Webmail 6.0'
   );
+  // El cuerpo original citado debe RENDERIZARSE en el editor TipTap (path watch→setContent):
+  // sin esto un reply saldría con cuerpo vacío y nadie lo notaría.
+  await expect(page.locator('.ProseMirror')).toContainText('Hello from the');
 
   // Al enviar, el front crea el draft (POST /drafts) con el threading. Interceptamos esa
   // respuesta: prueba que replyToMessageId llegó al backend y se persistió (el backend pondrá
@@ -181,4 +186,55 @@ test('interceptor de refresh: access token vencido se renueva solo (401 → refr
 
   // El retry transparente repuebla la cuenta en el composer → la app sigue usable.
   await expect(page.locator('select')).toContainText('e2e@example.com', { timeout: 15_000 });
+});
+
+test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', async ({ page }) => {
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  // Settings → escribir y guardar la firma (único editor de la página).
+  await page.getByRole('link', { name: 'Settings' }).click();
+  await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Saludos, Equipo A E2E');
+  const patch = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/auth/me/preferences') &&
+      r.request().method() === 'PATCH' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Save signature' }).click();
+  await patch;
+  await expect(page.getByText('Saved')).toBeVisible();
+
+  // Componer nuevo → la firma debe auto-incluirse en el editor del cuerpo.
+  await page.getByRole('link', { name: 'Inbox' }).click();
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await expect(page.locator('.ProseMirror')).toContainText('Saludos, Equipo A E2E', {
+    timeout: 15_000,
+  });
+});
+
+test('reply-all: To=remitente, CC=resto sin uno-mismo ni el remitente (case-insensitive)', async ({
+  page,
+}) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  await page.getByText('INBOX', { exact: true }).click();
+  // 'Your June invoice' tiene to:[e2e, colleague] + cc:[boss] → el botón Reply all aparece.
+  await page.getByText('Your June invoice').click();
+  await expect(page.getByRole('heading', { name: 'Your June invoice' })).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole('button', { name: 'Reply all' }).click();
+
+  await expect(page.locator('input[placeholder="To"]')).toHaveValue('billing@example.com');
+  const cc = await page.locator('input[placeholder="Cc"]').inputValue();
+  expect(cc).toContain('colleague@example.com');
+  expect(cc).toContain('boss@example.com');
+  expect(cc).not.toContain('e2e@example.com'); // uno mismo, excluido
+  expect(cc).not.toContain('billing@example.com'); // remitente (ya en To), excluido
 });

@@ -89,7 +89,9 @@ const INBOX: FakeMessage[] = [
       subject: 'Your June invoice',
       messageId: '<seed-2@example.com>',
       from: [{ address: 'billing@example.com', name: 'Billing' }],
-      to: [{ address: 'e2e@example.com' }],
+      // Multi-destinatario para ejercitar reply-all (CC = to+cc menos self y remitente).
+      to: [{ address: 'e2e@example.com' }, { address: 'colleague@example.com', name: 'Colleague' }],
+      cc: [{ address: 'boss@example.com' }],
     },
     bodyStructure: {},
     source: rfc822({

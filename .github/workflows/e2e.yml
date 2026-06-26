@@ -1,8 +1,9 @@
 name: E2E
 
 on:
+  # Push a cualquier rama (ver nota en ci.yml: las ramas stacked no disparan pull_request:[main]).
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
     branches: [main]
 
