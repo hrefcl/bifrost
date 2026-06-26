@@ -51,9 +51,10 @@ const UserSchema = new Schema<IUser>(
 );
 
 // Auto-cura `displayName` (required) ante cualquier save(): si quedó vacío/sólo-espacios
-// (p.ej. usuarios legacy creados antes del fix del login), cae al prefijo del email. Sin
-// esto, un user.save() de un doc con displayName vacío rompería con ValidationError.
-UserSchema.pre('save', function (next) {
+// (p.ej. usuarios legacy creados antes del fix del login), cae al prefijo del email.
+// IMPORTANTE: va en `pre('validate')`, NO en `pre('save')` — la validación de `required`
+// corre ANTES de pre('save'), así que un hook ahí no llegaría a tiempo (rompería igual).
+UserSchema.pre('validate', function (next) {
   if (!this.displayName || this.displayName.trim().length === 0) {
     this.displayName = this.primaryEmail.split('@')[0];
   }

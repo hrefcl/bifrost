@@ -21,7 +21,12 @@ describe('crypto', () => {
 
   it('throws on tampered ciphertext', () => {
     const encrypted = encrypt('secret');
-    encrypted.ciphertext = encrypted.ciphertext.slice(0, -2) + 'ff';
+    // Tamper DETERMINISTA: flip de bits del primer byte → SIEMPRE cambia el ciphertext (el
+    // `slice(-2)+'ff'` previo era flaky: si los últimos 2 hex ya eran 'ff' no cambiaba nada
+    // y el auth tag GCM seguía validando → falso fallo intermitente).
+    const buf = Buffer.from(encrypted.ciphertext, 'hex');
+    buf[0] ^= 0xff;
+    encrypted.ciphertext = buf.toString('hex');
     expect(() => decrypt(encrypted)).toThrow();
   });
 

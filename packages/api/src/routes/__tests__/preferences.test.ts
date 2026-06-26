@@ -7,6 +7,7 @@ import {
   authHeaders,
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
+import { User } from '../../models/User.js';
 
 describe('PATCH /api/auth/me/preferences (firma)', () => {
   beforeAll(async () => {
@@ -88,6 +89,14 @@ describe('PATCH /api/auth/me/preferences (firma)', () => {
     });
     expect(res.statusCode).toBe(400);
     await app.close();
+  });
+
+  it('User.save() con displayName vacío se auto-cura (pre-validate, no rompe required)', async () => {
+    // Regresión del blocker que marcó B: el required corre antes de pre('save'); el hook
+    // debe estar en pre('validate') para que un displayName vacío no tire ValidationError.
+    const user = new User({ primaryEmail: 'nodisplay@test.com', displayName: '' });
+    await expect(user.save()).resolves.toBeDefined();
+    expect(user.displayName).toBe('nodisplay');
   });
 
   it('requiere auth (401 sin token)', async () => {
