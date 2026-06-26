@@ -133,6 +133,15 @@ por-fase no ven. **Corregido en esta ronda** (con boot real re-verificado):
   revocar) + repro multi-conexión + review B/C/D. NO amerita tocar el backbone de auth hoy.
 - **TD-FE-MINOR** — Bloqueo/proxy de imágenes remotas en emails (privacidad/tracking) según
   preferencia de usuario; fallback de carpeta Trash localizado; tests de componente Vue.
+- **TD-COMPOSE-MINOR (LOW, review B/D de features jun 2026)** — Lo accionable de la review se
+  corrigió (reply-all case-insensitive + correo-propio + E2E del CC; Link protocol-validation
+  cliente; test adversarial de firma javascript:/onerror/iframe; hook pre-save que auto-cura
+  displayName). Residual LOW: (1) reply-all no usa el header `Reply-To` del original para el To
+  (Reply-To no se guarda en el modelo Email — requiere persistirlo en sync); (2) `parseAddresses`
+  (drafts store) parte por `,` → rompe `'Nombre, Apellido' <a@b>` (pre-existente, sólo afecta
+  entrada manual con display-names); (3) al recargar un draft existente, `replyContext` queda
+  null en el front (el backend conserva `replyTo`, así que el envío threadea bien); (4) editor:
+  sin manejo de paste limpio ni placeholder (MVP).
 - **TD-STREAM** — Streaming real de adjuntos / `bodyParts` selectivos (hoy se carga el RFC822
   completo en RAM, mitigado con cap de 25MB).
 - **TD-COVERAGE-WEB** — `web` y `shared` no tienen gate de cobertura (sólo API: 75/65/80,
