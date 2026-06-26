@@ -99,11 +99,18 @@ por-fase no ven. **Corregido en esta ronda** (con boot real re-verificado):
   reply/forward roto); **SettingsView**: `v-model="settings.theme"` saltea `setTheme` → el tema
   no persiste en localStorage (LOW); **CalendarView**: "Account ID" es input de texto crudo
   (post-MVP).
-- **TD-DOCKER-VERIFY** — Los Dockerfiles y `docker.yml` fueron corregidos (faltaban
-  `pnpm-lock.yaml`, `tsconfig.build.json`; tags semver/`latest`), pero NO se pudo correr
-  `docker build`/`docker run` localmente (docker no disponible en el entorno de desarrollo).
-  Verificar build de ambas imágenes + `docker run` de la API sirviendo `/api/health`. CI
-  (`docker.yml`) lo ejecuta en cada push/tag.
+- **TD-DOCKER-VERIFY** — Parcialmente cerrado (jun 2026):
+  - ✅ **`docker build` de ambas imágenes VERIFICADO en CI** — `docker.yml` ahora corre en
+    `pull_request` (build sin push), así que el build se valida en cada PR (no sólo al pushear
+    a main). Primera corrida verde en el PR #1 (job "build", ~1m37s). Local sigue sin docker/
+    mongod (6 runtimes chequeados, ausentes), pero GitHub Actions sí tiene → el gate del build
+    está cubierto.
+  - ✅ **Boot del binario de prod verificado** — `node dist/index.js` (lo que corre el contenedor)
+    bootea y sirve HTTP (setup-mode + `REDIS_URL=mock`, validado localmente). Landmine de
+    `ioredis-mock` (devDep importado en prod) neutralizado con carga perezosa.
+  - ⏳ **Falta:** smoke automatizado de `docker run` de la API sirviendo `/api/health` dentro del
+    workflow (el build-push-action construye pero no ejecuta el contenedor). Follow-up: paso que
+    haga `load: true` + `docker run` + `curl /api/setup/status`.
 
 ## 🟠 Mejoras priorizadas
 
