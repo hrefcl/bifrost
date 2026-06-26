@@ -100,7 +100,9 @@ test('full flow: login → sync → read email body → compose & send', async (
   await page.getByRole('button', { name: 'Compose' }).click();
   await page.fill('input[placeholder="To"]', 'destinatario@example.com');
   await page.fill('input[placeholder="Subject"]', 'Hola desde el E2E');
-  await page.fill('textarea[placeholder="Write your message..."]', 'Cuerpo de prueba E2E.');
+  // Cuerpo: editor enriquecido TipTap (contenteditable .ProseMirror), no un textarea.
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Cuerpo de prueba E2E.');
 
   const sendResp = page.waitForResponse(
     (r) =>

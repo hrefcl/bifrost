@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import AppLayout from '@/layouts/AppLayout.vue';
+import RichTextEditor from '@/components/RichTextEditor.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
 import type { Account, Draft, Email, EmailBody } from '@webmail6/shared';
@@ -190,12 +191,7 @@ async function send() {
         <input v-model="form.cc" type="text" placeholder="Cc" class="input" />
         <input v-model="form.bcc" type="text" placeholder="Bcc" class="input" />
         <input v-model="form.subject" type="text" placeholder="Subject" class="input" />
-        <textarea
-          v-model="form.bodyHtml"
-          rows="12"
-          placeholder="Write your message..."
-          class="input resize-none"
-        />
+        <RichTextEditor v-model="form.bodyHtml" />
       </div>
     </div>
   </AppLayout>
