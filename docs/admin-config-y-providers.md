@@ -12,7 +12,9 @@
 Toda capacidad que dependa de infraestructura externa se modela como un **provider** con:
 - una **interfaz** estable (el resto del código no sabe qué backend hay detrás),
 - N **implementaciones** seleccionables (el admin elige una en el wizard),
-- **config** persistida en `SystemConfig` (Mongo) + secretos fuera de la DB,
+- **config** persistida en `SystemConfig` (Mongo); los secretos (S3 secret, clave SSH) se
+  guardan **cifrados** con la `ENCRYPTION_KEY` (AES-256-GCM, igual que las credenciales de
+  cuenta) — NO en texto plano, NO en logs, NO se devuelven en los GET (se muestran como `••••`),
 - **feature-gate**: la UI de la capacidad sólo aparece si el provider está configurado y `enabled`.
 
 Mismo patrón que ya usamos para IMAP/SMTP (`services/mail-transport.ts`). Dos providers nuevos:
@@ -28,9 +30,12 @@ Mismo patrón que ya usamos para IMAP/SMTP (`services/mail-transport.ts`). Dos p
 
 ## 2. Cuenta admin
 
-- La **primera** cuenta que se loguea/crea queda marcada `role: 'admin'` (campo nuevo en `User`).
-- Sólo un admin ve `/admin` y puede tocar `SystemConfig` (storage, provisión, política de
-  adjuntos, etc.). Endpoints admin protegidos por un guard `requireAdmin` (además de auth).
+- El admin es la **cuenta creada por el setup inicial** (campo `role: 'admin'` en `User`). NO
+  "el primer login" (sería tomable si la app queda expuesta). Si no existe admin, bootstrap
+  **transaccional** con lock (evita carrera de dos primeros logins). Ver §6.bis-F.
+- Sólo un admin ve `/admin` y puede tocar `SystemConfig`. Guard `requireAdmin` que **consulta
+  la DB** (`user.role`), no confía sólo en el claim del JWT. Feature-gate también en backend
+  (403 si el provider está disabled) — ocultar la UI no alcanza.
 - Resto de usuarios: experiencia normal de webmail (sin `/admin`).
 
 ## 3. Interfaces (backend)
@@ -101,6 +106,71 @@ Paso 3 · Política de adjuntos
 
 Cada PR es chico, testeable y reviewado. Empezamos por PR-A/PR-B (base + storage local), que
 ya deja adjuntos a tiro sin requerir S3 ni provisión.
+
+## 6.bis Hardening del diseño (resuelve la review B/D — sin esto NO se codea)
+
+Tras la review de diseño (B: HIGH abiertos; D 7.5/10), estas condiciones son **sine qua non**
+antes de PR-A. Con ellas el diseño queda construible (B/D → 8.5/10).
+
+### A. Scope = single-org (NO multi-tenant) — decisión explícita
+Bifrost es **self-hosted, una organización por deployment**. `SystemConfig` es **global**
+(no por-cuenta/dominio). **Multi-org/SaaS es NON-GOAL** declarado. Si algún día se necesita,
+es otro proyecto (config por-tenant). Documentado para que nadie asuma lo contrario.
+
+### B. `SystemConfig` (schema por provider)
+```ts
+{ key: 'storage' | 'provisioning',
+  providerType: 'local' | 's3' | 'none' | 'docker-mailserver' | 'api',
+  enabled: boolean,
+  config: { ... },                 // no-secreto (endpoint, bucket, region, host…)
+  secrets: { ...encrypted },       // cifrado AES-GCM; nunca se devuelve en GET
+  updatedAt: Date, updatedBy: userId }   // ← auditoría mínima inline
+```
+
+### C. Adjuntos: ownership + provider-bound (cierra 2 HIGH)
+Modelo `AttachmentBlob` (no basta `{ storageKey }`):
+```ts
+{ id, storageKey,                 // key random server-side (no input del cliente)
+  providerType: 'local' | 's3',   // ← PROVIDER-BOUND: se lee SIEMPRE de su provider,
+                                    //   aunque el activo haya cambiado (no rompe viejos)
+  userId, accountId,              // ← OWNERSHIP server-side: enviar/bajar valida dueño
+  draftId?, refCount,             // lifecycle: forward incrementa refCount del mismo blob
+  filename, mimeType, size, createdAt }
+```
+- El **provider activo se usa SÓLO para escrituras nuevas**. Lecturas van al `providerType`
+  del blob → cambiar de `local`→`s3` **no rompe** adjuntos existentes.
+- **Migración** de blobs viejos = script opt-in aparte (NO automático al cambiar provider).
+- **Ownership**: `POST /attachments` ata el blob a `userId`; send/download validan dueño (403
+  ajeno) — mismo patrón que `requireOwnedEmail`.
+
+### D. LocalStorage hardening
+`storageKey` random server-side (uuid), guardado bajo un root fijo, **sin path traversal**
+(jamás concatenar input del cliente al path), writes atómicos (tmp+rename), cap de tamaño,
+rate-limit del upload.
+
+### E. MailboxProvisioning (SSH) — contrato de seguridad (cierra el HIGH de inyección)
+- **NUNCA** interpolar email/password en un string de shell. Ejecutar con **args como array**
+  (sin shell) o un **forced command** del lado del mailserver (la SSH key del provisioner
+  sólo puede correr `setup email …`, nada más — `command="..."` en authorized_keys).
+- **Validación estricta** ANTES de ejecutar: email `^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$`,
+  password sin metacaracteres de shell (o pasado por stdin, nunca en argv).
+- **Host key verification** (no `StrictHostKeyChecking=no`).
+- Cuenta SSH de **mínimos privilegios**, clave dedicada, cifrada en `SystemConfig`.
+
+### F. Admin bootstrap seguro (cierra el HIGH de "primer login")
+- El admin es la **cuenta creada por el setup inicial** (no "el primer login"). Si no hay
+  admin, bootstrap **transaccional** (lock) para evitar carrera de dos primeros logins.
+- `requireAdmin` **consulta la DB** (`user.role`), no confía sólo en el claim del JWT.
+
+### G. Feature-gate también en backend
+Ocultar la UI NO alcanza: los endpoints de provisión/admin devuelven **403** si el provider
+está `disabled`/`none`. La UI es conveniencia; el backend es la barrera real.
+
+### H. Auditoría + lifecycle
+- **Audit log** (colección): cambios de `SystemConfig`, pruebas de conexión, alta/baja de
+  buzones, rotación de secretos → `{ who, action, target, at }`.
+- **Cleanup**: sweep de blobs huérfanos (draft borrado, envío fallido, `refCount==0`); cuota
+  total por usuario (además del cap por-archivo); límite de archivos por correo.
 
 ## 7. Por qué así (decisiones de arquitectura)
 
