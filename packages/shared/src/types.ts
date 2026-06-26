@@ -44,6 +44,7 @@ export interface User {
   id: string;
   primaryEmail: string;
   displayName: string;
+  role: 'user' | 'admin';
   avatarUrl?: string;
   preferences: UserPreferences;
   createdAt: string;

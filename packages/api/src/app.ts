@@ -15,6 +15,7 @@ import emailRoutes from './routes/emails.js';
 import draftRoutes from './routes/drafts.js';
 import contactRoutes from './routes/contacts.js';
 import calendarRoutes from './routes/calendar.js';
+import adminRoutes from './routes/admin.js';
 import metricsRoutes from './routes/metrics.js';
 import { counters, observeDuration } from './lib/metrics.js';
 
@@ -109,6 +110,7 @@ export async function buildApp() {
   await app.register(draftRoutes, { prefix: '/api/drafts' });
   await app.register(contactRoutes, { prefix: '/api/contacts' });
   await app.register(calendarRoutes, { prefix: '/api/calendar' });
+  await app.register(adminRoutes, { prefix: '/api/admin' });
 
   return app;
 }
