@@ -23,11 +23,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   function setTheme(value: 'light' | 'dark' | 'system') {
     theme.value = value;
-    localStorage.setItem('theme', value);
-    applyTheme();
   }
 
-  watch(theme, applyTheme);
+  // Persistir + aplicar en el watch (fuente única): así CUALQUIER cambio de `theme` —
+  // incluido el `v-model` del select en SettingsView — se guarda en localStorage. Antes
+  // sólo `setTheme` persistía, y el select usa v-model directo → el tema no sobrevivía al reload.
+  watch(theme, (value) => {
+    localStorage.setItem('theme', value);
+    applyTheme();
+  });
 
   return { theme, applyTheme, setTheme };
 });

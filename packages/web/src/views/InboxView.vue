@@ -126,6 +126,11 @@ function reply() {
   void router.push({ name: 'compose-new', query: { replyTo: selected.value.id } });
 }
 
+function replyAll() {
+  if (!selected.value) return;
+  void router.push({ name: 'compose-new', query: { replyAll: selected.value.id } });
+}
+
 function forward() {
   if (!selected.value) return;
   void router.push({ name: 'compose-new', query: { forward: selected.value.id } });
@@ -202,6 +207,13 @@ onMounted(loadAccountsAndFolders);
                   @click="reply"
                 >
                   Reply
+                </button>
+                <button
+                  v-if="(selected.to?.length ?? 0) + (selected.cc?.length ?? 0) > 1"
+                  class="rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+                  @click="replyAll"
+                >
+                  Reply all
                 </button>
                 <button
                   class="rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
