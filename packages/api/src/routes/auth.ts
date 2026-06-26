@@ -26,10 +26,6 @@ const loginSchema = z.object({
   smtpSecure: z.boolean(),
 });
 
-// `.default({})`: el cliente web refresca SÓLO con la cookie httpOnly (sin body) →
-// request.body llega `undefined` en runtime (aunque el tipo Body de Fastify diga lo
-// contrario). Sin el default, z.object().parse(undefined) tiraría 400 y rompería
-// restore() en cada reload (sesión válida → /login). `refreshToken` sigue opcional.
 const preferencesPatchSchema = z
   .object({
     defaultSignature: z.string().max(50_000).optional(),
@@ -37,6 +33,10 @@ const preferencesPatchSchema = z
   })
   .strict();
 
+// `.default({})`: el cliente web refresca SÓLO con la cookie httpOnly (sin body) →
+// request.body llega `undefined` en runtime (aunque el tipo Body de Fastify diga lo
+// contrario). Sin el default, z.object().parse(undefined) tiraría 400 y rompería
+// restore() en cada reload (sesión válida → /login). `refreshToken` sigue opcional.
 const refreshBodySchema = z
   .object({
     // Normaliza "" → undefined: un refreshToken vacío del body debe caer a la cookie
