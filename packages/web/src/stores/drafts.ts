@@ -72,10 +72,39 @@ export const useDraftStore = defineStore('drafts', () => {
   return { drafts, fetchDrafts, createDraft, updateDraft, sendDraft, deleteDraft };
 });
 
-function parseAddresses(raw: string): { address: string; name?: string }[] {
-  return raw
-    .split(',')
-    .map((s) => s.trim())
+/**
+ * Parte una lista de destinatarios respetando `"comillas"` y `<ángulos>`: así un display
+ * name con comas (`"Pérez, Ana" <a@b>`) no se rompe, y `Nombre <email>` extrae name+address.
+ * Exportada para test unitario.
+ */
+export function parseAddresses(raw: string): { address: string; name?: string }[] {
+  const tokens: string[] = [];
+  let cur = '';
+  let inAngle = false;
+  let inQuote = false;
+  for (const ch of raw) {
+    if (ch === '"') inQuote = !inQuote;
+    else if (ch === '<') inAngle = true;
+    else if (ch === '>') inAngle = false;
+    if (ch === ',' && !inAngle && !inQuote) {
+      tokens.push(cur);
+      cur = '';
+    } else {
+      cur += ch;
+    }
+  }
+  tokens.push(cur);
+  return tokens
+    .map((t) => t.trim())
     .filter(Boolean)
-    .map((s) => ({ address: s }));
+    .map((t) => {
+      const m = /^(.*?)\s*<([^>]+)>\s*$/.exec(t);
+      if (!m) return { address: t };
+      const name = m[1]
+        .trim()
+        .replace(/^"(.*)"$/, '$1')
+        .trim();
+      const address = m[2].trim();
+      return name ? { address, name } : { address };
+    });
 }
