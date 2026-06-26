@@ -15,6 +15,12 @@ Protocolo arquitecto / auditor hostil / operador-3AM. **Sin HIGH nuevos** — ve
   sin `on*` ni `style` attr; schemes sólo http/https/mailto (bloquea `javascript:`/`data:`); `a` con
   `rel=noopener noreferrer target=_blank`. CSP `script-src 'self'` como 2ª capa. (Img remoto/tracking
   = privacidad MED, ya es follow-up F4.)
+- **Auditor hostil (descarga de adjuntos — IDOR + XSS-inline + header-injection):** seguro en los 3
+  vectores. `GET /emails/:id/attachments/:idx` valida `idx` (rechaza NaN/negativo→400), exige
+  `requireOwnedEmail` (sin IDOR multi-tenant; `.at(idx)` undefined→404 sin crash), y sirve con
+  `X-Content-Type-Options: nosniff` + `Content-Disposition: attachment` (nunca inline → un adjunto
+  text/html o svg no ejecuta en el origen) con filename ASCII-saneado (strip CRLF/comillas →
+  anti header-injection) + `filename*=UTF-8''` (RFC 5987). Verificado, no confiado en el MD.
 - **Operador 3AM:** build de producción sirve y hace SPA-fallback (nginx `try_files … /index.html`
   + verificado con `vite preview` en `/settings`, sin refresh-404); `index.html` referencia assets
   que existen en disco (code-splitting OK); nginx CSP/anti-spoof-XFF/bloqueo de `/api/metrics` OK.
