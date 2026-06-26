@@ -214,3 +214,27 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
     timeout: 15_000,
   });
 });
+
+test('reply-all: To=remitente, CC=resto sin uno-mismo ni el remitente (case-insensitive)', async ({
+  page,
+}) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  await page.getByText('INBOX', { exact: true }).click();
+  // 'Your June invoice' tiene to:[e2e, colleague] + cc:[boss] → el botón Reply all aparece.
+  await page.getByText('Your June invoice').click();
+  await expect(page.getByRole('heading', { name: 'Your June invoice' })).toBeVisible({
+    timeout: 15_000,
+  });
+  await page.getByRole('button', { name: 'Reply all' }).click();
+
+  await expect(page.locator('input[placeholder="To"]')).toHaveValue('billing@example.com');
+  const cc = await page.locator('input[placeholder="Cc"]').inputValue();
+  expect(cc).toContain('colleague@example.com');
+  expect(cc).toContain('boss@example.com');
+  expect(cc).not.toContain('e2e@example.com'); // uno mismo, excluido
+  expect(cc).not.toContain('billing@example.com'); // remitente (ya en To), excluido
+});

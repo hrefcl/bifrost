@@ -66,19 +66,34 @@ async function prefillFromOriginal(
   form.value.accountId = orig.accountId;
   const subject = orig.subject;
   if (mode === 'reply' || mode === 'replyAll') {
-    form.value.to = orig.from.address;
+    const self = accounts.value.find((a) => a.id === orig.accountId)?.email.toLowerCase();
+    const fromAddr = orig.from.address.toLowerCase();
+    // Si respondés tu PROPIO correo enviado (from = vos), el "To" va a los destinatarios
+    // originales, no a vos mismo. Si no, va al remitente.
+    if (self && fromAddr === self) {
+      const origTo = orig.to.map((a) => a.address).filter((a) => a.toLowerCase() !== self);
+      form.value.to = (origTo.length > 0 ? origTo : [orig.from.address]).join(', ');
+    } else {
+      form.value.to = orig.from.address;
+    }
     if (mode === 'replyAll') {
-      // Reply-all: CC = (To + CC del original) menos uno mismo y menos el remitente (ya en To),
-      // deduplicado. Evita auto-CCarte y duplicar destinatarios.
-      const self = accounts.value.find((a) => a.id === orig.accountId)?.email.toLowerCase();
-      const fromAddr = orig.from.address.toLowerCase();
-      const extras = [...orig.to, ...(orig.cc ?? [])]
-        .map((a) => a.address)
-        .filter((addr) => {
-          const low = addr.toLowerCase();
-          return low !== self && low !== fromAddr;
-        });
-      form.value.cc = [...new Set(extras)].join(', ');
+      // CC = (To + CC originales) menos uno mismo, menos el remitente, menos quien ya está en
+      // To, dedup CASE-INSENSITIVE (Bob@x y bob@x son el mismo destinatario).
+      const inTo = new Set(
+        form.value.to
+          .split(',')
+          .map((s) => s.trim().toLowerCase())
+          .filter(Boolean)
+      );
+      const seen = new Set<string>();
+      const cc: string[] = [];
+      for (const a of [...orig.to, ...(orig.cc ?? [])]) {
+        const low = a.address.toLowerCase();
+        if (low === self || low === fromAddr || inTo.has(low) || seen.has(low)) continue;
+        seen.add(low);
+        cc.push(a.address);
+      }
+      form.value.cc = cc.join(', ');
     }
     form.value.subject = /^re:/i.test(subject) ? subject : `Re: ${subject}`;
     replyContext.value = {
