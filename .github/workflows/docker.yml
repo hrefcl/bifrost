@@ -75,3 +75,28 @@ jobs:
           labels: ${{ steps.meta-web.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  # Smoke aislado: el `build` valida que la imagen COMPILA; esto valida que ARRANCA y sirve
+  # HTTP (la 2ª mitad de TD-DOCKER-VERIFY). Setup-mode + REDIS_URL=mock → no necesita Mongo/
+  # Redis externos. Job separado: si falla, no ensucia el build/push ya verde.
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build API image (smoke)
+        run: docker build -f Dockerfile.api -t webmail-api:smoke .
+
+      - name: Run + verify it boots and serves HTTP
+        run: |
+          docker run -d --name api-smoke -e REDIS_URL=mock -e PORT=3000 -p 3000:3000 webmail-api:smoke
+          ok=
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:3000/api/setup/status | grep -q setupRequired; then ok=1; break; fi
+            sleep 2
+          done
+          echo "--- container logs ---"; docker logs api-smoke || true
+          docker rm -f api-smoke >/dev/null 2>&1 || true
+          if [ -z "$ok" ]; then echo "FALLO: la API no sirvió /api/setup/status"; exit 1; fi
+          echo "OK: la imagen API arranca y sirve HTTP en el contenedor"
