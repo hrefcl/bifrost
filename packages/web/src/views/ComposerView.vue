@@ -74,7 +74,9 @@ async function prefillFromOriginal(
       const origTo = orig.to.map((a) => a.address).filter((a) => a.toLowerCase() !== self);
       form.value.to = (origTo.length > 0 ? origTo : [orig.from.address]).join(', ');
     } else {
-      form.value.to = orig.from.address;
+      // Header Reply-To (RFC 5322): si el original lo trae, las respuestas van ahí (listas de
+      // correo, remitentes no-reply con un reply-to real), no al From.
+      form.value.to = orig.replyTo?.address ?? orig.from.address;
     }
     if (mode === 'replyAll') {
       // CC = (To + CC originales) menos uno mismo, menos el remitente, menos quien ya está en

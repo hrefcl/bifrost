@@ -132,9 +132,10 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
     timeout: 15_000,
   });
 
-  // Reply → composer precargado (esto era exactamente lo que no funcionaba).
+  // Reply → composer precargado (esto era exactamente lo que no funcionaba). El email trae
+  // header Reply-To (list@example.com) → la respuesta va ahí, NO al From (alice@example.com).
   await page.getByRole('button', { name: 'Reply' }).click();
-  await expect(page.locator('input[placeholder="To"]')).toHaveValue('alice@example.com');
+  await expect(page.locator('input[placeholder="To"]')).toHaveValue('list@example.com');
   await expect(page.locator('input[placeholder="Subject"]')).toHaveValue(
     'Re: Welcome to Webmail 6.0'
   );

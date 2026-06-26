@@ -452,6 +452,7 @@ async function upsertMessage(
 ): Promise<void> {
   const env = msg.envelope;
   const from = normalizeAddress(env?.from?.[0]);
+  const replyTo = normalizeAddress(env?.replyTo?.[0]);
   const to = normalizeAddresses(env?.to);
   const cc = normalizeAddresses(env?.cc);
   const subject = env?.subject ?? '(no subject)';
@@ -480,6 +481,7 @@ async function upsertMessage(
       references: undefined,
       threadId: undefined,
       from,
+      replyTo,
       to,
       cc,
       subject,

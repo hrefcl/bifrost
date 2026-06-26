@@ -138,6 +138,8 @@ export interface Email {
   references?: string[];
   threadId?: string;
   from: Address;
+  /** Header Reply-To (RFC 5322): dónde deben ir las respuestas si difiere de `from`. */
+  replyTo?: Address;
   to: Address[];
   cc?: Address[];
   bcc?: Address[];

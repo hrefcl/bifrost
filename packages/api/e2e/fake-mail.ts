@@ -23,6 +23,7 @@ interface FakeMessage {
     subject: string;
     messageId: string;
     from: Addr[];
+    replyTo?: Addr[];
     to: Addr[];
     cc?: Addr[];
     inReplyTo?: string;
@@ -68,6 +69,8 @@ const INBOX: FakeMessage[] = [
       subject: 'Welcome to Webmail 6.0',
       messageId: '<seed-1@example.com>',
       from: [{ address: 'alice@example.com', name: 'Alice Example' }],
+      // Header Reply-To (como una lista de correo): las respuestas deben ir aquí, no a Alice.
+      replyTo: [{ address: 'list@example.com', name: 'Webmail List' }],
       to: [{ address: 'e2e@example.com' }],
     },
     bodyStructure: {},
