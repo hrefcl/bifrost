@@ -19,7 +19,7 @@ conecta al backend de mail del cliente, con un subsistema de **administración c
 | **Adjuntos end-to-end** (subir → adjuntar → enviar; descargar inbound) | ✅ Funcionando |
 | **Admin + storage configurable** (wizard local/S3, credenciales cifradas, GC, cuota, test de conexión) | ✅ Funcionando |
 | **Contactos / Calendario (CalDAV)** | ✅ CRUD + sync |
-| **Seguridad** (authz multi-tenant, JWT hardening, XSS, CSP, rate limit, cifrado, sin CVEs) | ✅ Auditado (5 rondas B/D) |
+| **Seguridad** (authz multi-tenant, JWT hardening, XSS, CSP, rate limit, cifrado, sin CVEs) | ✅ Auditado (6 rondas B/D) |
 | **CI/CD** (typecheck, lint, tests, coverage, E2E, docker-smoke, **audit gate**) | ✅ Verde |
 | **Provisioning de buzones** (crear cuentas email desde admin) | ⏳ Pendiente (PR-E, feature-gated) |
 
@@ -112,7 +112,7 @@ Patrones clave:
 
 ## 4. Seguridad — postura actual (auditada)
 
-5 rondas de auto-auditoría con revisores externos reales (B=Codex, D=Kimi) cerraron **6 issues
+6 rondas de auto-auditoría con revisores externos reales (B=Codex, D=Kimi) cerraron **7 issues
 reales de producción**:
 
 | # PR | Issue | Severidad |
@@ -123,6 +123,7 @@ reales de producción**:
 | #19 | Gap de QA: la defensa anti-XSS no tenía tests → 17 tests de regresión | (QA) |
 | #20 | **CVEs CRÍTICOS en deps**: fast-jwt auth-bypass + cache-confusion (mixup de identidad multi-tenant), nodemailer SMTP-injection → upgrade | **CRÍTICO** |
 | #21 | CI no chequeaba CVEs → **audit gate** preventivo en CI | (preventivo) |
+| #22 | **Bootstrap admin**: tras setup, `isSetupMode()` seguía true (MONGODB_URI/REDIS_URL no en process.env) → admin rogue remoto pre-restart → cerrar setup en vivo + lock anti-race + .env 0600 | **HIGH** |
 
 Controles activos:
 - **Authz multi-tenant**: todo recurso owner-bound (404 al ajeno, no 403 → no filtra existencia).
