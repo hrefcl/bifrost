@@ -6,6 +6,28 @@ import { getActiveStorage, providerForType, newStorageKey } from '../services/st
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB (alineado con MAX_MESSAGE_BYTES del parseo IMAP)
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i);
 
+/**
+ * Cuota de blobs por usuario (anti disk-fill DoS): el cap de 25MB/archivo y el rate-limit
+ * acotan el RITMO, no el TOTAL. Sin esto, un usuario autenticado podría subir blobs sin
+ * adjuntarlos y la gracia de 24h del GC los retiene → llenar disco. Override por env.
+ * Se lee por request (no como const de módulo) para poder ajustarlo/testearlo.
+ */
+function maxBlobsPerUser(): number {
+  return Number(process.env.ATTACHMENTS_MAX_PER_USER) || 1000;
+}
+
+/** Drena el multipart (consume los file parts) para no dejar la conexión colgada al rechazar. */
+async function drainParts(request: { parts: () => AsyncIterableIterator<unknown> }): Promise<void> {
+  try {
+    for await (const part of request.parts()) {
+      const p = part as { type?: string; toBuffer?: () => Promise<unknown> };
+      if (p.type === 'file' && p.toBuffer) await p.toBuffer().catch(() => undefined);
+    }
+  } catch {
+    // ignore: sólo intentamos drenar
+  }
+}
+
 /** Content-Disposition seguro: SIEMPRE attachment + filename ASCII-saneado (anti header-injection). */
 function contentDisposition(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\\r\n]/g, '_');
@@ -18,6 +40,20 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
    * id del blob (NO el storageKey) — el cliente referencia adjuntos por id, nunca por key cruda.
    */
   fastify.post('/', async (request, reply) => {
+    // Cuota anti disk-fill: chequeo ANTES de consumir el archivo. countDocuments va por el
+    // índice {userId}. Bajo concurrencia el cap es aproximado (no exacto), suficiente para acotar.
+    const blobCount = await AttachmentBlob.countDocuments({
+      userId: request.user.userId,
+      status: 'active',
+    });
+    if (blobCount >= maxBlobsPerUser()) {
+      await drainParts(request);
+      return reply.code(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: 'Attachment storage quota reached. Eliminá adjuntos o borradores y reintentá.',
+      });
+    }
     // Itera TODO el multipart (no sólo el primer file): exige EXACTAMENTE 1 file llamado
     // 'file' y RECHAZA fields o archivos extra. Recién guarda tras consumir/validar todo el
     // request — un 2º archivo (aunque sea >25MB) no se acepta ni deja un blob a medias.
