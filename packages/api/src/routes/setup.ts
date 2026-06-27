@@ -75,7 +75,13 @@ export default function setupRoutes(fastify: FastifyInstance) {
     const body = setupSchema.parse(request.body);
     const result = await performSetup(body);
     if (!result.ok) {
-      return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: result.error });
+      // 'Setup ya cerrado/en curso' → 403 (consistente con el gate isSetupMode); db/validación → 400.
+      const code = result.alreadyConfigured ? 403 : 400;
+      return reply.code(code).send({
+        statusCode: code,
+        error: code === 403 ? 'Forbidden' : 'Bad Request',
+        message: result.error,
+      });
     }
     return result;
   });

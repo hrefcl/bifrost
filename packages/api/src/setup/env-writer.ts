@@ -63,6 +63,8 @@ export async function writeEnvFile(config: SetupConfig): Promise<void> {
   // que volvería ilegibles todas las credenciales cifradas.
   const envPath = getEnvPath();
   const tmpPath = `${envPath}.tmp`;
-  await fs.writeFile(tmpPath, lines.join('\n') + '\n', 'utf8');
+  // mode 0600: el .env contiene secretos (JWT/ENCRYPTION_KEY) → sólo el dueño puede leer/escribir
+  // (no derivar de umask, que podría dejarlo world-readable). El rename preserva los perms del tmp.
+  await fs.writeFile(tmpPath, lines.join('\n') + '\n', { encoding: 'utf8', mode: 0o600 });
   await fs.rename(tmpPath, envPath);
 }

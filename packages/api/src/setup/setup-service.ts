@@ -1,11 +1,16 @@
 import mongoose from 'mongoose';
 import { randomToken } from '../config/crypto.js';
+import { isSetupMode } from '../config/env.js';
 import { writeEnvFile, readEnvFile } from './env-writer.js';
 import { validateMongoDb, validateRedis } from './validators.js';
 
 function isValidHexKey(v: string | undefined): v is string {
   return typeof v === 'string' && /^[0-9a-f]{64}$/i.test(v);
 }
+
+// Lock in-memory: serializa POST /setup concurrentes (la app de setup es un solo proceso).
+// Sin esto, dos requests podían pasar el gate isSetupMode() y crear dos admins (review B).
+let setupInFlight = false;
 
 export interface SetupPayload {
   db: {
@@ -38,9 +43,38 @@ export interface SetupResult {
   ok: boolean;
   error?: string;
   requiresRestart: boolean;
+  /** El setup ya está cerrado/en curso → la ruta lo mapea a 403 (no a 400 de validación). */
+  alreadyConfigured?: boolean;
 }
 
 export async function performSetup(payload: SetupPayload): Promise<SetupResult> {
+  // Guard de concurrencia + re-check del gate: cierra el race de dos setups simultáneos y el
+  // caso de un 2º setup tras completar el 1º (cuando el route ya pasó el isSetupMode check).
+  if (setupInFlight) {
+    return {
+      ok: false,
+      error: 'Setup already in progress',
+      requiresRestart: false,
+      alreadyConfigured: true,
+    };
+  }
+  if (!isSetupMode()) {
+    return {
+      ok: false,
+      error: 'Setup already completed',
+      requiresRestart: false,
+      alreadyConfigured: true,
+    };
+  }
+  setupInFlight = true;
+  try {
+    return await runSetup(payload);
+  } finally {
+    setupInFlight = false;
+  }
+}
+
+async function runSetup(payload: SetupPayload): Promise<SetupResult> {
   const dbOk = await validateMongoDb(payload.db.mongodbUri);
   if (!dbOk.ok) return { ok: false, error: dbOk.error, requiresRestart: false };
 
@@ -137,6 +171,14 @@ export async function performSetup(payload: SetupPayload): Promise<SetupResult> 
       frontendUrl: payload.app?.frontendUrl,
       corsOrigin: payload.app?.corsOrigin,
     });
+
+    // CIERRE DEL SETUP EN EL PROCESO VIVO (review B, HIGH): completar las 4 CRITICAL_VARS en
+    // process.env para que isSetupMode()→false YA (sin esperar al restart). En el deploy típico
+    // MONGODB_URI/REDIS_URL vienen del payload del wizard (no del env); si no las seteamos acá,
+    // el endpoint POST /setup seguiría aceptando → un atacante remoto crearía un admin rogue en
+    // la ventana post-setup/pre-restart. JWT_SECRET/ENCRYPTION_KEY ya se setearon arriba.
+    process.env.MONGODB_URI = payload.db.mongodbUri;
+    process.env.REDIS_URL = payload.db.redisUrl;
 
     // NOTA: el marcador SystemConfig 'setup' es write-only — NADIE lo lee. El gate
     // real de "ya configurado" es isSetupMode() (presencia de secretos en env). Se

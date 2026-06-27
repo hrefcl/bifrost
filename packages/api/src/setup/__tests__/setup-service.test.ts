@@ -19,7 +19,13 @@ describe('performSetup idempotencia (F3.2 / H-CRYPTO-SETUP)', () => {
   let envPath: string;
   const savedEnc = process.env.ENCRYPTION_KEY;
   const savedJwt = process.env.JWT_SECRET;
+  const savedMongo = process.env.MONGODB_URI;
+  const savedRedis = process.env.REDIS_URL;
   const savedPath = process.env.SETUP_ENV_PATH;
+  const restore = (k: string, v: string | undefined) => {
+    if (v === undefined) Reflect.deleteProperty(process.env, k);
+    else process.env[k] = v;
+  };
 
   beforeAll(async () => {
     server = await MongoMemoryServer.create();
@@ -31,10 +37,11 @@ describe('performSetup idempotencia (F3.2 / H-CRYPTO-SETUP)', () => {
     if (mongoose.connection.readyState !== 0) await mongoose.disconnect();
     await server.stop();
     await fs.rm(envPath, { force: true });
-    process.env.ENCRYPTION_KEY = savedEnc;
-    process.env.JWT_SECRET = savedJwt;
-    if (savedPath === undefined) delete process.env.SETUP_ENV_PATH;
-    else process.env.SETUP_ENV_PATH = savedPath;
+    restore('ENCRYPTION_KEY', savedEnc);
+    restore('JWT_SECRET', savedJwt);
+    restore('MONGODB_URI', savedMongo);
+    restore('REDIS_URL', savedRedis);
+    restore('SETUP_ENV_PATH', savedPath);
   });
 
   const payload = (): SetupPayload => ({
@@ -53,28 +60,73 @@ describe('performSetup idempotencia (F3.2 / H-CRYPTO-SETUP)', () => {
     },
   });
 
-  it('crea cuenta descifrable y, re-ejecutado, no rota la clave ni duplica (sin brick)', async () => {
+  it('SEGURIDAD (review B, HIGH): tras un setup exitoso, isSetupMode→false y un 2º setup queda BLOQUEADO (no admin rogue)', async () => {
+    // Estado de "deploy fresco": faltan las críticas → isSetupMode true.
+    delete process.env.JWT_SECRET;
+    delete process.env.MONGODB_URI;
+    delete process.env.REDIS_URL;
+    await fs.rm(envPath, { force: true });
+    expect(isSetupMode()).toBe(true);
+
     const r1 = await performSetup(payload());
     expect(r1.ok).toBe(true);
     const env1 = await fs.readFile(envPath, 'utf8');
     const key1 = /ENCRYPTION_KEY=([0-9a-f]{64})/i.exec(env1)?.[1];
     expect(key1).toBeTruthy();
 
-    // Retry (simula fallo parcial + reintento): debe reusar la misma clave.
-    const r2 = await performSetup(payload());
-    expect(r2.ok).toBe(true);
-    const env2 = await fs.readFile(envPath, 'utf8');
-    const key2 = /ENCRYPTION_KEY=([0-9a-f]{64})/i.exec(env2)?.[1];
-    expect(key2).toBe(key1);
+    // EL FIX: el setup queda cerrado en el proceso vivo SIN restart (las 4 críticas en env).
+    expect(isSetupMode()).toBe(false);
 
-    // La credencial del BUZÓN descifra con la clave persistida.
-    process.env.ENCRYPTION_KEY = key2;
+    // Un 2º setup (atacante remoto con su email) → 403/'already completed', NO crea otro admin.
+    const r2 = await performSetup(payload());
+    expect(r2.ok).toBe(false);
+    expect(r2.error).toMatch(/already completed/i);
+
+    // La cuenta del 1º descifra y NO se duplicó.
+    process.env.ENCRYPTION_KEY = key1;
     await mongoose.connect(server.getUri());
+    const { User } = await import('../../models/User.js');
     const { Account } = await import('../../models/Account.js');
     const acc = await Account.findOne({ email: 'admin@test.com' });
-    expect(acc).toBeTruthy();
     expect(acc?.getImapCredentials()).toBe('MAILBOX-PASS');
+    expect(await User.countDocuments({ role: 'admin' })).toBe(1);
     expect(await Account.countDocuments({ email: 'admin@test.com' })).toBe(1);
+    await mongoose.disconnect();
+  });
+
+  it('SEGURIDAD: dos performSetup CONCURRENTES → un solo admin (lock anti-race)', async () => {
+    // DB limpia (sin la cuenta de los tests previos) y estado de deploy fresco.
+    await mongoose.connect(server.getUri());
+    const { User } = await import('../../models/User.js');
+    const { Account } = await import('../../models/Account.js');
+    await User.deleteMany({});
+    await Account.deleteMany({});
+    await mongoose.disconnect();
+    delete process.env.JWT_SECRET;
+    delete process.env.MONGODB_URI;
+    delete process.env.REDIS_URL;
+    await fs.rm(envPath, { force: true });
+    expect(isSetupMode()).toBe(true);
+
+    const one: SetupPayload = {
+      ...payload(),
+      admin: { email: 'one@test.com', password: 'p1pass789', displayName: 'One' },
+      email: { ...payload().email, email: 'one@test.com' },
+    };
+    const two: SetupPayload = {
+      ...payload(),
+      admin: { email: 'two@test.com', password: 'p2pass789', displayName: 'Two' },
+      email: { ...payload().email, email: 'two@test.com' },
+    };
+    const [a, b] = await Promise.all([performSetup(one), performSetup(two)]);
+    // Exactamente uno completa; el otro queda bloqueado (in-progress / already completed).
+    expect([a.ok, b.ok].filter(Boolean)).toHaveLength(1);
+
+    process.env.ENCRYPTION_KEY = /ENCRYPTION_KEY=([0-9a-f]{64})/i.exec(
+      await fs.readFile(envPath, 'utf8')
+    )?.[1];
+    await mongoose.connect(server.getUri());
+    expect(await User.countDocuments({ role: 'admin' })).toBe(1);
     await mongoose.disconnect();
   });
 
