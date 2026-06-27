@@ -43,16 +43,28 @@ export interface SetupResult {
   ok: boolean;
   error?: string;
   requiresRestart: boolean;
+  /** El setup ya está cerrado/en curso → la ruta lo mapea a 403 (no a 400 de validación). */
+  alreadyConfigured?: boolean;
 }
 
 export async function performSetup(payload: SetupPayload): Promise<SetupResult> {
   // Guard de concurrencia + re-check del gate: cierra el race de dos setups simultáneos y el
   // caso de un 2º setup tras completar el 1º (cuando el route ya pasó el isSetupMode check).
   if (setupInFlight) {
-    return { ok: false, error: 'Setup already in progress', requiresRestart: false };
+    return {
+      ok: false,
+      error: 'Setup already in progress',
+      requiresRestart: false,
+      alreadyConfigured: true,
+    };
   }
   if (!isSetupMode()) {
-    return { ok: false, error: 'Setup already completed', requiresRestart: false };
+    return {
+      ok: false,
+      error: 'Setup already completed',
+      requiresRestart: false,
+      alreadyConfigured: true,
+    };
   }
   setupInFlight = true;
   try {
