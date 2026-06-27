@@ -1,6 +1,22 @@
 # Webmail 6.0
 
-Cliente de correo moderno construido con Vue 3, Fastify, MongoDB, Redis e imapflow.
+Cliente de correo moderno (reemplazo de Roundcube) construido con Vue 3, Fastify, MongoDB,
+Redis e imapflow. Corre sobre cualquier servidor IMAP/SMTP.
+
+## Estado del proyecto
+
+**Funcional y hardened.** `main` verde · 0 CVEs (`pnpm audit` gate en CI) · 146 tests API + 9 E2E.
+
+- ✅ Core webmail: auth, IMAP sync, leer (con adjuntos inbound), componer, enviar, drafts,
+  reply/forward, firmas (verificado E2E en navegador real).
+- ✅ Adjuntos end-to-end + admin con **storage configurable** (local/S3) — wizard, credenciales
+  cifradas, GC de huérfanos, cuota anti-DoS, test de conexión.
+- ✅ Seguridad auditada (5 rondas): authz multi-tenant, XSS (regression-tested) + CSP, JWT
+  hardening, rate-limit, cifrado AES-GCM, deps sin CVEs.
+- ⏳ Pendiente: provisioning de buzones (PR-E, feature-gated).
+
+➡️ **Estado completo y nivel de avance: [`docs/estado-final.md`](docs/estado-final.md)** ·
+deuda: [`docs/deuda-tecnica.md`](docs/deuda-tecnica.md) · self-hosted: `deploy/example-mailserver/`.
 
 ## Requisitos
 

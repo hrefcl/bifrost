@@ -153,3 +153,33 @@ por-fase no ven. **Corregido en esta ronda** (con boot real re-verificado):
 - Secretos: migrar de `.env` plano a Docker secrets / KMS.
 - `Dockerfile.api` single-stage con devDeps → multi-stage con prune para imagen prod pulida.
 - Rate limit distribuido (store Redis) para multi-instancia.
+
+---
+
+## Estado tras las 5 auto-auditorías (jun 2026) — ver [`estado-final.md`](estado-final.md)
+
+El subsistema de **adjuntos/storage/admin** se construyó y auditó en profundidad (5 rondas
+B=Codex / D=Kimi). **6 issues reales de producción cerrados** (todos con review adversarial,
+ningún merge con HIGH abierto o score <9):
+
+| PR | Issue cerrado |
+|----|----------------|
+| #16 | Fuga de blobs huérfanos (refCount muerto) → GC mark-and-sweep con lease atómico |
+| #17 | Footgun S3 (activar config mala rompía uploads) → endpoint "Probar conexión" |
+| #18 | Disk-fill DoS (subir-sin-adjuntar + gracia GC) → cuota optimista por usuario |
+| #19 | Defensa anti-XSS sin tests → 17 tests de regresión (B+D atacaron sin bypass) |
+| #20 | **CVEs CRÍTICOS**: fast-jwt auth-bypass + cache-confusion (mixup identidad) + nodemailer SMTP-injection → upgrade @fastify/jwt 10 / nodemailer 9 |
+| #21 | CI sin chequeo de CVEs → `pnpm audit --prod --audit-level high` como gate + hardening de workflows |
+
+### Deuda viva (no bloqueante) tras las auditorías
+- **TD-IMG-PRIVACY (MEDIUM)** — `autoLoadImages`/`blockRemoteContentUnknown` existen en
+  `UserPreferences` pero NO se enforcan → imágenes remotas siempre cargan (tracking pixels).
+  Enforcement = sanear `img src` según preferencia + toggle "cargar imágenes" en la UI.
+- **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
+  feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
+  Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
+  + feature-gate + default "none".
+- **TD-CI-PIN** — pin de GitHub Actions por SHA (requiere Dependabot); alinear `docker.yml`
+  (`ubuntu-latest`→pin + `timeout-minutes`).
+- **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
+  por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).

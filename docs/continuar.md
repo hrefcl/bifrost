@@ -1,10 +1,11 @@
 # Plan de continuación: Webmail 6.0
 
-> ⚠️ **DESACTUALIZADO (jun 2026).** El trabajo F3.0–F3.9 se ejecutó y está registrado en
-> [`plan-tecnico-consolidado.md`](plan-tecnico-consolidado.md) (fuente de verdad). Varias
-> afirmaciones de este doc resultaron **falsas vs. el código** (CI/CD ya existía; "parseo
-> real" era un stub; etc.). Lo pendiente real está en [`deuda-tecnica.md`](deuda-tecnica.md).
-> Se conserva por contexto histórico.
+> ⚠️ **DESACTUALIZADO (jun 2026) — documento histórico.** El estado actual está en
+> **[`estado-final.md`](estado-final.md)** (fuente de verdad: verificado contra el código, CI
+> verde, 0 CVEs, 146 tests API + 9 E2E). Tras este plan se ejecutaron los PRs #11–#21 (adjuntos
+> end-to-end, admin+storage local/S3 configurable, GC, cuota anti-DoS, regresión XSS, upgrade de
+> deps con CVEs críticos, audit-gate en CI). **Lo único pendiente** es PR-E (provisioning de
+> buzones, feature-gated). La deuda menor está en [`deuda-tecnica.md`](deuda-tecnica.md).
 
 Este documento define el trabajo necesario para pasar del MVP funcional actual a un producto cercano a "terminado" y listo para producción. Las fases están ordenadas por impacto y dependencias.
 
