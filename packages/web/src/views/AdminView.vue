@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, watch, onMounted } from 'vue';
 import { AxiosError } from 'axios';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { api } from '@/lib/http';
@@ -63,7 +63,19 @@ function choose(provider: ProviderType) {
   selected.value = provider;
   saved.value = false;
   error.value = '';
+  // Defensa en profundidad: no retener el secret si el admin se va de S3 sin guardar.
+  if (provider !== 's3') s3.value.secretAccessKey = '';
 }
+
+// Al editar cualquier campo, descartar el "Guardado"/error previo (no quedan obsoletos).
+watch(
+  [s3, selected],
+  () => {
+    saved.value = false;
+    error.value = '';
+  },
+  { deep: true }
+);
 
 /** Faltan datos obligatorios para guardar S3 (el secret SIEMPRE se exige al guardar). */
 function s3Incomplete(): boolean {
@@ -101,10 +113,10 @@ async function save() {
     s3.value.secretAccessKey = ''; // no retener el secret en memoria tras guardar
     saved.value = true;
   } catch (err) {
-    // 400 = datos S3 inválidos (endpoint/region rechazados por el backend).
+    // 400 = datos S3 inválidos (endpoint/region/campos rechazados por el backend).
     if (err instanceof AxiosError && err.response?.status === 400) {
       error.value =
-        'Datos de S3 inválidos. Revisá el endpoint (http/https, sin ruta) y la región (ej. us-east-1).';
+        'Datos de S3 inválidos. Revisá los campos: endpoint (http/https, sin ruta), región (ej. us-east-1) y credenciales.';
     } else {
       error.value = 'No se pudo guardar la configuración';
     }
@@ -214,8 +226,10 @@ async function save() {
                 v-model="s3.secretAccessKey"
                 type="password"
                 class="adminput"
-                :placeholder="secretAlreadyConfigured ? '••••••••' : 'Secret Access Key'"
-                autocomplete="off"
+                :placeholder="
+                  secretAlreadyConfigured ? 'Re-ingresar secret para cambiar' : 'Secret Access Key'
+                "
+                autocomplete="new-password"
               />
             </div>
 
