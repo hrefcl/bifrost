@@ -4,6 +4,7 @@ import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
+import multipart from '@fastify/multipart';
 import { env } from './config/env.js';
 import { loggerOptions } from './config/logger.js';
 import authPlugin from './plugins/auth.js';
@@ -16,6 +17,7 @@ import draftRoutes from './routes/drafts.js';
 import contactRoutes from './routes/contacts.js';
 import calendarRoutes from './routes/calendar.js';
 import adminRoutes from './routes/admin.js';
+import attachmentRoutes from './routes/attachments.js';
 import metricsRoutes from './routes/metrics.js';
 import { counters, observeDuration } from './lib/metrics.js';
 
@@ -93,6 +95,11 @@ export async function buildApp() {
 
   await app.register(cookie);
 
+  // Upload de adjuntos: cap de tamaño a nivel plugin (defensa anti-OOM/DoS) + 1 archivo por request.
+  await app.register(multipart, {
+    limits: { fileSize: 25 * 1024 * 1024, files: 1 },
+  });
+
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute',
@@ -111,6 +118,7 @@ export async function buildApp() {
   await app.register(contactRoutes, { prefix: '/api/contacts' });
   await app.register(calendarRoutes, { prefix: '/api/calendar' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
+  await app.register(attachmentRoutes, { prefix: '/api/attachments' });
 
   return app;
 }
