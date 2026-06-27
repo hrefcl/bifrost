@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
 import { api } from '@/lib/http';
 import { useUiStore } from '@/stores/ui';
+import { useComposerStore } from '@/stores/composer';
 import { colorFor } from '@/lib/people';
 import type {
   Folder,
@@ -17,8 +17,8 @@ import type {
   SpecialUse,
 } from '@webmail6/shared';
 
-const router = useRouter();
 const ui = useUiStore();
+const composer = useComposerStore();
 const { t, locale } = useI18n();
 
 const accounts = ref<Account[]>([]);
@@ -34,48 +34,61 @@ const body = ref<EmailBody | null>(null);
 const attachments = ref<EmailAttachmentMeta[]>([]);
 const bodyLoading = ref(false);
 
-// ---- mapeo carpeta IMAP → icono + nombre i18n de la maqueta ----
-const SPECIAL_ICON: Record<SpecialUse, string> = {
-  inbox: 'inbox',
-  sent: 'send',
-  drafts: 'file',
-  trash: 'trash',
-  junk: 'shield',
-  archive: 'archive',
-};
-const SPECIAL_LABEL: Record<SpecialUse, string> = {
+// ---- Set estándar estilo Gmail: SIEMPRE visible, mapeado a la carpeta real si existe ----
+interface StdItem {
+  key: string;
+  icon: string;
+  special?: SpecialUse;
+  virtual?: 'starred' | 'snoozed';
+}
+const STANDARD: StdItem[] = [
+  { key: 'inbox', icon: 'inbox', special: 'inbox' },
+  { key: 'starred', icon: 'star', virtual: 'starred' },
+  { key: 'snoozed', icon: 'clock', virtual: 'snoozed' },
+  { key: 'sent', icon: 'send', special: 'sent' },
+  { key: 'drafts', icon: 'file', special: 'drafts' },
+  { key: 'archive', icon: 'archive', special: 'archive' },
+  { key: 'spam', icon: 'shield', special: 'junk' },
+  { key: 'trash', icon: 'trash', special: 'trash' },
+];
+const STD_LABEL: Record<string, string> = {
   inbox: 'folders.inbox',
+  starred: 'folders.starred',
+  snoozed: 'folders.snoozed',
   sent: 'folders.sent',
   drafts: 'folders.drafts',
-  trash: 'folders.trash',
-  junk: 'folders.junk',
   archive: 'folders.archive',
+  spam: 'folders.spam',
+  trash: 'folders.trash',
 };
-const SPECIAL_ORDER: SpecialUse[] = ['inbox', 'sent', 'drafts', 'archive', 'junk', 'trash'];
 
-function folderIcon(f: Folder): string {
-  return f.specialUse ? SPECIAL_ICON[f.specialUse] : 'tag';
+const selectedKey = ref('inbox');
+const virtualView = ref<'starred' | 'snoozed' | null>(null);
+
+function folderForSpecial(special?: SpecialUse): Folder | undefined {
+  return special ? folders.value.find((f) => f.specialUse === special) : undefined;
 }
-function folderName(f: Folder): string {
-  return f.specialUse ? t(SPECIAL_LABEL[f.specialUse]) : f.displayName;
+function stdCount(item: StdItem): number {
+  if (item.virtual) return 0;
+  return folderForSpecial(item.special)?.unseenMessages ?? 0;
 }
 
-// Carpetas de sistema (con specialUse) ordenadas; el resto son "etiquetas".
-function specialIndex(f: Folder): number {
-  return f.specialUse ? SPECIAL_ORDER.indexOf(f.specialUse) : 99;
-}
-const systemFolders = computed(() =>
-  [...folders.value].filter((f) => f.specialUse).sort((a, b) => specialIndex(a) - specialIndex(b))
-);
+// Etiquetas = carpetas IMAP sin specialUse (las "labels" de Gmail).
 const labelFolders = computed(() => folders.value.filter((f) => !f.specialUse));
 
-const currentFolder = computed(() => folders.value.find((f) => f.id === selectedFolderId.value));
-const isInbox = computed(() => currentFolder.value?.specialUse === 'inbox');
+const isInbox = computed(() => selectedKey.value === 'inbox');
+const currentTitle = computed(() => {
+  const std = STANDARD.find((s) => s.key === selectedKey.value);
+  if (std) return t(STD_LABEL[std.key]);
+  return labelFolders.value.find((f) => f.id === selectedKey.value)?.displayName ?? '';
+});
 
-// Búsqueda en cliente (la barra del TopBar escribe en ui.searchQuery).
+// Búsqueda + vistas virtuales (Destacados = flagged; Pospuestos = vacío hasta backend de snooze).
 const filteredEmails = computed(() => {
-  const q = ui.searchQuery.trim().toLowerCase();
+  if (virtualView.value === 'snoozed') return [];
   let list = emails.value;
+  if (virtualView.value === 'starred') list = list.filter((e) => e.flags.flagged);
+  const q = ui.searchQuery.trim().toLowerCase();
   if (q) {
     list = list.filter(
       (e) =>
@@ -85,10 +98,24 @@ const filteredEmails = computed(() => {
         (e.preview ?? '').toLowerCase().includes(q)
     );
   }
-  // Sin categorización real en el backend: todo cae en "Principal".
   if (isInbox.value && category.value !== 'primary') return [];
   return list;
 });
+
+// ---- Almacenamiento (barra del sidebar; usedBytes REAL = bytes de adjuntos del usuario) ----
+const storage = ref<{ usedBytes: number; limitBytes: number } | null>(null);
+const storagePct = computed(() =>
+  storage.value && storage.value.limitBytes > 0
+    ? Math.min(100, (storage.value.usedBytes / storage.value.limitBytes) * 100)
+    : 0
+);
+function fmtBytes(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  const mb = bytes / 1024 ** 2;
+  if (mb >= 1) return `${mb.toFixed(0)} MB`;
+  return `${(bytes / 1024).toFixed(0)} KB`;
+}
 
 function accountId(): string {
   return accounts.value[0]?.id ?? '';
@@ -114,6 +141,7 @@ async function loadAccountsAndFolders() {
     const { data } = await api.get<Account[]>('/accounts');
     accounts.value = data;
     if (data.length > 0) await loadFolders(data[0].id);
+    void loadStorage();
   } catch {
     error.value = t('errors.accounts');
   }
@@ -123,12 +151,18 @@ async function loadFolders(id: string) {
   try {
     const { data } = await api.get<Folder[]>(`/accounts/${id}/folders`);
     folders.value = data;
-    if (data.length && !selectedFolderId.value) {
-      const inbox = data.find((f) => f.specialUse === 'inbox') ?? data[0];
-      await selectFolder(inbox.id);
-    }
+    await selectStandard(STANDARD[0]); // Recibidos por defecto
   } catch {
     error.value = t('errors.folders');
+  }
+}
+
+async function loadStorage() {
+  try {
+    const { data } = await api.get<{ usedBytes: number; limitBytes: number }>('/accounts/storage');
+    storage.value = data;
+  } catch {
+    storage.value = null;
   }
 }
 
@@ -147,6 +181,38 @@ async function selectFolder(folderId: string) {
   } finally {
     loading.value = false;
   }
+}
+
+/** Selecciona un ítem estándar del sidebar: carpeta real o vista virtual (Destacados/Pospuestos). */
+async function selectStandard(item: StdItem) {
+  selectedKey.value = item.key;
+  selected.value = null;
+  if (item.virtual) {
+    virtualView.value = item.virtual;
+    selectedFolderId.value = null;
+    if (item.virtual === 'starred') {
+      const inbox = folderForSpecial('inbox');
+      if (inbox) await selectFolder(inbox.id);
+      else emails.value = [];
+    } else {
+      emails.value = []; // Pospuestos: sin backend de snooze todavía
+    }
+  } else {
+    virtualView.value = null;
+    const f = folderForSpecial(item.special);
+    if (f) await selectFolder(f.id);
+    else {
+      selectedFolderId.value = null;
+      emails.value = [];
+    }
+  }
+}
+
+/** Selecciona una etiqueta (carpeta IMAP sin specialUse). */
+async function selectLabel(f: Folder) {
+  selectedKey.value = f.id;
+  virtualView.value = null;
+  await selectFolder(f.id);
 }
 
 let openToken = 0;
@@ -214,19 +280,16 @@ async function deleteEmail(email: Email | null, ev?: Event) {
 }
 
 function compose() {
-  void router.push({ name: 'compose-new' });
+  composer.openComposer();
 }
 function reply() {
-  if (selected.value)
-    void router.push({ name: 'compose-new', query: { replyTo: selected.value.id } });
+  if (selected.value) composer.openComposer({ replyTo: selected.value.id });
 }
 function replyAll() {
-  if (selected.value)
-    void router.push({ name: 'compose-new', query: { replyAll: selected.value.id } });
+  if (selected.value) composer.openComposer({ replyAll: selected.value.id });
 }
 function forward() {
-  if (selected.value)
-    void router.push({ name: 'compose-new', query: { forward: selected.value.id } });
+  if (selected.value) composer.openComposer({ forward: selected.value.id });
 }
 
 const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.address);
@@ -248,18 +311,22 @@ onMounted(loadAccountsAndFolders);
 
         <div class="folders">
           <button
-            v-for="f in systemFolders"
-            :key="f.id"
+            v-for="item in STANDARD"
+            :key="item.key"
             class="folder"
-            :class="{ active: selectedFolderId === f.id }"
-            :title="folderName(f)"
-            :aria-label="folderName(f)"
-            @click="selectFolder(f.id)"
+            :class="{ active: selectedKey === item.key }"
+            :title="t(STD_LABEL[item.key])"
+            :aria-label="t(STD_LABEL[item.key])"
+            @click="selectStandard(item)"
           >
-            <AppIcon :name="folderIcon(f)" :size="19" />
+            <AppIcon
+              :name="item.icon"
+              :size="19"
+              :fill="item.key === 'starred' && selectedKey === 'starred' ? 'currentColor' : 'none'"
+            />
             <template v-if="!ui.sidebarCollapsed">
-              <span class="folder-name">{{ folderName(f) }}</span>
-              <span v-if="f.unseenMessages > 0" class="folder-count">{{ f.unseenMessages }}</span>
+              <span class="folder-name">{{ t(STD_LABEL[item.key]) }}</span>
+              <span v-if="stdCount(item) > 0" class="folder-count">{{ stdCount(item) }}</span>
             </template>
           </button>
 
@@ -269,9 +336,9 @@ onMounted(loadAccountsAndFolders);
               v-for="f in labelFolders"
               :key="f.id"
               class="folder label"
-              :class="{ active: selectedFolderId === f.id }"
+              :class="{ active: selectedKey === f.id }"
               :aria-label="f.displayName"
-              @click="selectFolder(f.id)"
+              @click="selectLabel(f)"
             >
               <span class="dot" :style="{ background: colorFor(f.name) }" />
               <span class="folder-name">{{ f.displayName }}</span>
@@ -279,12 +346,25 @@ onMounted(loadAccountsAndFolders);
             </button>
           </div>
         </div>
+
+        <!-- Almacenamiento (estilo Gmail) -->
+        <div v-if="!ui.sidebarCollapsed && storage" class="storage">
+          <div class="storage-top">
+            <span>{{ t('storage.title') }}</span>
+            <span class="storage-val"
+              >{{ fmtBytes(storage.usedBytes) }} / {{ fmtBytes(storage.limitBytes) }}</span
+            >
+          </div>
+          <div class="storage-bar">
+            <div class="storage-fill" :style="{ width: storagePct + '%' }" />
+          </div>
+        </div>
       </nav>
 
       <!-- ===== Lista ===== -->
       <section class="list-pane" :class="{ narrow: selected }">
         <div class="list-head">
-          <h2 class="list-title">{{ currentFolder ? folderName(currentFolder) : '' }}</h2>
+          <h2 class="list-title">{{ currentTitle }}</h2>
           <span class="list-count">{{ t('common.conversations', filteredEmails.length) }}</span>
           <div class="list-actions">
             <button
@@ -600,6 +680,31 @@ onMounted(loadAccountsAndFolders);
   height: 14px;
   border-radius: 4px;
   flex-shrink: 0;
+}
+.storage {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.storage-top {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 5px;
+}
+.storage-val {
+  font-weight: 600;
+}
+.storage-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+.storage-fill {
+  height: 100%;
+  background: var(--accent);
 }
 
 /* ---------- Lista ---------- */

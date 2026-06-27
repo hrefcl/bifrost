@@ -109,6 +109,9 @@ export default {
   },
   composer: {
     title: 'Compose',
+    newMessage: 'New message',
+    minimize: 'Minimize',
+    savedAt: 'Draft saved · {time}',
     from: 'From',
     to: 'To',
     cc: 'Cc',

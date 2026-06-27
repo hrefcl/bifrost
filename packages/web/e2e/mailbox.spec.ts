@@ -214,10 +214,11 @@ test('adjuntos: Send/Save quedan deshabilitados mientras un upload está en curs
     buffer: Buffer.from('subida lenta'),
   });
 
-  // Mientras sube: el label muestra "Uploading..." y AMBOS botones están deshabilitados.
+  // Mientras sube: el estado muestra "Uploading..." y Enviar está deshabilitado. El autosave
+  // de borrador también queda bloqueado internamente (guard en saveDraft) → no se manda/guarda
+  // sin el adjunto pendiente. (El botón manual "Save draft" se reemplazó por autosave estilo Gmail.)
   await expect(page.getByText('Uploading...')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
-  await expect(page.getByRole('button', { name: 'Save draft' })).toBeDisabled();
 
   // Al completar, se rehabilitan y el adjunto ya está en la lista.
   await expect(page.getByText('lento.txt')).toBeVisible({ timeout: 15_000 });

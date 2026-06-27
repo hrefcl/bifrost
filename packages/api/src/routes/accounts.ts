@@ -1,8 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
+import mongoose from 'mongoose';
 import { Account } from '../models/Account.js';
 import { Folder } from '../models/Folder.js';
 import { Email } from '../models/Email.js';
+import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { listAndSyncFolders, syncFolderHeaders } from '../services/imap.js';
 import { requireOwnedAccount, requireOwnedFolder } from '../lib/authz.js';
 import type {
@@ -121,6 +123,26 @@ export default function accountRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request) => {
     const accounts = await Account.find({ userId: request.user.userId });
     return accounts.map(serializeAccount);
+  });
+
+  /**
+   * Almacenamiento del usuario (para la barra del sidebar, estilo Gmail). `usedBytes` es REAL:
+   * suma de los bytes de los adjuntos activos del usuario (lo que Bifrost almacena de verdad).
+   * `limitBytes` es el cap configurable (STORAGE_LIMIT_BYTES, default 15 GB).
+   */
+  fastify.get('/storage', async (request) => {
+    const agg = await AttachmentBlob.aggregate<{ bytes: number }>([
+      {
+        $match: {
+          userId: new mongoose.Types.ObjectId(request.user.userId),
+          status: 'active',
+        },
+      },
+      { $group: { _id: null, bytes: { $sum: '$size' } } },
+    ]);
+    const usedBytes = agg[0]?.bytes ?? 0;
+    const limitBytes = Number(process.env.STORAGE_LIMIT_BYTES ?? String(15 * 1024 * 1024 * 1024));
+    return { usedBytes, limitBytes };
   });
 
   fastify.post('/:accountId/sync/folders', async (request) => {

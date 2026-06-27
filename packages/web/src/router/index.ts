@@ -23,16 +23,6 @@ const router = createRouter({
       component: () => import('@/views/SettingsView.vue'),
     },
     {
-      path: '/compose',
-      name: 'compose-new',
-      component: () => import('@/views/ComposerView.vue'),
-    },
-    {
-      path: '/compose/:draftId',
-      name: 'compose',
-      component: () => import('@/views/ComposerView.vue'),
-    },
-    {
       path: '/contacts',
       name: 'contacts',
       component: () => import('@/views/ContactsView.vue'),

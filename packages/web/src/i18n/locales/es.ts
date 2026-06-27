@@ -109,6 +109,9 @@ export default {
   },
   composer: {
     title: 'Redactar',
+    newMessage: 'Mensaje nuevo',
+    minimize: 'Minimizar',
+    savedAt: 'Borrador guardado · {time}',
     from: 'De',
     to: 'Para',
     cc: 'Cc',

@@ -5,16 +5,19 @@ import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
 import { useUiStore } from '@/stores/ui';
+import { useComposerStore } from '@/stores/composer';
 import { SUPPORTED_LOCALES, LOCALE_NAMES, setLocale, type Locale } from '@/i18n';
 import AppLogo from '@/components/AppLogo.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
+import ComposerWindow from '@/components/ComposerWindow.vue';
 
 const router = useRouter();
 const route = useRoute();
 const auth = useAuthStore();
 const settings = useSettingsStore();
 const ui = useUiStore();
+const composer = useComposerStore();
 const { t, locale } = useI18n();
 
 const searchFocused = ref(false);
@@ -137,6 +140,9 @@ function isActive(name: string) {
     </header>
 
     <main class="main"><slot /></main>
+
+    <!-- Composer flotante estilo Gmail: overlay sobre cualquier vista, minimizable. -->
+    <ComposerWindow v-if="composer.open" :key="composer.instanceKey" />
   </div>
 </template>
 

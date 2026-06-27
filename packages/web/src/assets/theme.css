@@ -16,7 +16,7 @@
   --search-bg: #eaeef7;
   --compose-bg: color-mix(in srgb, var(--accent) 14%, #fff);
   --compose-fg: color-mix(in srgb, var(--accent) 82%, #000);
-  --composer-head: #2f3540;
+  --composer-head: var(--accent);
 
   /* texto */
   --text-1: #1f2430;
@@ -55,7 +55,7 @@
   --search-bg: #282d36;
   --compose-bg: color-mix(in srgb, var(--accent) 28%, #1d2027);
   --compose-fg: #ffffff;
-  --composer-head: #0f1115;
+  --composer-head: var(--accent);
 
   --text-1: #e7eaf1;
   --text-2: #aab2c2;
