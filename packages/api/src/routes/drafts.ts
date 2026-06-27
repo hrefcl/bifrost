@@ -391,7 +391,13 @@ export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): 
   // doc (en el orden doc-first los bytes aún existen) → reactivarlo para reintentar. Seguro:
   // nunca reactiva un blob cuyos bytes ya se borraron (en ese punto el doc ya no existe).
   await AttachmentBlob.updateMany(
-    { status: 'deleting', deletingSince: { $lt: new Date(now - LEASE_TIMEOUT_MS) } },
+    {
+      status: 'deleting',
+      $or: [
+        { deletingSince: { $lt: new Date(now - LEASE_TIMEOUT_MS) } },
+        { deletingSince: { $exists: false } }, // 'deleting' sin marca (bug/migración) → recuperar
+      ],
+    },
     { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
   );
 
@@ -440,8 +446,12 @@ export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): 
     // leak de bytes huérfanos (inocuo), NO un doc 'active' apuntando a bytes inexistentes
     // (que sería adjuntable/descargable y rompería un envío). Si el deleteOne falla, los bytes
     // siguen intactos → revertimos el lease para reintentar.
+    let delResult;
     try {
-      await AttachmentBlob.deleteOne({ _id: blob._id });
+      // Condicionado a status:'deleting': si un lease recovery (o un proceso zombie reactivado)
+      // ya devolvió el blob a 'active' o lo re-leaseó otro sweep, este delete NO matchea →
+      // deletedCount 0 → no borramos sus bytes. Cierra el race del zombie (review D).
+      delResult = await AttachmentBlob.deleteOne({ _id: blob._id, status: 'deleting' });
     } catch {
       await AttachmentBlob.updateOne(
         { _id: blob._id, status: 'deleting' },
@@ -449,6 +459,7 @@ export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): 
       ).catch(() => undefined);
       continue;
     }
+    if (delResult.deletedCount === 0) continue; // el lease ya no es nuestro → no tocar bytes.
     deleted++;
     // (4) Bytes: best-effort. El doc ya no existe → si esto falla, quedan bytes huérfanos
     // (sin doc que los referencie ni que se pueda adjuntar/descargar). No revertimos nada.
