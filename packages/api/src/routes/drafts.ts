@@ -2,14 +2,70 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Draft } from '../models/Draft.js';
 import { Account } from '../models/Account.js';
+import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { sendDraft } from '../services/smtp.js';
 import { appendToSent } from '../services/imap.js';
 import { randomToken } from '../config/crypto.js';
-import { requireOwnedAccount, requireOwnedEmail } from '../lib/authz.js';
+import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
+import type { StoredDraftAttachment } from '../models/Draft.js';
 import type { Draft as DraftDto } from '@webmail6/shared';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
+
+// Topes de recursos del draft: sin esto, un cliente puede mandar miles de attachmentIds
+// válidos → el envío los carga TODOS en RAM a la vez (Promise.all en smtp). Con 25MB/archivo
+// eso es un DoS de memoria. Acotamos cantidad y tamaño TOTAL (típico límite de mensaje SMTP).
+const MAX_ATTACHMENTS = 25;
+const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+class PayloadTooLargeError extends Error {
+  statusCode = 413;
+}
+
+/**
+ * Resuelve ids de AttachmentBlob a DraftAttachment[] VALIDANDO OWNERSHIP: todos los blobs
+ * deben ser del usuario (si alguno no existe/no es suyo → 404, sin filtrar existencia). El
+ * draft guarda la metadata + storageKey + providerType (provider-bound), nunca confía en datos
+ * de adjunto que mande el cliente directamente. Acota cantidad y tamaño total (anti-DoS).
+ */
+async function resolveAttachments(
+  userId: string,
+  ids?: string[]
+): Promise<StoredDraftAttachment[]> {
+  if (!ids || ids.length === 0) return [];
+  // DEDUP: un blob aparece como mucho una vez en el draft (ids repetidos no duplican el
+  // adjunto en el raw). Set preserva el orden de primera aparición.
+  const unique = [...new Set(ids)];
+  // Defensa en profundidad: el schema ya acota con .max(), pero re-validamos acá por si
+  // se llama el helper desde otro path.
+  if (unique.length > MAX_ATTACHMENTS) {
+    throw new PayloadTooLargeError(`Too many attachments (max ${String(MAX_ATTACHMENTS)})`);
+  }
+  const blobs = await AttachmentBlob.find({ _id: { $in: unique }, userId }).lean();
+  if (blobs.length !== unique.length) {
+    throw new OwnershipError('Attachment not found');
+  }
+  const byId = new Map(blobs.map((b) => [b._id.toString(), b]));
+  let totalBytes = 0;
+  const resolved = unique.map((id) => {
+    const b = byId.get(id);
+    if (!b) throw new OwnershipError('Attachment not found');
+    totalBytes += b.size;
+    return {
+      blobId: b._id.toString(),
+      filename: b.filename,
+      contentType: b.contentType,
+      size: b.size,
+      storageKey: b.storageKey,
+      providerType: b.providerType,
+    };
+  });
+  if (totalBytes > MAX_TOTAL_BYTES) {
+    throw new PayloadTooLargeError('Attachments exceed total size limit (25MB)');
+  }
+  return resolved;
+}
 
 const addressSchema = z.object({
   name: z.string().optional(),
@@ -27,6 +83,10 @@ const draftBodySchema = z.object({
   replyToEmailId: objectIdSchema.optional(),
   replyToMessageId: z.string().optional(),
   replyToReferences: z.array(z.string()).optional(),
+  // ids de AttachmentBlob ya subidos (POST /api/attachments). El backend resuelve y valida
+  // ownership; el cliente NUNCA manda filename/size/storageKey de adjunto directamente.
+  // .max() acota la cantidad ANTES de tocar la DB (gate barato anti-DoS).
+  attachmentIds: z.array(objectIdSchema).max(MAX_ATTACHMENTS).optional(),
 });
 
 function serializeDraft(doc: import('../models/Draft.js').IDraft): DraftDto {
@@ -40,7 +100,13 @@ function serializeDraft(doc: import('../models/Draft.js').IDraft): DraftDto {
     subject: doc.subject,
     bodyHtml: doc.bodyHtml,
     bodyText: doc.bodyText,
-    attachments: doc.attachments,
+    // DTO público: sólo metadata + blobId. storageKey/providerType quedan server-side.
+    attachments: doc.attachments.map((a) => ({
+      blobId: a.blobId,
+      filename: a.filename,
+      contentType: a.contentType,
+      size: a.size,
+    })),
     replyTo: doc.replyTo
       ? {
           emailId: doc.replyTo.emailId?.toString() ?? '',
@@ -74,6 +140,7 @@ export default function draftRoutes(fastify: FastifyInstance) {
     }
 
     const html = body.bodyHtml ? sanitizeEmailHtml(body.bodyHtml) : undefined;
+    const attachments = await resolveAttachments(request.user.userId, body.attachmentIds);
     const draft = await Draft.create({
       userId: request.user.userId,
       accountId: body.accountId,
@@ -83,6 +150,7 @@ export default function draftRoutes(fastify: FastifyInstance) {
       subject: body.subject,
       bodyHtml: html,
       bodyText: body.bodyText ?? (html ? plainTextFromHtml(html) : undefined),
+      attachments,
       replyTo: body.replyToMessageId
         ? {
             emailId: body.replyToEmailId,
@@ -134,6 +202,9 @@ export default function draftRoutes(fastify: FastifyInstance) {
     if (body.subject !== undefined) draft.subject = body.subject;
     if (body.bodyHtml !== undefined) draft.bodyHtml = sanitizeEmailHtml(body.bodyHtml);
     if (body.bodyText !== undefined) draft.bodyText = body.bodyText;
+    if (body.attachmentIds !== undefined) {
+      draft.attachments = await resolveAttachments(request.user.userId, body.attachmentIds);
+    }
     // Editar un draft 'sent'/'failed' lo vuelve editable (y descarta el sentMessageId
     // viejo para que un nuevo envío genere uno fresco).
     if (draft.status !== 'editing') {

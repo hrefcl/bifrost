@@ -191,11 +191,16 @@ export interface Attachment {
   createdAt: string;
 }
 
+/**
+ * Vista PÚBLICA de un adjunto del draft. Referencia el blob por `blobId` (para que el cliente
+ * pueda quitarlo/reconstruir attachmentIds al recargar). NO expone localizadores internos de
+ * storage (storageKey/providerType) — esos viven sólo server-side.
+ */
 export interface DraftAttachment {
+  blobId: string;
   filename: string;
   contentType: string;
   size: number;
-  storageKey: string;
 }
 
 export interface Draft {

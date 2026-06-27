@@ -4,6 +4,7 @@ import { createSmtpTransport } from './mail-transport.js';
 import type { IAccount } from '../models/Account.js';
 import type { IDraft } from '../models/Draft.js';
 import { plainTextFromHtml } from '../lib/sanitizeHtml.js';
+import { providerForType } from './storage/index.js';
 
 export interface SendResult {
   messageId: string;
@@ -66,6 +67,18 @@ export async function sendDraft(
     if (draft.replyTo?.messageId) {
       options.inReplyTo = draft.replyTo.messageId;
       options.references = draft.replyTo.references;
+    }
+
+    // Adjuntos: cada uno se lee de SU provider de origen (provider-bound), nunca del activo.
+    // El contenido se carga acá (no en el draft) para no inflar Mongo ni el JSON de la API.
+    if (draft.attachments.length > 0) {
+      options.attachments = await Promise.all(
+        draft.attachments.map(async (att) => ({
+          filename: att.filename,
+          content: await providerForType(att.providerType).get(att.storageKey),
+          contentType: att.contentType,
+        }))
+      );
     }
 
     const raw = await buildRaw(options);
