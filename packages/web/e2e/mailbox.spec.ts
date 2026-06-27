@@ -118,6 +118,48 @@ test('full flow: login → sync → read email body → compose & send', async (
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible();
 });
 
+test('adjuntos: subir un archivo en el composer y enviarlo (upload UI → send real)', async ({
+  page,
+}) => {
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await page.fill('input[placeholder="To"]', 'destinatario@example.com');
+  await page.fill('input[placeholder="Subject"]', 'Con adjunto E2E');
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Mirá el adjunto.');
+
+  // Adjuntar un archivo: el input está oculto tras el label "Attach files". setInputFiles
+  // dispara el change → POST /api/attachments (storage real local) → blobId.
+  const uploadResp = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/attachments') && r.request().method() === 'POST' && r.status() === 200
+  );
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'reporte-e2e.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('contenido del adjunto e2e'),
+  });
+  await uploadResp;
+
+  // El adjunto aparece en la lista del composer.
+  await expect(page.getByText('reporte-e2e.txt')).toBeVisible({ timeout: 15_000 });
+
+  // Enviar: el draft se crea/actualiza con attachmentIds y el envío real adjunta el blob.
+  const sendResp = page.waitForResponse(
+    (r) =>
+      /\/api\/drafts\/.+\/send$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+  await sendResp;
+
+  await expect(page).toHaveURL(/\/$|\/#?$/);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible();
+});
+
 test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', async ({ page }) => {
   // Antes este flujo estaba ROTO: ComposerView ignoraba route.query.replyTo → clic en Reply
   // abría un composer en blanco. Verifica la precarga + que el threading llega al backend.

@@ -6,7 +6,7 @@ import RichTextEditor from '@/components/RichTextEditor.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
 import { useAuthStore } from '@/stores/auth';
-import type { Account, Draft, Email, EmailBody } from '@webmail6/shared';
+import type { Account, Draft, DraftAttachment, Email, EmailBody } from '@webmail6/shared';
 
 const router = useRouter();
 const route = useRoute();
@@ -19,6 +19,13 @@ const error = ref('');
 const sending = ref(false);
 const saving = ref(false);
 
+// Adjuntos ya subidos (cada uno tiene blobId). El input file sube a /api/attachments y empuja
+// el resultado acá; al guardar/enviar mandamos los blobId como attachmentIds.
+const attachments = ref<DraftAttachment[]>([]);
+const uploading = ref(false);
+const fileInput = ref<HTMLInputElement | null>(null);
+const MAX_ATTACHMENTS = 25;
+
 // Contexto de threading cuando se compone como respuesta (no en forward ni en nuevo).
 const replyContext = ref<ReplyContext | null>(null);
 
@@ -30,6 +37,57 @@ const form = ref({
   subject: '',
   bodyHtml: '',
 });
+
+/** Estado del composer que mandamos al store, con los blobId de los adjuntos actuales. */
+function composerState() {
+  return { ...form.value, attachmentIds: attachments.value.map((a) => a.blobId) };
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${String(bytes)} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+async function onFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const files = input.files ? Array.from(input.files) : [];
+  if (files.length === 0) return;
+  error.value = '';
+  uploading.value = true;
+  try {
+    for (const file of files) {
+      if (attachments.value.length >= MAX_ATTACHMENTS) {
+        error.value = `Maximum ${String(MAX_ATTACHMENTS)} attachments`;
+        break;
+      }
+      const fd = new FormData();
+      fd.append('file', file);
+      const { data } = await api.post<{
+        id: string;
+        filename: string;
+        contentType: string;
+        size: number;
+      }>('/attachments', fd);
+      attachments.value.push({
+        blobId: data.id,
+        filename: data.filename,
+        contentType: data.contentType,
+        size: data.size,
+      });
+    }
+  } catch {
+    error.value = 'Failed to upload attachment';
+  } finally {
+    uploading.value = false;
+    // Permite re-seleccionar el mismo archivo (el change no dispara si el value no cambia).
+    if (fileInput.value) fileInput.value.value = '';
+  }
+}
+
+function removeAttachment(blobId: string) {
+  attachments.value = attachments.value.filter((a) => a.blobId !== blobId);
+}
 
 function escapeHtml(s: string): string {
   return s
@@ -124,6 +182,7 @@ onMounted(async () => {
       form.value.bcc = draft.bcc?.map((a) => a.address).join(', ') ?? '';
       form.value.subject = draft.subject;
       form.value.bodyHtml = draft.bodyHtml ?? '';
+      attachments.value = draft.attachments;
     } else {
       // Composer nuevo: si viene de Reply/Forward, precargar desde el email original.
       const replyTo = route.query.replyTo ? String(route.query.replyTo) : null;
@@ -150,9 +209,12 @@ async function saveDraft() {
   error.value = '';
   try {
     if (draftId.value) {
-      await draftStore.updateDraft(draftId.value, form.value);
+      await draftStore.updateDraft(draftId.value, composerState());
     } else {
-      const created = await draftStore.createDraft(form.value, replyContext.value ?? undefined);
+      const created = await draftStore.createDraft(
+        composerState(),
+        replyContext.value ?? undefined
+      );
       draftId.value = created.id;
       void router.replace({ name: 'compose', params: { draftId: created.id } });
     }
@@ -171,7 +233,7 @@ async function send() {
   sending.value = true;
   error.value = '';
   try {
-    await draftStore.updateDraft(draftId.value, form.value);
+    await draftStore.updateDraft(draftId.value, composerState());
     await draftStore.sendDraft(draftId.value);
     void router.push({ name: 'inbox' });
   } catch {
@@ -218,6 +280,46 @@ async function send() {
         <input v-model="form.bcc" type="text" placeholder="Bcc" class="input" />
         <input v-model="form.subject" type="text" placeholder="Subject" class="input" />
         <RichTextEditor v-model="form.bodyHtml" />
+
+        <div class="rounded-lg border border-gray-300 px-4 py-3 dark:border-gray-700">
+          <div class="flex items-center justify-between">
+            <span class="text-sm font-medium">Attachments</span>
+            <label
+              class="cursor-pointer rounded-lg border px-3 py-1 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
+              :class="{ 'pointer-events-none opacity-50': uploading }"
+            >
+              {{ uploading ? 'Uploading...' : 'Attach files' }}
+              <input
+                ref="fileInput"
+                type="file"
+                multiple
+                class="hidden"
+                :disabled="uploading"
+                @change="onFileSelect"
+              />
+            </label>
+          </div>
+          <ul v-if="attachments.length" class="mt-2 space-y-1">
+            <li
+              v-for="att in attachments"
+              :key="att.blobId"
+              class="flex items-center justify-between rounded bg-gray-50 px-3 py-1 text-sm dark:bg-gray-800"
+            >
+              <span class="truncate">{{ att.filename }}</span>
+              <span class="ml-2 flex shrink-0 items-center gap-2 text-gray-500">
+                <span>{{ formatSize(att.size) }}</span>
+                <button
+                  type="button"
+                  class="text-red-600 hover:text-red-700"
+                  :aria-label="`Remove ${att.filename}`"
+                  @click="removeAttachment(att.blobId)"
+                >
+                  ✕
+                </button>
+              </span>
+            </li>
+          </ul>
+        </div>
       </div>
     </div>
   </AppLayout>
