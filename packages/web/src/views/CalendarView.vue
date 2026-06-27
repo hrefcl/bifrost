@@ -1,11 +1,15 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue';
+import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
+import AppIcon from '@/components/AppIcon.vue';
 import { useCalendarStore } from '@/stores/calendar';
 import { api } from '@/lib/http';
+import { colorFor } from '@/lib/people';
 import type { Account } from '@webmail6/shared';
 
 const store = useCalendarStore();
+const { t, locale } = useI18n();
 const accounts = ref<Account[]>([]);
 const showForm = ref(false);
 const form = ref({
@@ -34,6 +38,12 @@ const rangeEnd = computed(() => {
   return d.toISOString();
 });
 
+function fmtRange(start: string, end: string): string {
+  const s = new Date(start);
+  const e = new Date(end);
+  return `${s.toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' })} – ${e.toLocaleTimeString(locale.value, { timeStyle: 'short' })}`;
+}
+
 onMounted(async () => {
   void store.fetchEvents(rangeStart.value, rangeEnd.value);
   try {
@@ -45,10 +55,9 @@ onMounted(async () => {
   }
 });
 
-async function submit() {
-  await store.createEvent({ ...form.value, uid: `local-${String(Date.now())}` });
+function resetForm() {
   form.value = {
-    accountId: '',
+    accountId: accounts.value[0]?.id ?? '',
     calendarId: 'default',
     calendarName: 'Personal',
     uid: '',
@@ -60,67 +69,86 @@ async function submit() {
     allDay: false,
     status: 'confirmed' as const,
   };
+}
+
+async function submit() {
+  await store.createEvent({ ...form.value, uid: `local-${String(Date.now())}` });
+  resetForm();
   showForm.value = false;
 }
 </script>
 
 <template>
   <AppLayout>
-    <div class="p-6">
-      <div class="mb-4 flex items-center justify-between">
-        <h1 class="text-2xl font-bold">Calendar</h1>
-        <button
-          class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          @click="showForm = !showForm"
-        >
-          New event
+    <div class="cal">
+      <div class="cal-head">
+        <h1 class="cal-title">{{ t('calendar.title') }}</h1>
+        <button class="primary-btn" @click="showForm = !showForm">
+          <AppIcon name="plus" :size="18" />{{ t('calendar.new') }}
         </button>
       </div>
 
-      <form
-        v-if="showForm"
-        class="mb-6 space-y-3 rounded-xl border p-4 dark:border-gray-700"
-        @submit.prevent="submit"
-      >
-        <input
-          v-model="form.summary"
-          type="text"
-          placeholder="Event title"
-          required
-          class="input"
-        />
-        <select v-model="form.accountId" required class="input">
-          <option v-for="account in accounts" :key="account.id" :value="account.id">
-            {{ account.email }}
-          </option>
-        </select>
-        <div class="grid grid-cols-2 gap-2">
-          <input v-model="form.startDate" type="datetime-local" required class="input" />
-          <input v-model="form.endDate" type="datetime-local" required class="input" />
-        </div>
-        <label class="flex items-center gap-2 text-sm">
-          <input v-model="form.allDay" type="checkbox" />
-          All day
-        </label>
-        <button type="submit" class="rounded-lg bg-blue-600 px-4 py-2 text-white">Save</button>
-      </form>
-
-      <div class="space-y-2">
-        <div
-          v-for="event in store.events"
-          :key="event.id"
-          class="flex items-center justify-between rounded-lg border p-4 dark:border-gray-700"
-        >
-          <div>
-            <div class="font-medium">{{ event.summary }}</div>
-            <div class="text-sm text-gray-600 dark:text-gray-400">
-              {{ new Date(event.startDate).toLocaleString() }} —
-              {{ new Date(event.endDate).toLocaleString() }}
-            </div>
+      <div class="cal-body">
+        <form v-if="showForm" class="form-card" @submit.prevent="submit">
+          <input
+            v-model="form.summary"
+            type="text"
+            :placeholder="t('calendar.eventTitle')"
+            required
+            class="field"
+          />
+          <select v-model="form.accountId" required class="field">
+            <option v-for="account in accounts" :key="account.id" :value="account.id">
+              {{ account.email }}
+            </option>
+          </select>
+          <div class="grid2">
+            <label class="lbl"
+              >{{ t('calendar.start') }}
+              <input v-model="form.startDate" type="datetime-local" required class="field" />
+            </label>
+            <label class="lbl"
+              >{{ t('calendar.end') }}
+              <input v-model="form.endDate" type="datetime-local" required class="field" />
+            </label>
           </div>
-          <button class="text-sm text-red-600 hover:underline" @click="store.deleteEvent(event.id)">
-            Delete
-          </button>
+          <label class="check-row">
+            <input v-model="form.allDay" type="checkbox" />
+            {{ t('calendar.allDay') }}
+          </label>
+          <div class="form-actions">
+            <button type="submit" class="primary-btn">{{ t('calendar.save') }}</button>
+            <button type="button" class="ghost-btn" @click="showForm = false">
+              {{ t('calendar.cancel') }}
+            </button>
+          </div>
+        </form>
+
+        <div v-if="store.events.length === 0" class="empty">
+          <AppIcon name="calendar" :size="44" :stroke-width="1.3" />
+          <div>{{ t('calendar.empty') }}</div>
+        </div>
+        <div v-else class="agenda">
+          <div
+            v-for="event in store.events"
+            :key="event.id"
+            class="event"
+            :style="{ '--evcolor': colorFor(event.calendarName || event.summary) }"
+          >
+            <div class="event-text">
+              <div class="event-title">{{ event.summary }}</div>
+              <div class="event-time">
+                <AppIcon name="clock" :size="14" />{{ fmtRange(event.startDate, event.endDate) }}
+              </div>
+            </div>
+            <button
+              class="icon-btn danger"
+              :title="t('calendar.delete')"
+              @click="store.deleteEvent(event.id)"
+            >
+              <AppIcon name="trash" :size="18" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -128,7 +156,174 @@ async function submit() {
 </template>
 
 <style scoped>
-.input {
-  @apply w-full rounded-lg border border-gray-300 bg-white px-4 py-2 outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-800;
+.cal {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--surface);
+}
+.cal-head {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 24px;
+  height: 56px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.cal-title {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin: 0;
+  flex: 1;
+}
+.cal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  max-width: 760px;
+  width: 100%;
+  margin: 0 auto;
+}
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.primary-btn:hover {
+  background: var(--accent-700);
+}
+.ghost-btn {
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.ghost-btn:hover {
+  background: var(--hover);
+}
+.form-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  margin-bottom: 20px;
+  background: var(--bg);
+}
+.field {
+  width: 100%;
+  padding: 10px 14px;
+  font: inherit;
+  font-size: 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-1);
+  outline: none;
+}
+.field:focus {
+  border-color: var(--accent);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.lbl {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+.form-actions {
+  display: flex;
+  gap: 10px;
+}
+.agenda {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.event {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--evcolor);
+  background: color-mix(in srgb, var(--evcolor) 7%, var(--surface));
+}
+.event-text {
+  flex: 1;
+  min-width: 0;
+}
+.event-title {
+  font-size: 14.5px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.event-time {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn:hover {
+  background: var(--hover);
+}
+.icon-btn.danger:hover {
+  color: var(--danger);
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 60px 0;
 }
 </style>
