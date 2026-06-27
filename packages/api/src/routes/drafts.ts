@@ -7,6 +7,7 @@ import { sendDraft } from '../services/smtp.js';
 import { appendToSent } from '../services/imap.js';
 import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
+import { providerForType } from '../services/storage/index.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
 import type { StoredDraftAttachment } from '../models/Draft.js';
 import type { Draft as DraftDto } from '@webmail6/shared';
@@ -342,4 +343,46 @@ export async function recoverStuckDrafts(maxAgeMs = 5 * 60 * 1000): Promise<numb
     { $set: { status: 'failed' }, $unset: { sendingSince: 1 } }
   );
   return res.modifiedCount;
+}
+
+/**
+ * Recolección de AttachmentBlobs huérfanos (MARK-AND-SWEEP, no refcount).
+ *
+ * Un blob se borra (bytes del provider + doc Mongo) si NO lo referencia ningún draft que aún
+ * lo necesite — editing/failed (el usuario puede enviarlo) o sending (se está leyendo AHORA) —
+ * y es más viejo que `maxAgeMs` (gracia para la ventana subir→adjuntar y para no pisar uploads
+ * recién hechos). Esto recupera: subidas descartadas, adjuntos de drafts borrados, y blobs de
+ * drafts ya enviados (la copia vive en IMAP Sent). Pensado para el barrido periódico del boot.
+ *
+ * Mark-and-sweep en vez de refCount: no hay que mantener contadores en cada attach/detach/delete
+ * (frágil); el estado de los drafts ES la verdad de qué blobs siguen vivos.
+ */
+export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): Promise<number> {
+  const cutoff = new Date(Date.now() - maxAgeMs);
+  // blobIds aún referenciados por drafts que podrían leerlos (NO los 'sent', ya enviados).
+  const liveIds = await Draft.distinct('attachments.blobId', {
+    status: { $in: ['editing', 'failed', 'sending'] },
+  });
+  const live = new Set(liveIds.map(String));
+
+  // Sólo candidatos suficientemente viejos (no pisar un upload en curso aún sin adjuntar).
+  const candidates = await AttachmentBlob.find({ createdAt: { $lt: cutoff } })
+    .select('_id storageKey providerType')
+    .lean();
+
+  let deleted = 0;
+  for (const blob of candidates) {
+    if (live.has(blob._id.toString())) continue;
+    try {
+      const provider = await providerForType(blob.providerType);
+      await provider.delete(blob.storageKey);
+    } catch {
+      // Borrado del storage best-effort: si el provider falla, NO removemos el doc para
+      // reintentar en el próximo barrido (no dejamos el doc apuntando a bytes que sí existen).
+      continue;
+    }
+    await AttachmentBlob.deleteOne({ _id: blob._id });
+    deleted++;
+  }
+  return deleted;
 }

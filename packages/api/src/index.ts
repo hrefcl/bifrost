@@ -31,10 +31,14 @@ async function main() {
   const app = await buildApp();
   serverApp = app;
 
-  // Barrido de recuperación: revierte borradores colgados en 'sending' a 'failed'.
-  const { recoverStuckDrafts } = await import('./routes/drafts.js');
-  // Una vez al boot (un crash previo pudo dejar drafts en 'sending').
+  // Barridos periódicos: (a) revierte borradores colgados en 'sending' a 'failed';
+  // (b) recolecta AttachmentBlobs huérfanos (subidas descartadas, drafts borrados/enviados).
+  const { recoverStuckDrafts, cleanupOrphanAttachments } = await import('./routes/drafts.js');
+  // Una vez al boot (un crash previo pudo dejar drafts en 'sending' o blobs huérfanos).
   await recoverStuckDrafts().catch((err: unknown) => {
+    app.log.error(err);
+  });
+  await cleanupOrphanAttachments().catch((err: unknown) => {
     app.log.error(err);
   });
   stuckSweep = setInterval(
@@ -42,6 +46,14 @@ async function main() {
       void recoverStuckDrafts().then(
         (n) => {
           if (n > 0) app.log.warn(`recovered ${String(n)} stuck draft(s)`);
+        },
+        (err: unknown) => {
+          app.log.error(err);
+        }
+      );
+      void cleanupOrphanAttachments().then(
+        (n) => {
+          if (n > 0) app.log.info(`cleaned ${String(n)} orphan attachment(s)`);
         },
         (err: unknown) => {
           app.log.error(err);

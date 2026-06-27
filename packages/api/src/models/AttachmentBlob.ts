@@ -5,7 +5,9 @@ import type { StorageType } from '../services/storage/index.js';
  * Fuente de verdad de un adjunto subido (no se confía en el `storageKey` que mande el cliente
  * — ver review B/D de PR-B). Cada blob es DUEÑO-bound (`userId`) y PROVIDER-bound
  * (`providerType`): las lecturas van SIEMPRE al provider de origen, aunque el activo cambie.
- * `refCount` permite que forward reuse el mismo blob; cleanup cuando llega a 0 (PR-H).
+ * Lifecycle: los blobs huérfanos (no referenciados por ningún draft accionable) se recolectan
+ * por MARK-AND-SWEEP en `cleanupOrphanAttachments` (barrido periódico), no por `refCount`.
+ * `refCount` queda como metadato informativo (default 1); el GC no depende de él.
  */
 export interface IAttachmentBlob extends Document {
   storageKey: string;
