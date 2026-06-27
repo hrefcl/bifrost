@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
@@ -53,6 +53,28 @@ const ccVisible = computed(
 function composerState() {
   return { ...form.value, attachmentIds: attachments.value.map((a) => a.blobId) };
 }
+
+// Guard anti-pérdida: si el usuario cierra/recarga la pestaña con cambios sin guardar, avisar.
+// Sólo cubre el unload REAL del navegador (cerrar pestaña, recargar, navegar fuera del SPA);
+// la navegación interna de vue-router NO dispara `beforeunload`, así que no molesta al flujo
+// normal (enviar → volver al inbox) ni a los tests e2e.
+const pristine = ref('');
+const leaving = ref(false);
+function snapshot(): string {
+  return JSON.stringify({ ...form.value, atts: attachments.value.map((a) => a.blobId) });
+}
+const dirty = computed(() => !leaving.value && snapshot() !== pristine.value);
+function beforeUnloadHandler(e: BeforeUnloadEvent): void {
+  // preventDefault() es el mecanismo moderno (spec) para disparar el prompt nativo de
+  // "¿salir sin guardar?"; `returnValue` quedó deprecado.
+  if (dirty.value) e.preventDefault();
+}
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnloadHandler);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnloadHandler);
+});
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${String(bytes)} B`;
@@ -223,6 +245,10 @@ onMounted(async () => {
     }
   } catch {
     error.value = t('composer.errLoad');
+  } finally {
+    // Baseline "limpio" tras la carga (incluye firma/precarga de reply): a partir de acá,
+    // cualquier cambio del usuario marca el composer como sucio para el guard anti-pérdida.
+    pristine.value = snapshot();
   }
 });
 
@@ -247,6 +273,8 @@ async function saveDraft() {
       draftId.value = created.id;
       void router.replace({ name: 'compose', params: { draftId: created.id } });
     }
+    // Guardado OK → este estado es el nuevo baseline (no hay pérdida que advertir).
+    pristine.value = snapshot();
   } catch {
     error.value = t('composer.errSave');
   } finally {
@@ -270,6 +298,7 @@ async function send() {
   try {
     await draftStore.updateDraft(draftId.value, composerState());
     await draftStore.sendDraft(draftId.value);
+    leaving.value = true; // enviado: salir sin advertir
     void router.push({ name: 'inbox' });
   } catch {
     error.value = t('composer.errSend');
@@ -279,6 +308,7 @@ async function send() {
 }
 
 function discard() {
+  leaving.value = true; // salida intencional: no advertir
   void router.push({ name: 'inbox' });
 }
 </script>
