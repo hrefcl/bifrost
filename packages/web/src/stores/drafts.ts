@@ -10,6 +10,8 @@ export interface ComposerState {
   bcc: string;
   subject: string;
   bodyHtml: string;
+  // blobIds de adjuntos ya subidos (POST /api/attachments). El backend valida ownership.
+  attachmentIds?: string[];
 }
 
 /** Contexto de threading para responder (el backend setea In-Reply-To/References al enviar). */
@@ -35,6 +37,7 @@ export const useDraftStore = defineStore('drafts', () => {
       bcc: parseAddresses(state.bcc),
       subject: state.subject,
       bodyHtml: state.bodyHtml,
+      attachmentIds: state.attachmentIds ?? [],
       // Threading: sólo al crear. El PATCH posterior (update→send) preserva replyTo porque
       // el backend no lo toca si no se envía. El backend valida ownership del email original.
       ...(replyTo
@@ -56,6 +59,7 @@ export const useDraftStore = defineStore('drafts', () => {
       bcc: parseAddresses(state.bcc),
       subject: state.subject,
       bodyHtml: state.bodyHtml,
+      attachmentIds: state.attachmentIds ?? [],
     });
     return data;
   }

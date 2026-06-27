@@ -14,6 +14,8 @@
  * (config/env valida con zod al importarse), por eso todo lo dependiente de env se carga
  * con import() dinámico tras setearlas.
  */
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
 
@@ -32,6 +34,9 @@ async function main(): Promise<void> {
   // Access token de vida corta para ejercitar el interceptor de refresh-on-401 del front
   // (en prod es 15m). El flujo feliz dura <1s; el test del interceptor espera a que expire.
   process.env.JWT_ACCESS_TTL = process.env.JWT_ACCESS_TTL ?? '3s';
+  // Storage de adjuntos (provider local) en un tmp efímero, no en el repo.
+  process.env.ATTACHMENTS_DIR =
+    process.env.ATTACHMENTS_DIR ?? path.join(tmpdir(), 'bifrost-e2e-attachments');
 
   // 2) Inyectar los transportes fake en el seam (antes de construir la app).
   const { setImapClientFactory, setSmtpTransportFactory } =

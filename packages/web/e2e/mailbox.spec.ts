@@ -118,6 +118,108 @@ test('full flow: login → sync → read email body → compose & send', async (
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible();
 });
 
+test('adjuntos: subir un archivo en el composer y enviarlo (upload UI → send real)', async ({
+  page,
+}) => {
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await page.fill('input[placeholder="To"]', 'destinatario@example.com');
+  await page.fill('input[placeholder="Subject"]', 'Con adjunto E2E');
+  await page.locator('.ProseMirror').click();
+  await page.locator('.ProseMirror').fill('Mirá el adjunto.');
+
+  // Adjuntar un archivo: el input está oculto tras el label "Attach files". setInputFiles
+  // dispara el change → POST /api/attachments (storage real local) → blobId.
+  const uploadResp = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/attachments') && r.request().method() === 'POST' && r.status() === 200
+  );
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'reporte-e2e.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('contenido del adjunto e2e'),
+  });
+  await uploadResp;
+
+  // El adjunto aparece en la lista del composer.
+  await expect(page.getByText('reporte-e2e.txt')).toBeVisible({ timeout: 15_000 });
+
+  // Quitar el adjunto lo saca de la lista (y por tanto del payload attachmentIds)...
+  await page.getByRole('button', { name: 'Remove reporte-e2e.txt' }).click();
+  await expect(page.getByText('reporte-e2e.txt')).toHaveCount(0);
+
+  // ...y re-adjuntar el MISMO archivo vuelve a funcionar (el input se resetea en finally).
+  const reupload = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/attachments') && r.request().method() === 'POST' && r.status() === 200
+  );
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'reporte-e2e.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('contenido del adjunto e2e'),
+  });
+  const reuploadResp = await reupload;
+  const { id: blobId } = (await reuploadResp.json()) as { id: string };
+  await expect(page.getByText('reporte-e2e.txt')).toBeVisible({ timeout: 15_000 });
+
+  // Enviar. Verificamos explícitamente que el blobId subido viaja en attachmentIds al crear
+  // el draft (POST /drafts): sin esto el test pasaría aunque el wiring se rompiera, porque el
+  // backend puede enviar un correo sin adjuntos.
+  const createResp = page.waitForResponse(
+    (r) => r.url().endsWith('/api/drafts') && r.request().method() === 'POST' && r.status() === 200
+  );
+  const sendResp = page.waitForResponse(
+    (r) =>
+      /\/api\/drafts\/.+\/send$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Send' }).click();
+
+  const createReq = (await createResp).request();
+  const createBody = createReq.postDataJSON() as { attachmentIds?: string[] };
+  expect(createBody.attachmentIds, 'el draft creado debe llevar el blobId subido').toContain(
+    blobId
+  );
+  await sendResp;
+
+  await expect(page).toHaveURL(/\/$|\/#?$/);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible();
+});
+
+test('adjuntos: Send/Save quedan deshabilitados mientras un upload está en curso (anti pérdida silenciosa)', async ({
+  page,
+}) => {
+  // Regresión del HIGH que marcó B: enviar con un upload pendiente mandaría el correo SIN ese
+  // adjunto. Demoramos el POST /attachments para atrapar la ventana "Uploading...".
+  await page.route('**/api/attachments', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    await route.continue();
+  });
+
+  await loginViaUi(page);
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await page.getByRole('button', { name: 'Compose' }).click();
+  await page.fill('input[placeholder="To"]', 'destinatario@example.com');
+
+  await page.locator('input[type="file"]').setInputFiles({
+    name: 'lento.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('subida lenta'),
+  });
+
+  // Mientras sube: el label muestra "Uploading..." y AMBOS botones están deshabilitados.
+  await expect(page.getByText('Uploading...')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Send' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+
+  // Al completar, se rehabilitan y el adjunto ya está en la lista.
+  await expect(page.getByText('lento.txt')).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Send' })).toBeEnabled();
+});
+
 test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', async ({ page }) => {
   // Antes este flujo estaba ROTO: ComposerView ignoraba route.query.replyTo → clic en Reply
   // abría un composer en blanco. Verifica la precarga + que el threading llega al backend.
