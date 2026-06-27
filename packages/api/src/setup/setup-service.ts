@@ -80,12 +80,13 @@ export async function performSetup(payload: SetupPayload): Promise<SetupResult> 
     const { Account } = await import('../models/Account.js');
     const { SystemConfig } = await import('../models/SystemConfig.js');
 
-    // Upsert idempotente del usuario admin.
+    // Upsert idempotente del usuario admin. role:'admin' se fija acá (en el setup inicial,
+    // cuando el sistema aún no tiene config) — NUNCA en el auto-registro por login.
     const user = await User.findOneAndUpdate(
       { primaryEmail: payload.admin.email },
       {
         $setOnInsert: { primaryEmail: payload.admin.email },
-        $set: { displayName: payload.admin.displayName },
+        $set: { displayName: payload.admin.displayName, role: 'admin' },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );

@@ -1,6 +1,25 @@
 import { Account, type IAccount } from '../models/Account.js';
 import { Email, type IEmail } from '../models/Email.js';
 import { Folder, type IFolder } from '../models/Folder.js';
+import { User } from '../models/User.js';
+
+/** Error de autorización admin → 403 (a diferencia de OwnershipError que es 404). */
+export class ForbiddenError extends Error {
+  statusCode = 403;
+  constructor(message = 'Admin role required') {
+    super(message);
+    this.name = 'Forbidden';
+  }
+}
+
+/**
+ * Exige rol admin CONSULTANDO LA DB (no se confía en el claim del JWT: el rol pudo cambiar
+ * o el token ser viejo). Para preHandlers de rutas /admin. Lanza ForbiddenError (403) si no.
+ */
+export async function requireAdmin(userId: string): Promise<void> {
+  const user = await User.findById(userId).select('role').lean();
+  if (user?.role !== 'admin') throw new ForbiddenError();
+}
 
 /**
  * Error de autorización por propiedad. Se mapea a 404 (no 403) a propósito:

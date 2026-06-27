@@ -236,6 +236,7 @@ export function toLoginResponse(
       id: user._id.toString(),
       primaryEmail: user.primaryEmail,
       displayName: user.displayName,
+      role: user.role,
       avatarUrl: user.avatarUrl,
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),

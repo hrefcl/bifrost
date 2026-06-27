@@ -4,6 +4,8 @@ import type { UserPreferences } from '@webmail6/shared';
 export interface IUser extends Document {
   primaryEmail: string;
   displayName: string;
+  /** 'admin' sólo lo designa el setup inicial o el CLI de recuperación (nunca el auto-registro). */
+  role: 'user' | 'admin';
   avatarUrl?: string;
   preferences: UserPreferences;
   createdAt: Date;
@@ -15,6 +17,9 @@ const UserSchema = new Schema<IUser>(
   {
     primaryEmail: { type: String, required: true, unique: true, index: true },
     displayName: { type: String, required: true },
+    // Default 'user': el auto-registro por login IMAP NUNCA crea admins. Sólo el setup
+    // inicial o el CLI admin:grant designan 'admin'.
+    role: { type: String, enum: ['user', 'admin'], default: 'user', index: true },
     avatarUrl: { type: String },
     preferences: {
       language: { type: String, default: 'es' },
