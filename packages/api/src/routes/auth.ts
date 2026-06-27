@@ -59,11 +59,23 @@ function cookieOptions() {
   };
 }
 
+/** Lee un límite por env con guard de NaN/≤0 (un typo no debe romper ni desactivar el límite). */
+function rateMax(envVar: string, fallback: number): number {
+  const n = Number(process.env[envVar] ?? String(fallback));
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
 export default function authRoutes(fastify: FastifyInstance) {
+  // Límites configurables por env: en prod los defaults estrictos (10 login / 30 refresh por
+  // minuto) se mantienen; el harness E2E (suite serial desde una sola IP) los eleva para no
+  // chocar el techo. Ver el límite global en app.ts (RATE_LIMIT_MAX).
+  const loginMax = rateMax('AUTH_LOGIN_RATE_MAX', 10);
+  const refreshMax = rateMax('AUTH_REFRESH_RATE_MAX', 30);
+
   fastify.post<{ Body: LoginRequest; Reply: LoginResponse }>(
     '/login',
     // Rate limit estricto: login verifica credenciales IMAP reales (anti fuerza bruta).
-    { config: { requiresAuth: false, rateLimit: { max: 10, timeWindow: '1 minute' } } },
+    { config: { requiresAuth: false, rateLimit: { max: loginMax, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const body = loginSchema.parse(request.body);
       const { user, account } = await loginOrRegister(body);
@@ -94,7 +106,7 @@ export default function authRoutes(fastify: FastifyInstance) {
 
   fastify.post<{ Body: { refreshToken?: string }; Reply: RefreshResponse }>(
     '/refresh',
-    { config: { requiresAuth: false, rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    { config: { requiresAuth: false, rateLimit: { max: refreshMax, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const parsed = refreshBodySchema.parse(request.body);
       const refreshToken = parsed.refreshToken ?? request.cookies.refresh_token;

@@ -41,6 +41,10 @@ async function main(): Promise<void> {
   // (localhost) y excede las 100/min por defecto hacia el final del spec → 429 en los últimos
   // tests (p.ej. el PATCH de storage del admin). En prod el límite real (100/min) se mantiene.
   process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX ?? '100000';
+  // Idem para los límites por-ruta de auth (login 10/min, refresh 30/min en prod): la suite
+  // serial hace un login por test desde una sola IP y chocaría el techo al sumar specs.
+  process.env.AUTH_LOGIN_RATE_MAX = process.env.AUTH_LOGIN_RATE_MAX ?? '100000';
+  process.env.AUTH_REFRESH_RATE_MAX = process.env.AUTH_REFRESH_RATE_MAX ?? '100000';
   // Storage de adjuntos (provider local) en un tmp efímero, no en el repo.
   process.env.ATTACHMENTS_DIR =
     process.env.ATTACHMENTS_DIR ?? path.join(tmpdir(), 'bifrost-e2e-attachments');
