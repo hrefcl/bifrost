@@ -42,6 +42,12 @@ const router = createRouter({
       name: 'calendar',
       component: () => import('@/views/CalendarView.vue'),
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { requiresAdmin: true },
+    },
   ],
 });
 
@@ -51,6 +57,10 @@ router.beforeEach((to) => {
     return { name: 'login' };
   }
   if (to.meta.public && auth.isAuthenticated) {
+    return { name: 'inbox' };
+  }
+  // Gate de admin en el cliente (defensa en UX; el backend re-valida rol en cada endpoint).
+  if (to.meta.requiresAdmin && auth.user?.role !== 'admin') {
     return { name: 'inbox' };
   }
   return true;

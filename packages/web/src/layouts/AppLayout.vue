@@ -32,6 +32,12 @@ const settings = useSettingsStore();
             class="rounded-lg px-3 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
             >Settings</router-link
           >
+          <router-link
+            v-if="auth.user?.role === 'admin'"
+            :to="{ name: 'admin' }"
+            class="rounded-lg px-3 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
+            >Admin</router-link
+          >
         </nav>
         <span class="text-sm text-gray-600 dark:text-gray-400">{{ auth.user?.primaryEmail }}</span>
         <button
