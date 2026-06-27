@@ -311,7 +311,7 @@ async function send() {
             <span class="text-sm font-medium">Attachments</span>
             <label
               class="cursor-pointer rounded-lg border px-3 py-1 text-sm hover:bg-gray-100 dark:border-gray-700 dark:hover:bg-gray-800"
-              :class="{ 'pointer-events-none opacity-50': uploading }"
+              :class="{ 'pointer-events-none opacity-50': uploading || saving || sending }"
             >
               {{ uploading ? 'Uploading...' : 'Attach files' }}
               <input
@@ -319,7 +319,7 @@ async function send() {
                 type="file"
                 multiple
                 class="hidden"
-                :disabled="uploading"
+                :disabled="uploading || saving || sending"
                 @change="onFileSelect"
               />
             </label>
