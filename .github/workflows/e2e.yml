@@ -11,9 +11,13 @@ on:
 # mongodb-memory-server + Redis mock (ioredis-mock) + transportes IMAP/SMTP fake
 # (ver packages/api/e2e/server.ts) y el dev server de la web. No requiere servicios
 # externos de Mongo/Redis ni secretos: el server E2E provee sus propios valores.
+permissions:
+  contents: read
+
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
