@@ -105,6 +105,22 @@ describe('S3Storage (fetch mockeado — verifica request firmada; no toca S3 rea
     await expect(verifyS3Connection(OPTS)).rejects.toThrow();
   });
 
+  it('verifyS3Connection: si el DELETE falla (sin permiso de borrado) → rechaza (no se traga)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: Request) => {
+        if (input.method === 'GET') {
+          return Promise.resolve(
+            new Response(new Uint8Array(Buffer.from('bifrost-connectivity-probe')), { status: 200 })
+          );
+        }
+        if (input.method === 'DELETE') return Promise.resolve(new Response(null, { status: 403 }));
+        return Promise.resolve(new Response(null, { status: 200 })); // PUT ok
+      })
+    );
+    await expect(verifyS3Connection(OPTS)).rejects.toThrow(/S3 delete failed/);
+  });
+
   it('isSafeS3Endpoint: bloquea metadata (incl. variantes), esquemas y estructura peligrosa', () => {
     expect(isSafeS3Endpoint('https://s3.amazonaws.com')).toBe(true);
     expect(isSafeS3Endpoint('http://minio:9000')).toBe(true);

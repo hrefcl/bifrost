@@ -63,6 +63,7 @@ function choose(provider: ProviderType) {
   selected.value = provider;
   saved.value = false;
   error.value = '';
+  tested.value = null; // el resultado de "Probar conexión" no aplica al nuevo provider.
   // Defensa en profundidad: no retener el secret si el admin se va de S3 sin guardar.
   if (provider !== 's3') s3.value.secretAccessKey = '';
 }
@@ -275,6 +276,13 @@ async function save() {
               <span v-if="saved" class="text-sm text-green-600">Guardado</span>
               <span v-if="error" class="text-sm text-red-600">{{ error }}</span>
             </div>
+            <p
+              v-if="selected === 's3' && tested !== 'ok' && !s3Incomplete()"
+              class="text-xs text-amber-600"
+            >
+              Sugerido: probá la conexión antes de guardar — si los datos son incorrectos, los
+              adjuntos nuevos fallarán.
+            </p>
             <p
               v-if="current?.updatedAt"
               class="text-xs text-gray-400"
