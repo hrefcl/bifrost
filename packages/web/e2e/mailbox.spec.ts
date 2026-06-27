@@ -21,8 +21,9 @@ interface LoginResult {
 }
 
 async function loginViaUi(page: Page, email: string = LOGIN.email): Promise<LoginResult> {
-  // La UI es multi-idioma con español por defecto. Fijamos inglés para aserciones de texto
-  // deterministas y para alinear con los views aún no migrados a i18n (Composer/Settings/Admin).
+  // La UI es multi-idioma con español por defecto. Fijamos inglés para que las aserciones de
+  // texto sean DETERMINISTAS (toda la UI está i18n; este pin sólo elige el idioma de las
+  // aserciones, no compensa views sin migrar).
   await page.addInitScript(() => window.localStorage.setItem('locale', 'en'));
   await page.goto('/login');
   await page.fill('input[type="email"]', email);
@@ -381,11 +382,11 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
 
   // El acceso a Admin es un botón-icono (escudo) en la topbar, sólo para role==='admin'.
   await page.getByRole('button', { name: 'Administration' }).click();
-  await expect(page.getByRole('heading', { name: 'Administración' })).toBeVisible({
+  await expect(page.getByRole('heading', { name: 'Administration' })).toBeVisible({
     timeout: 15_000,
   });
   // La config actual se cargó desde GET /admin/config/storage (default local).
-  await expect(page.getByText('Servidor local', { exact: false })).toBeVisible();
+  await expect(page.getByText('Local server', { exact: false })).toBeVisible();
 
   // Guardar 'local' → PATCH /admin/config/storage 200 → "Guardado" (indicador de éxito real).
   const patchResp = page.waitForResponse(
@@ -394,9 +395,9 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
       r.request().method() === 'PATCH' &&
       r.status() === 200
   );
-  await page.getByRole('button', { name: 'Guardar' }).click();
+  await page.getByRole('button', { name: 'Save' }).click();
   expect((await patchResp).status()).toBe(200);
-  await expect(page.getByText('Guardado', { exact: true })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 });
 });
 
 test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox', async ({
@@ -415,5 +416,5 @@ test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox
   // reload, o a login si se perdió; ambos son "fuera del panel").
   await page.goto('/admin');
   await expect(page).not.toHaveURL(/\/admin/);
-  await expect(page.getByRole('heading', { name: 'Administración' })).toHaveCount(0);
+  await expect(page.getByRole('heading', { name: 'Administration' })).toHaveCount(0);
 });

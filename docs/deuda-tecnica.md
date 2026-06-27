@@ -184,26 +184,39 @@ ningún merge con HIGH abierto o score <9):
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 
-### TD-UI-MAQUETA (PARCIAL — brecha de diseño, hallada en auto-auditoría #7)
+### TD-UI-MAQUETA (UI COMPLETA, falta review B/D — hallada en auto-auditoría #7)
 La UI implementada era un MVP funcional plano que **no coincidía con la maqueta**
-(`maqueta/Webmail 6.0/`, prototipo React pulido).
+(`maqueta/Webmail 6.0/`, prototipo React pulido). **Reconstruida por completo (auto-auditorías
+#8–#12).**
 
-**Cerrado (auto-auditoría #8):** sistema de diseño con tokens de la maqueta
-(`src/assets/theme.css`, accent `#1b66ff`, Public Sans, light/dark), **marca Bifrost
-parametrizable** (`src/config/brand.ts`, env `VITE_BRAND_*`), **i18n completo** (`vue-i18n`,
-español por defecto + inglés, conmutable; `src/i18n/`), y reescritura fiel de **Login**
-(account card de marca), **shell/TopBar** (logo, búsqueda, iconos, avatar con menú) e **Inbox**
-(sidebar con iconos/contadores reales, categorías, filas con avatar/estrella/preview/adjunto,
-panel de lectura). Cableado a datos reales. Verificado: unit (web 7/7, api 147/147), **e2e 10/10**,
-lint+typecheck+build limpios, screenshots vs maqueta.
+**Base:** sistema de diseño con tokens de la maqueta (`src/assets/theme.css`, accent `#1b66ff`,
+Public Sans, light/dark), **marca Bifrost parametrizable** (`src/config/brand.ts`, env
+`VITE_BRAND_*`), **i18n completo** (`vue-i18n`, español por defecto + inglés, conmutable;
+`src/i18n/`), componentes (AppIcon/AppAvatar/AppLogo).
 
-**Pendiente (sigue ALTA):**
-1. Reestilar a la maqueta + i18n los views restantes: **Composer, Settings, Admin, Contacts,
-   Calendar** (hoy Tailwind/inglés hardcodeado). Por esto el e2e fija `locale=en` (smell que
-   documenta la deuda).
-2. Afordances visuales no funcionales (mirror de la maqueta): pestañas de categoría
-   Novedades/Promociones (sin categorización en backend), búsqueda (filtra solo la carpeta
-   cargada en cliente), iconos posponer/etiquetar/imprimir/filtrar/más.
-3. Branding **runtime** (config de marca editable por admin) además del build-time actual.
+**Los 7 views reescritos a la maqueta + i18n, cableados a datos reales:** Login (account card),
+shell/TopBar (logo, búsqueda, iconos, avatar con menú idioma+logout, shield admin solo-rol),
+Inbox (sidebar iconos/contadores reales, categorías, filas avatar/estrella/preview/adjunto,
+panel lectura), Composer (estilo Gmail, adjuntos+guard, reply/forward), Settings (dos paneles;
+Tema/Idioma/**acento configurable en runtime**/Firma/Seguridad), Contacts (lista con avatares),
+Calendar (header + agenda), Admin (wizard storage local/S3).
+
+**Bugs reales hallados al verificar (no teatro de MD):** (a) flake e2e admin = **rate limit
+100/min** agotado por la suite serial (no "timing/TTL" como decían sesiones previas) → env-gated;
+(b) **crear evento de calendario estaba 100% roto** (datetime-local ≠ ISO `.datetime()` → 400)
+→ fix conversión a ISO, verificado POST 400→200.
+
+Verificado: unit web 7/7 + api 147/147, **e2e 10/10 estable (×3)**, typecheck+lint+build limpios,
+screenshots de los 7 views vs maqueta. El e2e fija `locale=en` sólo para determinismo (toda la
+UI está i18n).
+
+**Pendiente:**
+1. **Review B+D del rebuild completo** (regla de oro: no cerrar fase sin B+C+D). Único bloqueante
+   para declarar la fase cerrada.
+2. Afordances visuales no funcionales (mirror de la maqueta): categorías Novedades/Promociones
+   (sin categorización en backend), búsqueda (filtra sólo la carpeta cargada en cliente), iconos
+   posponer/etiquetar/imprimir/filtrar/más.
+3. Branding **runtime** editable por admin (además del build-time + el acento por-usuario ya hecho).
+4. Cobertura e2e de Contacts/Calendar (hoy sin specs propios).
 
 Para verlo: `pnpm demo`.

@@ -143,6 +143,41 @@ export default {
     delete: 'Delete',
     empty: 'No events in this range',
   },
+  admin: {
+    title: 'Administration',
+    step: 'Step 1 of 1 — Attachment storage',
+    question: 'Where are attachments stored?',
+    questionDesc:
+      'Choose where files that users attach to their emails are stored. You can change it later; already-stored attachments keep being read from their origin.',
+    available: 'Available',
+    localTitle: 'Local server (recommended)',
+    localDesc:
+      'Files are stored on the server’s own disk. No extra configuration. Ideal to get started or for self-hosted installs.',
+    s3Title: 'S3 / compatible (MinIO, R2, …)',
+    s3Desc:
+      'Files are stored in an S3 bucket. Requires endpoint, bucket, region and credentials (the secret key is encrypted and never shown).',
+    endpoint: 'Endpoint (optional for AWS)',
+    bucket: 'Bucket',
+    region: 'Region',
+    accessKeyId: 'Access Key ID',
+    secret: 'Secret Access Key',
+    secretConfigured: '(already set — re-enter it to change the configuration)',
+    secretPlaceholderSet: 'Re-enter secret to change',
+    test: 'Test connection',
+    testing: 'Testing…',
+    testOk: '✓ Connection OK',
+    testFail: '✗ Could not connect to the bucket',
+    testHint:
+      'Suggested: test the connection before saving — if the data is wrong, new attachments will fail.',
+    save: 'Save',
+    saving: 'Saving…',
+    saved: 'Saved',
+    current: 'Current: {provider} · updated {date}',
+    errLoad: 'Failed to load storage configuration',
+    errInvalid:
+      'Invalid S3 data. Check the fields: endpoint (http/https, no path), region (e.g. us-east-1) and credentials.',
+    errSave: 'Failed to save configuration',
+  },
   errors: {
     accounts: 'Failed to load accounts',
     folders: 'Failed to load folders',

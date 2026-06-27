@@ -143,6 +143,41 @@ export default {
     delete: 'Eliminar',
     empty: 'No hay eventos en este rango',
   },
+  admin: {
+    title: 'Administración',
+    step: 'Paso 1 de 1 — Almacenamiento de adjuntos',
+    question: '¿Dónde se guardan los adjuntos?',
+    questionDesc:
+      'Elegí el destino de los archivos que los usuarios adjuntan a sus correos. Podés cambiarlo más adelante; los adjuntos ya guardados se siguen leyendo de su origen.',
+    available: 'Disponible',
+    localTitle: 'Servidor local (recomendado)',
+    localDesc:
+      'Los archivos se guardan en el disco del propio servidor. Sin configuración adicional. Ideal para empezar o para instalaciones self-hosted.',
+    s3Title: 'S3 / compatible (MinIO, R2, …)',
+    s3Desc:
+      'Los archivos se guardan en un bucket S3. Requiere endpoint, bucket, región y credenciales (la clave secreta se cifra y nunca se muestra).',
+    endpoint: 'Endpoint (opcional para AWS)',
+    bucket: 'Bucket',
+    region: 'Región',
+    accessKeyId: 'Access Key ID',
+    secret: 'Secret Access Key',
+    secretConfigured: '(ya configurada — re-ingresala para cambiar la configuración)',
+    secretPlaceholderSet: 'Re-ingresar secret para cambiar',
+    test: 'Probar conexión',
+    testing: 'Probando…',
+    testOk: '✓ Conexión OK',
+    testFail: '✗ No se pudo conectar al bucket',
+    testHint:
+      'Sugerido: probá la conexión antes de guardar — si los datos son incorrectos, los adjuntos nuevos fallarán.',
+    save: 'Guardar',
+    saving: 'Guardando…',
+    saved: 'Guardado',
+    current: 'Actual: {provider} · actualizado {date}',
+    errLoad: 'No se pudo cargar la configuración de almacenamiento',
+    errInvalid:
+      'Datos de S3 inválidos. Revisá los campos: endpoint (http/https, sin ruta), región (ej. us-east-1) y credenciales.',
+    errSave: 'No se pudo guardar la configuración',
+  },
   errors: {
     accounts: 'No se pudieron cargar las cuentas',
     folders: 'No se pudieron cargar las carpetas',
