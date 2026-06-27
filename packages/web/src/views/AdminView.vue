@@ -30,7 +30,12 @@ interface StorageConfig {
   updatedAt?: string;
 }
 
-const { t } = useI18n();
+const { t, locale } = useI18n();
+
+/** Fecha legible y localizada (en vez del ISO crudo — review D). */
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' });
+}
 
 const loading = ref(true);
 const saving = ref(false);
@@ -249,7 +254,12 @@ async function save() {
               {{ t('admin.testHint') }}
             </p>
             <p v-if="current?.updatedAt" class="current" data-testid="storage-current">
-              {{ t('admin.current', { provider: current.providerType, date: current.updatedAt }) }}
+              {{
+                t('admin.current', {
+                  provider: current.providerType,
+                  date: fmtDate(current.updatedAt),
+                })
+              }}
             </p>
           </div>
         </div>
