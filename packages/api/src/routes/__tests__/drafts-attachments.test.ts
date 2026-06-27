@@ -197,6 +197,27 @@ describe('adjuntos en drafts + envío (PR-C2)', () => {
     expect((JSON.parse(patched.body) as { attachments: unknown[] }).attachments).toHaveLength(0);
   });
 
+  it('LEASE: no se puede adjuntar un blob que el GC marcó "deleting" → 404', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'lease@test.com' });
+    const uid = user._id.toString();
+    const blobId = await upload(app, uid, 'x.txt', Buffer.from('x'));
+    // El GC tomó el lease del blob (status deleting).
+    const { AttachmentBlob } = await import('../../models/AttachmentBlob.js');
+    await AttachmentBlob.updateOne({ _id: blobId }, { $set: { status: 'deleting' } });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: [blobId],
+      },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
   it('ANTI-DoS: más de 25 attachmentIds → 400 (gate del schema, antes de tocar la DB)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
     const uid = user._id.toString();

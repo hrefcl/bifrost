@@ -7,6 +7,7 @@ import { sendDraft } from '../services/smtp.js';
 import { appendToSent } from '../services/imap.js';
 import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
+import { providerForType } from '../services/storage/index.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
 import type { StoredDraftAttachment } from '../models/Draft.js';
 import type { Draft as DraftDto } from '@webmail6/shared';
@@ -41,6 +42,19 @@ async function resolveAttachments(
   // se llama el helper desde otro path.
   if (unique.length > MAX_ATTACHMENTS) {
     throw new PayloadTooLargeError(`Too many attachments (max ${String(MAX_ATTACHMENTS)})`);
+  }
+  // CLAIM atómico contra el GC: marca lastReferencedAt=now SÓLO en blobs propios y 'active'.
+  // Si un blob no es del usuario, no existe, o el GC lo dejó en 'deleting', no matchea →
+  // matchedCount < unique.length → rechazo. Esto cierra el lado "attach" del race del sweep:
+  // un blob recién referenciado queda con lastReferencedAt fresco (el GC ya no lo elegirá), y
+  // un blob que el GC está borrando ('deleting') no se puede adjuntar.
+  const now = new Date();
+  const claim = await AttachmentBlob.updateMany(
+    { _id: { $in: unique }, userId, status: 'active' },
+    { $set: { lastReferencedAt: now } }
+  );
+  if (claim.matchedCount !== unique.length) {
+    throw new OwnershipError('Attachment not found');
   }
   const blobs = await AttachmentBlob.find({ _id: { $in: unique }, userId }).lean();
   if (blobs.length !== unique.length) {
@@ -342,4 +356,123 @@ export async function recoverStuckDrafts(maxAgeMs = 5 * 60 * 1000): Promise<numb
     { $set: { status: 'failed' }, $unset: { sendingSince: 1 } }
   );
   return res.modifiedCount;
+}
+
+/**
+ * Recolección de AttachmentBlobs huérfanos (MARK-AND-SWEEP con LEASE atómico, no refcount).
+ *
+ * Borra (bytes del provider + doc Mongo) los blobs que NO referencia NINGÚN draft (en ningún
+ * estado) y son más viejos que `maxAgeMs` (gracia desde el último uso). Recupera: subidas
+ * descartadas y adjuntos de drafts borrados. (Los blobs de drafts 'sent' se conservan: la copia
+ * a IMAP Sent es best-effort y podría haber fallado — no asumimos que el blob ya es redundante.)
+ *
+ * Seguridad ante races (review B): el borrado NO es seguro si un attach concurrente referencia
+ * el blob entre el "mark" y el "delete". Lo cerramos con un LEASE:
+ *  1. CAS atómico active→deleting condicionado a lastReferencedAt < cutoff. Si un attach acaba
+ *     de tocar el blob (lastReferencedAt=now), el CAS no matchea → se salta.
+ *  2. Re-chequeo: ¿algún draft lo referencia ahora? Si sí → revertir a 'active', saltar.
+ *  3. DOC-FIRST: borrar el DOC (deleteOne condicionado a 'deleting') ANTES que los bytes.
+ *     resolveAttachments rechaza blobs 'deleting', así que ningún attach nuevo se engancha.
+ * Orden de fallos: si deleteOne falla → bytes intactos, se revierte el lease para reintentar.
+ * Si provider.delete falla DESPUÉS del deleteOne → el doc ya no existe: quedan bytes huérfanos
+ * (leak inocuo, sin referencia), NO se revierte. Leases colgados por crash se recuperan por
+ * deletingSince (ver más abajo).
+ */
+/** Un lease 'deleting' más viejo que esto se considera colgado (crash) y se recupera. */
+const LEASE_TIMEOUT_MS = 10 * 60 * 1000;
+
+export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): Promise<number> {
+  const now = Date.now();
+  const cutoff = new Date(now - maxAgeMs);
+
+  // (0a) Backfill defensivo de blobs pre-lease (sin status): tratarlos como 'active' con
+  // lastReferencedAt=createdAt. Pipeline update (Mongo 4.2+). Tras la 1ª pasada no matchea nada.
+  await AttachmentBlob.updateMany({ status: { $exists: false } }, [
+    { $set: { status: 'active', lastReferencedAt: '$createdAt' } },
+  ]);
+  // (0b) Lease recovery: un blob 'deleting' viejo quedó colgado por un crash ANTES de borrar el
+  // doc (en el orden doc-first los bytes aún existen) → reactivarlo para reintentar. Seguro:
+  // nunca reactiva un blob cuyos bytes ya se borraron (en ese punto el doc ya no existe).
+  await AttachmentBlob.updateMany(
+    {
+      status: 'deleting',
+      $or: [
+        { deletingSince: { $lt: new Date(now - LEASE_TIMEOUT_MS) } },
+        { deletingSince: { $exists: false } }, // 'deleting' sin marca (bug/migración) → recuperar
+      ],
+    },
+    { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
+  );
+
+  // blobIds referenciados por CUALQUIER draft (cualquier estado) → no se tocan.
+  const liveIds = await Draft.distinct('attachments.blobId');
+  const live = new Set(liveIds.map(String));
+
+  const candidates = await AttachmentBlob.find({
+    status: 'active',
+    lastReferencedAt: { $lt: cutoff },
+  })
+    .select('_id storageKey providerType')
+    .lean();
+
+  let deleted = 0;
+  for (const blob of candidates) {
+    if (live.has(blob._id.toString())) continue;
+    // (1) LEASE atómico: sólo si sigue 'active' Y no fue tocado por un attach reciente.
+    const leased = await AttachmentBlob.findOneAndUpdate(
+      { _id: blob._id, status: 'active', lastReferencedAt: { $lt: cutoff } },
+      { $set: { status: 'deleting', deletingSince: new Date() } }
+    );
+    if (!leased) continue; // un attach lo tocó o ya está en borrado → saltar.
+
+    // (2) Re-chequeo bajo lease: ¿apareció una referencia entre el snapshot inicial y el lease?
+    let referenced: unknown;
+    try {
+      referenced = await Draft.exists({ 'attachments.blobId': blob._id.toString() });
+    } catch {
+      // No pudimos verificar → revertir el lease (bytes intactos) y reintentar luego.
+      await AttachmentBlob.updateOne(
+        { _id: blob._id, status: 'deleting' },
+        { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
+      ).catch(() => undefined);
+      continue;
+    }
+    if (referenced) {
+      await AttachmentBlob.updateOne(
+        { _id: blob._id },
+        { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
+      ).catch(() => undefined);
+      continue;
+    }
+
+    // (3) DOC-FIRST: borrar el documento ANTES que los bytes. El peor caso aceptable es un
+    // leak de bytes huérfanos (inocuo), NO un doc 'active' apuntando a bytes inexistentes
+    // (que sería adjuntable/descargable y rompería un envío). Si el deleteOne falla, los bytes
+    // siguen intactos → revertimos el lease para reintentar.
+    let delResult;
+    try {
+      // Condicionado a status:'deleting': si un lease recovery (o un proceso zombie reactivado)
+      // ya devolvió el blob a 'active' o lo re-leaseó otro sweep, este delete NO matchea →
+      // deletedCount 0 → no borramos sus bytes. Cierra el race del zombie (review D).
+      delResult = await AttachmentBlob.deleteOne({ _id: blob._id, status: 'deleting' });
+    } catch {
+      await AttachmentBlob.updateOne(
+        { _id: blob._id, status: 'deleting' },
+        { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
+      ).catch(() => undefined);
+      continue;
+    }
+    if (delResult.deletedCount === 0) continue; // el lease ya no es nuestro → no tocar bytes.
+    deleted++;
+    // (4) Bytes: best-effort. El doc ya no existe → si esto falla, quedan bytes huérfanos
+    // (sin doc que los referencie ni que se pueda adjuntar/descargar). No revertimos nada.
+    try {
+      const provider = await providerForType(blob.providerType);
+      await provider.delete(blob.storageKey);
+    } catch {
+      // Bytes huérfanos: leak inocuo (no hay ref). Se acepta como costo de no romper docs.
+      continue;
+    }
+  }
+  return deleted;
 }

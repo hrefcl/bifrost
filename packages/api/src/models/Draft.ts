@@ -89,6 +89,8 @@ const DraftSchema = new Schema<IDraft>(
 );
 
 DraftSchema.index({ accountId: 1, lastModifiedAt: -1 });
+// El GC de adjuntos consulta qué blobs siguen referenciados (distinct/exists sobre blobId).
+DraftSchema.index({ 'attachments.blobId': 1 });
 // NOTA: se eliminó el índice TTL sobre lastModifiedAt (expireAfterSeconds: 2592000).
 // Borraba los borradores a los 30 días de inactividad sin aviso (H-DATA-TTL).
 
