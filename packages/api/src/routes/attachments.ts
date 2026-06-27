@@ -9,23 +9,12 @@ const objectId = z.string().regex(/^[a-f0-9]{24}$/i);
 /**
  * Cuota de blobs por usuario (anti disk-fill DoS): el cap de 25MB/archivo y el rate-limit
  * acotan el RITMO, no el TOTAL. Sin esto, un usuario autenticado podría subir blobs sin
- * adjuntarlos y la gracia de 24h del GC los retiene → llenar disco. Override por env.
- * Se lee por request (no como const de módulo) para poder ajustarlo/testearlo.
+ * adjuntarlos y la gracia del GC los retiene → llenar disco. Override por env (entero > 0;
+ * valores inválidos/0/negativos caen al default). Se lee por request para ajustarlo/testearlo.
  */
 function maxBlobsPerUser(): number {
-  return Number(process.env.ATTACHMENTS_MAX_PER_USER) || 1000;
-}
-
-/** Drena el multipart (consume los file parts) para no dejar la conexión colgada al rechazar. */
-async function drainParts(request: { parts: () => AsyncIterableIterator<unknown> }): Promise<void> {
-  try {
-    for await (const part of request.parts()) {
-      const p = part as { type?: string; toBuffer?: () => Promise<unknown> };
-      if (p.type === 'file' && p.toBuffer) await p.toBuffer().catch(() => undefined);
-    }
-  } catch {
-    // ignore: sólo intentamos drenar
-  }
+  const n = Number(process.env.ATTACHMENTS_MAX_PER_USER);
+  return Number.isInteger(n) && n > 0 ? n : 1000;
 }
 
 /** Content-Disposition seguro: SIEMPRE attachment + filename ASCII-saneado (anti header-injection). */
@@ -40,20 +29,6 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
    * id del blob (NO el storageKey) — el cliente referencia adjuntos por id, nunca por key cruda.
    */
   fastify.post('/', async (request, reply) => {
-    // Cuota anti disk-fill: chequeo ANTES de consumir el archivo. countDocuments va por el
-    // índice {userId}. Bajo concurrencia el cap es aproximado (no exacto), suficiente para acotar.
-    const blobCount = await AttachmentBlob.countDocuments({
-      userId: request.user.userId,
-      status: 'active',
-    });
-    if (blobCount >= maxBlobsPerUser()) {
-      await drainParts(request);
-      return reply.code(429).send({
-        statusCode: 429,
-        error: 'Too Many Requests',
-        message: 'Attachment storage quota reached. Eliminá adjuntos o borradores y reintentá.',
-      });
-    }
     // Itera TODO el multipart (no sólo el primer file): exige EXACTAMENTE 1 file llamado
     // 'file' y RECHAZA fields o archivos extra. Recién guarda tras consumir/validar todo el
     // request — un 2º archivo (aunque sea >25MB) no se acepta ni deja un blob a medias.
@@ -103,6 +78,24 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
       size: buf.length,
       refCount: 1,
     });
+
+    // CUOTA anti disk-fill, OPTIMISTA con rollback (no un check-antes racy, ni un counter con
+    // drift): tras crear el blob, contamos los blobs del usuario; si excede el cap, deshacemos
+    // (borramos doc + bytes). Bajo N uploads concurrentes, todos crean y luego los que ven el
+    // count por encima del cap hacen rollback → el estado CONVERGE a max (derivado del count
+    // REAL, sin contador que pueda divergir). El cap cuenta TODOS los blobs del usuario (no sólo
+    // 'active') porque todos ocupan disco. Ver review B/D del PR de cuota.
+    const total = await AttachmentBlob.countDocuments({ userId: request.user.userId });
+    if (total > maxBlobsPerUser()) {
+      await AttachmentBlob.deleteOne({ _id: blob._id }).catch(() => undefined);
+      await active.delete(storageKey).catch(() => undefined);
+      return reply.code(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: 'Attachment storage quota reached. Quitá adjuntos de borradores y reintentá.',
+      });
+    }
+
     return {
       id: blob._id.toString(),
       filename: blob.filename,

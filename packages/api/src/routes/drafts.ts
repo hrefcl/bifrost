@@ -404,8 +404,15 @@ export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): 
     { $set: { status: 'active' }, $unset: { deletingSince: 1 } }
   );
 
-  // blobIds referenciados por CUALQUIER draft (cualquier estado) → no se tocan.
-  const liveIds = await Draft.distinct('attachments.blobId');
+  // blobIds referenciados por un draft que AÚN podría leerlos: editing/failed (el usuario puede
+  // enviarlo) o sending (se está leyendo). Los 'sent' SÍ se limpian (tras la gracia): el envío
+  // SMTP ya construyó el MIME con el blob y nunca se vuelve a leer — appendToSent usa el raw, y
+  // descargar un adjunto enviado va por IMAP Sent, no por el blob. Conservarlos para siempre era
+  // peso muerto + bloqueaba la cuota por usuario (review B/D del PR de cuota). La gracia de
+  // lastReferencedAt (seteado al adjuntar) da el margen de seguridad post-envío.
+  const liveIds = await Draft.distinct('attachments.blobId', {
+    status: { $in: ['editing', 'failed', 'sending'] },
+  });
   const live = new Set(liveIds.map(String));
 
   const candidates = await AttachmentBlob.find({
@@ -428,7 +435,11 @@ export async function cleanupOrphanAttachments(maxAgeMs = 24 * 60 * 60 * 1000): 
     // (2) Re-chequeo bajo lease: ¿apareció una referencia entre el snapshot inicial y el lease?
     let referenced: unknown;
     try {
-      referenced = await Draft.exists({ 'attachments.blobId': blob._id.toString() });
+      // Consistente con liveIds: un draft 'sent' NO protege (su blob ya es redundante).
+      referenced = await Draft.exists({
+        'attachments.blobId': blob._id.toString(),
+        status: { $in: ['editing', 'failed', 'sending'] },
+      });
     } catch {
       // No pudimos verificar → revertir el lease (bytes intactos) y reintentar luego.
       await AttachmentBlob.updateOne(
