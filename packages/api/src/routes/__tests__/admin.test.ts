@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import {
   setupTestDb,
   teardownTestDb,
@@ -18,6 +18,9 @@ describe('admin role + requireAdmin (PR-A)', () => {
   });
   beforeEach(async () => {
     await resetState();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it('sin token → /api/admin/whoami responde 401 (auth corre antes que requireAdmin)', async () => {
@@ -169,6 +172,77 @@ describe('admin role + requireAdmin (PR-A)', () => {
       payload: { providerType: 's3', s3: { bucket: 'b' } }, // falta region/accessKeyId/secret
     });
     expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('POST config/storage/test: conexión S3 OK (round-trip mockeado) → 200 {ok:true}', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3test-ok@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: Request) =>
+        Promise.resolve(
+          input.method === 'GET'
+            ? new Response(new Uint8Array(Buffer.from('bifrost-connectivity-probe')), {
+                status: 200,
+              })
+            : new Response(null, { status: input.method === 'DELETE' ? 204 : 200 })
+        )
+      )
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/storage/test',
+      headers: authHeaders(app, user._id.toString()),
+      payload: {
+        endpoint: 'https://minio.test',
+        bucket: 'b',
+        region: 'us-east-1',
+        accessKeyId: 'AK',
+        secretAccessKey: 's',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toEqual({ ok: true });
+    await app.close();
+  });
+
+  it('POST config/storage/test: si S3 falla → 400 con mensaje claro (sin persistir)', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3test-fail@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 403 })))
+    );
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/storage/test',
+      headers: authHeaders(app, user._id.toString()),
+      payload: { bucket: 'b', region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 's' },
+    });
+    expect(res.statusCode).toBe(400);
+    // No persistió: el provider activo sigue siendo el default 'local'.
+    const get = await app.inject({
+      method: 'GET',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect((JSON.parse(get.body) as { providerType: string }).providerType).toBe('local');
+    await app.close();
+  });
+
+  it('POST config/storage/test requiere admin: usuario normal → 403', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3test-403@test.com' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/storage/test',
+      headers: authHeaders(app, user._id.toString()),
+      payload: { bucket: 'b', region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 's' },
+    });
+    expect(res.statusCode).toBe(403);
     await app.close();
   });
 

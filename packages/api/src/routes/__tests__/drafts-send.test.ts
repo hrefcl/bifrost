@@ -137,8 +137,14 @@ describe('envío de drafts (F3.5)', () => {
       app.inject({ method: 'POST', url, headers: hdr }),
       app.inject({ method: 'POST', url, headers: hdr }),
     ]);
-    expect([a.statusCode, b.statusCode].sort()).toEqual([200, 409]);
+    // Invariante real: EXACTAMENTE un envío SMTP (claim atómico). Los status válidos son
+    // [200,409] (concurrente: el 2º choca con 'sending') o [200,200] (serializado: el 2º llegó
+    // tras completar → idempotente alreadySent). Asertar [200,409] exacto era FLAKY (depende del
+    // interleaving) — el double-run de CI lo destapó. Lo que NUNCA debe pasar: dos envíos.
+    const codes = [a.statusCode, b.statusCode].sort();
     expect(h.sent).toBe(1);
+    expect(codes).toContain(200);
+    expect(codes.every((c) => c === 200 || c === 409)).toBe(true);
   });
 
   it('draft sin destinatarios → 400 y vuelve a editing', async () => {

@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { requireAdmin } from '../lib/authz.js';
 import { getStorageConfigPublic, setStorageConfig } from '../services/storage/index.js';
-import { isSafeS3Endpoint } from '../services/storage/s3.js';
+import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js';
 
 // `local` (sin config) o `s3` (endpoint opcional + bucket/region/keys; el secret se cifra al
 // persistir). Union discriminada → `.strict()` rechaza campos extra y mezclas inválidas.
@@ -55,5 +55,35 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.patch('/config/storage', async (request) => {
     const body = storageConfigSchema.parse(request.body);
     return setStorageConfig(body, request.user.userId);
+  });
+
+  // Probar la conexión S3 sin persistir: el admin verifica credenciales/bucket ANTES de activar
+  // S3 y romper los uploads de todos con un typo. Hace un round-trip real (put→get→delete).
+  const s3TestSchema = z
+    .object({
+      endpoint: z.string().url().refine(isSafeS3Endpoint, 'endpoint S3 inválido').optional(),
+      bucket: z.string().min(1),
+      region: z
+        .string()
+        .min(1)
+        .regex(/^[a-z0-9-]+$/, 'región inválida'),
+      accessKeyId: z.string().min(1),
+      secretAccessKey: z.string().min(1),
+    })
+    .strict();
+
+  fastify.post('/config/storage/test', async (request, reply) => {
+    const s3 = s3TestSchema.parse(request.body);
+    try {
+      await verifyS3Connection(s3);
+    } catch {
+      // No filtramos el detalle crudo del provider (podría incluir info sensible del request).
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'No se pudo conectar al bucket S3 con esos datos. Revisá endpoint/credenciales.',
+      });
+    }
+    return { ok: true };
   });
 }
