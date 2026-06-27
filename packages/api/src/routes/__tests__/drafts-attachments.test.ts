@@ -104,12 +104,51 @@ describe('adjuntos en drafts + envío (PR-C2)', () => {
     });
     expect(res.statusCode).toBe(200);
     const draft = JSON.parse(res.body) as {
-      attachments: { filename: string; size: number; providerType: string; storageKey: string }[];
+      attachments: Record<string, unknown>[];
     };
     expect(draft.attachments).toHaveLength(1);
     expect(draft.attachments[0].filename).toBe('doc.pdf');
-    expect(draft.attachments[0].providerType).toBe('local');
-    expect(draft.attachments[0].storageKey).toBeTruthy();
+    expect(draft.attachments[0].blobId).toBe(blobId);
+    // El DTO público NO debe filtrar localizadores internos de storage.
+    expect(draft.attachments[0].storageKey).toBeUndefined();
+    expect(draft.attachments[0].providerType).toBeUndefined();
+  });
+
+  it('DEDUP: el mismo blobId repetido se adjunta UNA sola vez', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const blobId = await upload(app, uid, 'a.txt', Buffer.from('aaa'));
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: [blobId, blobId, blobId],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((JSON.parse(res.body) as { attachments: unknown[] }).attachments).toHaveLength(1);
+  });
+
+  it('MASS-ASSIGNMENT: filename/size/storageKey/attachments en el body se ignoran', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        // Intento de inyectar adjuntos sin pasar por attachmentIds/ownership.
+        attachments: [{ filename: 'evil.sh', size: 9, storageKey: '../../etc/passwd' }],
+        storageKey: 'hack',
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((JSON.parse(res.body) as { attachments: unknown[] }).attachments).toHaveLength(0);
   });
 
   it('OWNERSHIP: adjuntar el blob de OTRO usuario → 404 (sin filtrar existencia)', async () => {
@@ -158,11 +197,11 @@ describe('adjuntos en drafts + envío (PR-C2)', () => {
     expect((JSON.parse(patched.body) as { attachments: unknown[] }).attachments).toHaveLength(0);
   });
 
-  it('ANTI-DoS: demasiados adjuntos (incluso duplicando el mismo id) → 413', async () => {
+  it('ANTI-DoS: más de 25 attachmentIds → 400 (gate del schema, antes de tocar la DB)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
     const uid = user._id.toString();
-    const blobId = await upload(app, uid, 'a.txt', Buffer.from('a'));
-    // 26 referencias al MISMO blob: unique=1 pasa, pero la lista final excede el tope.
+    // 26 ObjectIds válidos pero inexistentes: el schema .max(25) corta antes del lookup.
+    const ids = Array.from({ length: 26 }, (_, i) => i.toString(16).padStart(24, '0'));
     const res = await app.inject({
       method: 'POST',
       url: '/api/drafts',
@@ -170,10 +209,10 @@ describe('adjuntos en drafts + envío (PR-C2)', () => {
       payload: {
         accountId: account._id.toString(),
         to: [{ address: 'x@test.com' }],
-        attachmentIds: Array.from({ length: 26 }, () => blobId),
+        attachmentIds: ids,
       },
     });
-    expect(res.statusCode).toBe(413);
+    expect(res.statusCode).toBe(400);
   });
 
   it('SEND: el raw incluye el adjunto (filename + bytes del provider de origen)', async () => {

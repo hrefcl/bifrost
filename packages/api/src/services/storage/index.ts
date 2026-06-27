@@ -19,6 +19,9 @@ export function providerForType(type: StorageType): StorageProvider {
     case 's3':
       // Llega en PR-D. Hasta entonces, elegir s3 en el wizard se rechaza en el endpoint.
       throw new Error('S3 storage no implementado todavía');
+    default:
+      // Defensa: un providerType inesperado (dato corrupto) no debe devolver undefined.
+      throw new Error(`Unknown storage provider: ${String(type)}`);
   }
 }
 

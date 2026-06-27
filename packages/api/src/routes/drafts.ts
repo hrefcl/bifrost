@@ -8,7 +8,8 @@ import { appendToSent } from '../services/imap.js';
 import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
-import type { Draft as DraftDto, DraftAttachment } from '@webmail6/shared';
+import type { StoredDraftAttachment } from '../models/Draft.js';
+import type { Draft as DraftDto } from '@webmail6/shared';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
@@ -28,24 +29,31 @@ class PayloadTooLargeError extends Error {
  * draft guarda la metadata + storageKey + providerType (provider-bound), nunca confía en datos
  * de adjunto que mande el cliente directamente. Acota cantidad y tamaño total (anti-DoS).
  */
-async function resolveAttachments(userId: string, ids?: string[]): Promise<DraftAttachment[]> {
+async function resolveAttachments(
+  userId: string,
+  ids?: string[]
+): Promise<StoredDraftAttachment[]> {
   if (!ids || ids.length === 0) return [];
-  // La lista FINAL (con duplicados, tal como se enviará) es la que cuenta para el tope.
-  if (ids.length > MAX_ATTACHMENTS) {
+  // DEDUP: un blob aparece como mucho una vez en el draft (ids repetidos no duplican el
+  // adjunto en el raw). Set preserva el orden de primera aparición.
+  const unique = [...new Set(ids)];
+  // Defensa en profundidad: el schema ya acota con .max(), pero re-validamos acá por si
+  // se llama el helper desde otro path.
+  if (unique.length > MAX_ATTACHMENTS) {
     throw new PayloadTooLargeError(`Too many attachments (max ${String(MAX_ATTACHMENTS)})`);
   }
-  const unique = [...new Set(ids)];
   const blobs = await AttachmentBlob.find({ _id: { $in: unique }, userId }).lean();
   if (blobs.length !== unique.length) {
     throw new OwnershipError('Attachment not found');
   }
   const byId = new Map(blobs.map((b) => [b._id.toString(), b]));
   let totalBytes = 0;
-  const resolved = ids.map((id) => {
+  const resolved = unique.map((id) => {
     const b = byId.get(id);
     if (!b) throw new OwnershipError('Attachment not found');
     totalBytes += b.size;
     return {
+      blobId: b._id.toString(),
       filename: b.filename,
       contentType: b.contentType,
       size: b.size,
@@ -77,7 +85,8 @@ const draftBodySchema = z.object({
   replyToReferences: z.array(z.string()).optional(),
   // ids de AttachmentBlob ya subidos (POST /api/attachments). El backend resuelve y valida
   // ownership; el cliente NUNCA manda filename/size/storageKey de adjunto directamente.
-  attachmentIds: z.array(objectIdSchema).optional(),
+  // .max() acota la cantidad ANTES de tocar la DB (gate barato anti-DoS).
+  attachmentIds: z.array(objectIdSchema).max(MAX_ATTACHMENTS).optional(),
 });
 
 function serializeDraft(doc: import('../models/Draft.js').IDraft): DraftDto {
@@ -91,7 +100,13 @@ function serializeDraft(doc: import('../models/Draft.js').IDraft): DraftDto {
     subject: doc.subject,
     bodyHtml: doc.bodyHtml,
     bodyText: doc.bodyText,
-    attachments: doc.attachments,
+    // DTO público: sólo metadata + blobId. storageKey/providerType quedan server-side.
+    attachments: doc.attachments.map((a) => ({
+      blobId: a.blobId,
+      filename: a.filename,
+      contentType: a.contentType,
+      size: a.size,
+    })),
     replyTo: doc.replyTo
       ? {
           emailId: doc.replyTo.emailId?.toString() ?? '',

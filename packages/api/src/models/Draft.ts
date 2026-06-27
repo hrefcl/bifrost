@@ -1,5 +1,19 @@
 import mongoose, { Schema, type Document } from 'mongoose';
-import type { Address, DraftAttachment } from '@webmail6/shared';
+import type { Address } from '@webmail6/shared';
+
+/**
+ * Snapshot INTERNO de un adjunto del draft (lo que persiste Mongo). Además de la metadata
+ * pública lleva los localizadores de storage (storageKey + providerType) que el envío usa
+ * para leer del provider de ORIGEN. El DTO público (serializeDraft) NO expone estos campos.
+ */
+export interface StoredDraftAttachment {
+  blobId: string;
+  filename: string;
+  contentType: string;
+  size: number;
+  storageKey: string;
+  providerType: 'local' | 's3';
+}
 
 export interface IDraft extends Document {
   userId: mongoose.Types.ObjectId;
@@ -10,7 +24,7 @@ export interface IDraft extends Document {
   subject: string;
   bodyHtml?: string;
   bodyText?: string;
-  attachments: DraftAttachment[];
+  attachments: StoredDraftAttachment[];
   replyTo?: {
     emailId?: mongoose.Types.ObjectId;
     messageId?: string;
@@ -36,6 +50,8 @@ const AddressSchema = new Schema(
 
 const DraftAttachmentSchema = new Schema(
   {
+    // Referencia al AttachmentBlob de origen (se devuelve al cliente como blobId).
+    blobId: { type: String, required: true },
     filename: { type: String, required: true },
     contentType: { type: String, required: true },
     size: { type: Number, required: true },
