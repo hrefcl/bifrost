@@ -158,6 +158,24 @@ describe('adjuntos en drafts + envío (PR-C2)', () => {
     expect((JSON.parse(patched.body) as { attachments: unknown[] }).attachments).toHaveLength(0);
   });
 
+  it('ANTI-DoS: demasiados adjuntos (incluso duplicando el mismo id) → 413', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const blobId = await upload(app, uid, 'a.txt', Buffer.from('a'));
+    // 26 referencias al MISMO blob: unique=1 pasa, pero la lista final excede el tope.
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: Array.from({ length: 26 }, () => blobId),
+      },
+    });
+    expect(res.statusCode).toBe(413);
+  });
+
   it('SEND: el raw incluye el adjunto (filename + bytes del provider de origen)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
     const uid = user._id.toString();

@@ -12,23 +12,39 @@ import type { Draft as DraftDto, DraftAttachment } from '@webmail6/shared';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
+// Topes de recursos del draft: sin esto, un cliente puede mandar miles de attachmentIds
+// válidos → el envío los carga TODOS en RAM a la vez (Promise.all en smtp). Con 25MB/archivo
+// eso es un DoS de memoria. Acotamos cantidad y tamaño TOTAL (típico límite de mensaje SMTP).
+const MAX_ATTACHMENTS = 25;
+const MAX_TOTAL_BYTES = 25 * 1024 * 1024;
+
+class PayloadTooLargeError extends Error {
+  statusCode = 413;
+}
+
 /**
  * Resuelve ids de AttachmentBlob a DraftAttachment[] VALIDANDO OWNERSHIP: todos los blobs
  * deben ser del usuario (si alguno no existe/no es suyo → 404, sin filtrar existencia). El
  * draft guarda la metadata + storageKey + providerType (provider-bound), nunca confía en datos
- * de adjunto que mande el cliente directamente.
+ * de adjunto que mande el cliente directamente. Acota cantidad y tamaño total (anti-DoS).
  */
 async function resolveAttachments(userId: string, ids?: string[]): Promise<DraftAttachment[]> {
   if (!ids || ids.length === 0) return [];
+  // La lista FINAL (con duplicados, tal como se enviará) es la que cuenta para el tope.
+  if (ids.length > MAX_ATTACHMENTS) {
+    throw new PayloadTooLargeError(`Too many attachments (max ${String(MAX_ATTACHMENTS)})`);
+  }
   const unique = [...new Set(ids)];
   const blobs = await AttachmentBlob.find({ _id: { $in: unique }, userId }).lean();
   if (blobs.length !== unique.length) {
     throw new OwnershipError('Attachment not found');
   }
   const byId = new Map(blobs.map((b) => [b._id.toString(), b]));
-  return ids.map((id) => {
+  let totalBytes = 0;
+  const resolved = ids.map((id) => {
     const b = byId.get(id);
     if (!b) throw new OwnershipError('Attachment not found');
+    totalBytes += b.size;
     return {
       filename: b.filename,
       contentType: b.contentType,
@@ -37,6 +53,10 @@ async function resolveAttachments(userId: string, ids?: string[]): Promise<Draft
       providerType: b.providerType,
     };
   });
+  if (totalBytes > MAX_TOTAL_BYTES) {
+    throw new PayloadTooLargeError('Attachments exceed total size limit (25MB)');
+  }
+  return resolved;
 }
 
 const addressSchema = z.object({
