@@ -72,7 +72,16 @@ function resetForm() {
 }
 
 async function submit() {
-  await store.createEvent({ ...form.value, uid: `local-${String(Date.now())}` });
+  // `<input type="datetime-local">` da "2026-06-25T10:00" (hora local, sin segundos ni zona),
+  // pero la API valida ISO 8601 completo (`z.string().datetime()`) → sin esta conversión el
+  // POST daba 400 y el evento NUNCA se creaba desde la UI. Interpretamos el valor como hora
+  // local y lo normalizamos a ISO UTC.
+  await store.createEvent({
+    ...form.value,
+    uid: `local-${String(Date.now())}`,
+    startDate: new Date(form.value.startDate).toISOString(),
+    endDate: new Date(form.value.endDate).toISOString(),
+  });
   resetForm();
   showForm.value = false;
 }
