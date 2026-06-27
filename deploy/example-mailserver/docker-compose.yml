@@ -1,0 +1,125 @@
+# =============================================================================
+# Ejemplo de stack self-hosted: servidor de correo COMPLETO + Webmail 6.0 (Bifrost).
+#
+# Bifrost reemplaza a Roundcube: es sólo el FRONT (UI + API) — habla IMAP/SMTP con el
+# servidor de correo de atrás (acá docker-mailserver). Este compose es una PLANTILLA;
+# reemplazá `example.com` por tu dominio, generá los secretos en ./secrets/ y ajustá DNS
+# (MX, A, SPF, DKIM, DMARC) antes de producción.
+#
+# Stack: Traefik (TLS/Let's Encrypt) · docker-mailserver (Postfix+Dovecot) · MongoDB +
+# Redis (datos de Bifrost) · Bifrost API + Web.
+# =============================================================================
+services:
+  # --- Reverse proxy + TLS automático -----------------------------------------
+  traefik:
+    image: traefik:v3.0
+    restart: unless-stopped
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=mailnet
+      - --certificatesresolvers.letsencrypt.acme.email=admin@example.com # ← tu email
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.storage=/certs/acme.json
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./letsencrypt:/certs
+    networks: [mailnet]
+
+  # --- Servidor de correo (SMTP/IMAP) — el "backend" real ---------------------
+  mailserver:
+    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    hostname: mail.example.com # ← tu hostname de correo
+    restart: unless-stopped
+    ports:
+      - '25:25' # SMTP
+      - '587:587' # Submission (STARTTLS)
+      - '993:993' # IMAPS
+    volumes:
+      - ./maildata:/var/mail
+      - ./mailstate:/var/mail-state
+      - ./maillogs:/var/log/mail
+      - ./config:/tmp/docker-mailserver
+      - ./letsencrypt:/etc/letsencrypt:ro
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      - OVERRIDE_HOSTNAME=mail.example.com
+      - ENABLE_FAIL2BAN=1
+      - ENABLE_OPENDKIM=1
+      - ENABLE_OPENDMARC=1
+      - ENABLE_POLICYD_SPF=1
+      - SSL_TYPE=letsencrypt
+      - ONE_DIR=1
+      - PERMIT_DOCKER=network
+    cap_add: [NET_ADMIN, SYS_PTRACE]
+    networks: [mailnet]
+
+  # --- Datos de Bifrost -------------------------------------------------------
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes: [mongo-data:/data/db]
+    networks: [mailnet]
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes: [redis-data:/data]
+    networks: [mailnet]
+
+  # --- Bifrost API (reemplaza el backend de Roundcube) ------------------------
+  bifrost-api:
+    image: ghcr.io/hrefcl/bifrost/api:latest
+    restart: unless-stopped
+    depends_on: [mongo, redis]
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      HOST: 0.0.0.0
+      MONGODB_URI: mongodb://mongo:27017/webmail6
+      REDIS_URL: redis://redis:6379/0
+      # Secretos: generalos con `openssl rand -hex 32` y poné los valores reales (o usá
+      # docker secrets). NO commitees valores reales.
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      FRONTEND_URL: https://webmail.example.com
+      CORS_ORIGIN: https://webmail.example.com
+    secrets: [jwt_secret, encryption_key]
+    networks: [mailnet]
+
+  # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
+  bifrost-web:
+    image: ghcr.io/hrefcl/bifrost/web:latest
+    restart: unless-stopped
+    depends_on: [bifrost-api]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.bifrost.rule=Host(`webmail.example.com`) # ← tu dominio webmail
+      - traefik.http.routers.bifrost.entrypoints=websecure
+      - traefik.http.routers.bifrost.tls=true
+      - traefik.http.routers.bifrost.tls.certresolver=letsencrypt
+      - traefik.http.services.bifrost.loadbalancer.server.port=80
+    networks: [mailnet]
+
+secrets:
+  jwt_secret:
+    file: ./secrets/jwt_secret.txt
+  encryption_key:
+    file: ./secrets/encryption_key.txt
+
+volumes:
+  mongo-data:
+  redis-data:
+
+networks:
+  mailnet:
+    driver: bridge
