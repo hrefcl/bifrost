@@ -67,10 +67,11 @@ function choose(provider: ProviderType) {
   if (provider !== 's3') s3.value.secretAccessKey = '';
 }
 
-/** Limpia el "Guardado"/error previo al empezar a editar los campos (input handler). */
+/** Limpia el "Guardado"/error/resultado-de-test previo al editar los campos (input handler). */
 function clearStatus() {
   saved.value = false;
   error.value = '';
+  tested.value = null;
 }
 
 /** Faltan datos obligatorios para guardar S3 (el secret SIEMPRE se exige al guardar). */
@@ -84,6 +85,35 @@ function s3Incomplete(): boolean {
   );
 }
 
+/** Objeto S3 con los campos del form (endpoint omitido si vacío). */
+function s3Payload() {
+  return {
+    ...(s3.value.endpoint.trim() ? { endpoint: s3.value.endpoint.trim() } : {}),
+    bucket: s3.value.bucket.trim(),
+    region: s3.value.region.trim(),
+    accessKeyId: s3.value.accessKeyId.trim(),
+    secretAccessKey: s3.value.secretAccessKey,
+  };
+}
+
+const testing = ref(false);
+const tested = ref<'ok' | 'fail' | null>(null);
+
+/** Prueba la conexión S3 sin persistir (round-trip real en el backend). Feedback ✓/✗. */
+async function testConnection() {
+  testing.value = true;
+  tested.value = null;
+  error.value = '';
+  try {
+    await api.post('/admin/config/storage/test', s3Payload());
+    tested.value = 'ok';
+  } catch {
+    tested.value = 'fail';
+  } finally {
+    testing.value = false;
+  }
+}
+
 async function save() {
   saving.value = true;
   saved.value = false;
@@ -91,16 +121,7 @@ async function save() {
   try {
     const payload =
       selected.value === 's3'
-        ? {
-            providerType: 's3' as const,
-            s3: {
-              ...(s3.value.endpoint.trim() ? { endpoint: s3.value.endpoint.trim() } : {}),
-              bucket: s3.value.bucket.trim(),
-              region: s3.value.region.trim(),
-              accessKeyId: s3.value.accessKeyId.trim(),
-              secretAccessKey: s3.value.secretAccessKey,
-            },
-          }
+        ? { providerType: 's3' as const, s3: s3Payload() }
         : { providerType: 'local' as const };
     const { data } = await api.patch<StorageConfig>('/admin/config/storage', payload);
     current.value = data;
@@ -231,7 +252,19 @@ async function save() {
               />
             </div>
 
-            <div class="flex items-center gap-3 pt-2">
+            <div class="flex flex-wrap items-center gap-3 pt-2">
+              <button
+                v-if="selected === 's3'"
+                class="rounded-lg border px-4 py-2 text-sm font-medium hover:bg-gray-100 disabled:opacity-50 dark:border-gray-700 dark:hover:bg-gray-800"
+                :disabled="testing || s3Incomplete()"
+                @click="testConnection"
+              >
+                {{ testing ? 'Probando…' : 'Probar conexión' }}
+              </button>
+              <span v-if="tested === 'ok'" class="text-sm text-green-600">✓ Conexión OK</span>
+              <span v-if="tested === 'fail'" class="text-sm text-red-600">
+                ✗ No se pudo conectar al bucket
+              </span>
               <button
                 class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
                 :disabled="saving || s3Incomplete()"

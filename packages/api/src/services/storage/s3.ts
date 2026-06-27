@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { AwsClient } from 'aws4fetch';
 import type { StorageProvider } from './types.js';
 
@@ -139,5 +140,26 @@ export class S3Storage implements StorageProvider {
     if (!res.ok && res.status !== 404) {
       throw new Error(`S3 delete failed: ${String(res.status)}`);
     }
+  }
+}
+
+/**
+ * Verifica que las credenciales/bucket S3 funcionan haciendo un round-trip real (put→get→delete)
+ * de un objeto temporal. Sirve para que el admin pruebe la conexión ANTES de activar S3 y no
+ * romper los uploads de todos con un typo. Lanza si alguna operación falla. NO persiste config.
+ */
+export async function verifyS3Connection(opts: S3Options): Promise<void> {
+  const s3 = new S3Storage(opts);
+  const key = `__bifrost-conntest-${randomUUID()}`;
+  const probe = Buffer.from('bifrost-connectivity-probe');
+  await s3.put(key, probe);
+  try {
+    const got = await s3.get(key);
+    if (!got.equals(probe)) {
+      throw new Error('S3 connectivity probe mismatch');
+    }
+  } finally {
+    // Limpieza best-effort del objeto de prueba (no debe enmascarar un error de put/get).
+    await s3.delete(key).catch(() => undefined);
   }
 }
