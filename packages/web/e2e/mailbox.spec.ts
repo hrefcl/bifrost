@@ -21,6 +21,9 @@ interface LoginResult {
 }
 
 async function loginViaUi(page: Page, email: string = LOGIN.email): Promise<LoginResult> {
+  // La UI es multi-idioma con español por defecto. Fijamos inglés para aserciones de texto
+  // deterministas y para alinear con los views aún no migrados a i18n (Composer/Settings/Admin).
+  await page.addInitScript(() => window.localStorage.setItem('locale', 'en'));
   await page.goto('/login');
   await page.fill('input[type="email"]', email);
   await page.fill('input[type="password"]', LOGIN.password);
@@ -66,7 +69,7 @@ async function syncMailbox(page: Page, { accessToken, accountId }: LoginResult):
 test('full flow: login → sync → read email body → compose & send', async ({ page }) => {
   // 1) LOGIN (UI real). Tras login el inbox monta y carga cuentas (aún sin folders).
   const session = await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
   // 2) SYNC (API real → fake IMAP → Mongo), como haría el worker de fondo.
   await syncMailbox(page, session);
@@ -76,7 +79,7 @@ test('full flow: login → sync → read email body → compose & send', async (
   await page.reload();
 
   // 3) LEER: seleccionar INBOX (determinista) y abrir un email renderiza su body.
-  await page.getByText('INBOX', { exact: true }).click();
+  await page.getByRole('button', { name: 'Inbox' }).click();
   await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible({ timeout: 15_000 });
 
   // Abrir el email dispara GET /body (parse+sanitize reales) y, como estaba no-leído,
@@ -122,7 +125,7 @@ test('adjuntos: subir un archivo en el composer y enviarlo (upload UI → send r
   page,
 }) => {
   await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('button', { name: 'Compose' }).click();
   await page.fill('input[placeholder="To"]', 'destinatario@example.com');
@@ -200,7 +203,7 @@ test('adjuntos: Send/Save quedan deshabilitados mientras un upload está en curs
   });
 
   await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
   await page.getByRole('button', { name: 'Compose' }).click();
   await page.fill('input[placeholder="To"]', 'destinatario@example.com');
 
@@ -224,11 +227,11 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
   // Antes este flujo estaba ROTO: ComposerView ignoraba route.query.replyTo → clic en Reply
   // abría un composer en blanco. Verifica la precarga + que el threading llega al backend.
   const session = await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
   await syncMailbox(page, session);
   await page.reload();
 
-  await page.getByText('INBOX', { exact: true }).click();
+  await page.getByRole('button', { name: 'Inbox' }).click();
   await page.getByText('Welcome to Webmail 6.0').click();
   await expect(page.getByRole('heading', { name: 'Welcome to Webmail 6.0' })).toBeVisible({
     timeout: 15_000,
@@ -236,7 +239,8 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
 
   // Reply → composer precargado (esto era exactamente lo que no funcionaba). El email trae
   // header Reply-To (list@example.com) → la respuesta va ahí, NO al From (alice@example.com).
-  await page.getByRole('button', { name: 'Reply' }).click();
+  // Hay un icono "Reply" por-mensaje y otro en la barra inferior; apuntamos a la barra.
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply', exact: true }).click();
   await expect(page.locator('input[placeholder="To"]')).toHaveValue('list@example.com');
   await expect(page.locator('input[placeholder="Subject"]')).toHaveValue(
     'Re: Welcome to Webmail 6.0'
@@ -274,7 +278,7 @@ test('interceptor de refresh: access token vencido se renueva solo (401 → refr
   // cookie (single-flight) y reintentar de forma transparente. Sin esto la sesión moriría
   // a los 15min en producción pese a la cookie de refresh viva.
   await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
   // Dejar vencer el access token (TTL=3s).
   await page.waitForTimeout(3_500);
@@ -293,10 +297,11 @@ test('interceptor de refresh: access token vencido se renueva solo (401 → refr
 
 test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', async ({ page }) => {
   await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
-  // Settings → escribir y guardar la firma (único editor de la página).
-  await page.getByRole('link', { name: 'Settings' }).click();
+  // Settings → escribir y guardar la firma (único editor de la página). En el shell nuevo,
+  // Ajustes es un botón-icono en la topbar (title="Settings").
+  await page.getByRole('button', { name: 'Settings' }).click();
   await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
   await page.locator('.ProseMirror').click();
   await page.locator('.ProseMirror').fill('Saludos, Equipo A E2E');
@@ -310,8 +315,9 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await patch;
   await expect(page.getByText('Saved')).toBeVisible();
 
-  // Componer nuevo → la firma debe auto-incluirse en el editor del cuerpo.
-  await page.getByRole('link', { name: 'Inbox' }).click();
+  // Componer nuevo → la firma debe auto-incluirse en el editor del cuerpo. Volvemos al inbox
+  // por el logo de la topbar (no hay link "Inbox" de texto en el shell nuevo).
+  await page.locator('.logo-slot').click();
   await page.getByRole('button', { name: 'Compose' }).click();
   await expect(page.locator('.ProseMirror')).toContainText('Saludos, Equipo A E2E', {
     timeout: 15_000,
@@ -322,17 +328,17 @@ test('reply-all: To=remitente, CC=resto sin uno-mismo ni el remitente (case-inse
   page,
 }) => {
   const session = await loginViaUi(page);
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
   await syncMailbox(page, session);
   await page.reload();
 
-  await page.getByText('INBOX', { exact: true }).click();
+  await page.getByRole('button', { name: 'Inbox' }).click();
   // 'Your June invoice' tiene to:[e2e, colleague] + cc:[boss] → el botón Reply all aparece.
   await page.getByText('Your June invoice').click();
   await expect(page.getByRole('heading', { name: 'Your June invoice' })).toBeVisible({
     timeout: 15_000,
   });
-  await page.getByRole('button', { name: 'Reply all' }).click();
+  await page.locator('.reply-bar').getByRole('button', { name: 'Reply all' }).click();
 
   await expect(page.locator('input[placeholder="To"]')).toHaveValue('billing@example.com');
   const cc = await page.locator('input[placeholder="Cc"]').inputValue();
@@ -350,10 +356,10 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
   // Usuario admin pre-sembrado en el server E2E (role=admin). Verifica el gate de UI + el
   // wizard de configuración de almacenamiento (Paso 1) contra el backend real.
   await loginViaUi(page, 'admin-e2e@example.com');
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
-  // El link Admin sólo aparece para role==='admin'.
-  await page.getByRole('link', { name: 'Admin' }).click();
+  // El acceso a Admin es un botón-icono (escudo) en la topbar, sólo para role==='admin'.
+  await page.getByRole('button', { name: 'Administration' }).click();
   await expect(page.getByRole('heading', { name: 'Administración' })).toBeVisible({
     timeout: 15_000,
   });
@@ -378,9 +384,10 @@ test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox
   // Gate de UI: el usuario normal (role=user) no debe ver ni alcanzar /admin. El backend ya
   // re-valida con 403 en cada endpoint (test de integración); esto cubre el lado cliente.
   await loginViaUi(page); // e2e@example.com → role 'user'
-  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
-  await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(0);
+  // El usuario normal NO debe ver el botón de Admin en la topbar.
+  await expect(page.getByRole('button', { name: 'Administration' })).toHaveCount(0);
 
   // Navegación directa a /admin: el guard lo saca de ahí. Invariante de seguridad robusto —
   // el no-admin NO queda en /admin ni ve el panel (va a inbox si la sesión sigue viva tras el

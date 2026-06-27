@@ -184,12 +184,26 @@ ningún merge con HIGH abierto o score <9):
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 
-### TD-UI-MAQUETA (ALTA — brecha de diseño, hallada en auto-auditoría #7)
-La UI implementada es un MVP funcional plano que **no coincide con la maqueta**
-(`maqueta/Webmail 6.0/`, prototipo React pulido). Verificado por screenshots (demo vs
-`maqueta/.../screenshots/`). Gaps: i18n inglés→español, login crudo→account-picker, sin barra de
-búsqueda, sidebar plano (sin iconos/contadores/Destacados/Pospuestos/Archivo/Etiquetas/almacenamiento),
-lista plana (sin avatares/etiquetas-de-color/categorías/estrella/checkbox), estilo Tailwind por
-defecto vs Public Sans + accent #1b66ff + temas. Esfuerzo multi-PR; requiere dirección de
-producto sobre alcance/prioridad. El backend ya soporta la mayoría de los datos (folders, flags,
-threading); falta el front. Para verlo: `pnpm demo`.
+### TD-UI-MAQUETA (PARCIAL — brecha de diseño, hallada en auto-auditoría #7)
+La UI implementada era un MVP funcional plano que **no coincidía con la maqueta**
+(`maqueta/Webmail 6.0/`, prototipo React pulido).
+
+**Cerrado (auto-auditoría #8):** sistema de diseño con tokens de la maqueta
+(`src/assets/theme.css`, accent `#1b66ff`, Public Sans, light/dark), **marca Bifrost
+parametrizable** (`src/config/brand.ts`, env `VITE_BRAND_*`), **i18n completo** (`vue-i18n`,
+español por defecto + inglés, conmutable; `src/i18n/`), y reescritura fiel de **Login**
+(account card de marca), **shell/TopBar** (logo, búsqueda, iconos, avatar con menú) e **Inbox**
+(sidebar con iconos/contadores reales, categorías, filas con avatar/estrella/preview/adjunto,
+panel de lectura). Cableado a datos reales. Verificado: unit (web 7/7, api 147/147), **e2e 10/10**,
+lint+typecheck+build limpios, screenshots vs maqueta.
+
+**Pendiente (sigue ALTA):**
+1. Reestilar a la maqueta + i18n los views restantes: **Composer, Settings, Admin, Contacts,
+   Calendar** (hoy Tailwind/inglés hardcodeado). Por esto el e2e fija `locale=en` (smell que
+   documenta la deuda).
+2. Afordances visuales no funcionales (mirror de la maqueta): pestañas de categoría
+   Novedades/Promociones (sin categorización en backend), búsqueda (filtra solo la carpeta
+   cargada en cliente), iconos posponer/etiquetar/imprimir/filtrar/más.
+3. Branding **runtime** (config de marca editable por admin) además del build-time actual.
+
+Para verlo: `pnpm demo`.

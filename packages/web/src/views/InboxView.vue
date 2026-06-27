@@ -1,28 +1,112 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
+import AppIcon from '@/components/AppIcon.vue';
+import AppAvatar from '@/components/AppAvatar.vue';
 import { api } from '@/lib/http';
-import type { Folder, Email, Account, EmailBody, EmailAttachmentMeta } from '@webmail6/shared';
-
-type AttachmentMeta = EmailAttachmentMeta;
+import { useUiStore } from '@/stores/ui';
+import { colorFor } from '@/lib/people';
+import type {
+  Folder,
+  Email,
+  Account,
+  EmailBody,
+  EmailAttachmentMeta,
+  SpecialUse,
+} from '@webmail6/shared';
 
 const router = useRouter();
+const ui = useUiStore();
+const { t, locale } = useI18n();
+
 const accounts = ref<Account[]>([]);
 const folders = ref<Folder[]>([]);
 const emails = ref<Email[]>([]);
 const selectedFolderId = ref<string | null>(null);
 const loading = ref(false);
 const error = ref('');
+const category = ref<'primary' | 'updates' | 'promotions'>('primary');
 
-// Detalle del email seleccionado.
 const selected = ref<Email | null>(null);
 const body = ref<EmailBody | null>(null);
-const attachments = ref<AttachmentMeta[]>([]);
+const attachments = ref<EmailAttachmentMeta[]>([]);
 const bodyLoading = ref(false);
+
+// ---- mapeo carpeta IMAP → icono + nombre i18n de la maqueta ----
+const SPECIAL_ICON: Record<SpecialUse, string> = {
+  inbox: 'inbox',
+  sent: 'send',
+  drafts: 'file',
+  trash: 'trash',
+  junk: 'shield',
+  archive: 'archive',
+};
+const SPECIAL_LABEL: Record<SpecialUse, string> = {
+  inbox: 'folders.inbox',
+  sent: 'folders.sent',
+  drafts: 'folders.drafts',
+  trash: 'folders.trash',
+  junk: 'folders.junk',
+  archive: 'folders.archive',
+};
+const SPECIAL_ORDER: SpecialUse[] = ['inbox', 'sent', 'drafts', 'archive', 'junk', 'trash'];
+
+function folderIcon(f: Folder): string {
+  return f.specialUse ? SPECIAL_ICON[f.specialUse] : 'tag';
+}
+function folderName(f: Folder): string {
+  return f.specialUse ? t(SPECIAL_LABEL[f.specialUse]) : f.displayName;
+}
+
+// Carpetas de sistema (con specialUse) ordenadas; el resto son "etiquetas".
+function specialIndex(f: Folder): number {
+  return f.specialUse ? SPECIAL_ORDER.indexOf(f.specialUse) : 99;
+}
+const systemFolders = computed(() =>
+  [...folders.value].filter((f) => f.specialUse).sort((a, b) => specialIndex(a) - specialIndex(b))
+);
+const labelFolders = computed(() => folders.value.filter((f) => !f.specialUse));
+
+const currentFolder = computed(() => folders.value.find((f) => f.id === selectedFolderId.value));
+const isInbox = computed(() => currentFolder.value?.specialUse === 'inbox');
+
+// Búsqueda en cliente (la barra del TopBar escribe en ui.searchQuery).
+const filteredEmails = computed(() => {
+  const q = ui.searchQuery.trim().toLowerCase();
+  let list = emails.value;
+  if (q) {
+    list = list.filter(
+      (e) =>
+        (e.from.name ?? '').toLowerCase().includes(q) ||
+        e.from.address.toLowerCase().includes(q) ||
+        e.subject.toLowerCase().includes(q) ||
+        (e.preview ?? '').toLowerCase().includes(q)
+    );
+  }
+  // Sin categorización real en el backend: todo cae en "Principal".
+  if (isInbox.value && category.value !== 'primary') return [];
+  return list;
+});
 
 function accountId(): string {
   return accounts.value[0]?.id ?? '';
+}
+
+function fmtDate(iso: string): string {
+  const d = new Date(iso);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  return sameDay
+    ? d.toLocaleTimeString(locale.value, { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleDateString(locale.value, { day: '2-digit', month: 'short' });
+}
+function fmtFull(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  });
 }
 
 async function loadAccountsAndFolders() {
@@ -31,7 +115,7 @@ async function loadAccountsAndFolders() {
     accounts.value = data;
     if (data.length > 0) await loadFolders(data[0].id);
   } catch {
-    error.value = 'Failed to load accounts';
+    error.value = t('errors.accounts');
   }
 }
 
@@ -39,15 +123,19 @@ async function loadFolders(id: string) {
   try {
     const { data } = await api.get<Folder[]>(`/accounts/${id}/folders`);
     folders.value = data;
-    if (data.length > 0 && !selectedFolderId.value) await selectFolder(data[0].id);
+    if (data.length && !selectedFolderId.value) {
+      const inbox = data.find((f) => f.specialUse === 'inbox') ?? data[0];
+      await selectFolder(inbox.id);
+    }
   } catch {
-    error.value = 'Failed to load folders';
+    error.value = t('errors.folders');
   }
 }
 
 async function selectFolder(folderId: string) {
   selectedFolderId.value = folderId;
   selected.value = null;
+  category.value = 'primary';
   loading.value = true;
   try {
     const { data } = await api.get<{ data: Email[] }>(
@@ -55,14 +143,12 @@ async function selectFolder(folderId: string) {
     );
     emails.value = data.data;
   } catch {
-    error.value = 'Failed to load emails';
+    error.value = t('errors.emails');
   } finally {
     loading.value = false;
   }
 }
 
-// Token para descartar respuestas viejas: si el usuario clickea A y luego B rápido,
-// la respuesta (lenta) de A no debe sobreescribir el detalle de B.
 let openToken = 0;
 async function openEmail(email: Email) {
   const token = ++openToken;
@@ -71,10 +157,8 @@ async function openEmail(email: Email) {
   attachments.value = [];
   bodyLoading.value = true;
   try {
-    // Una sola llamada: /body ya incluye la metadata de adjuntos (evita un 2º
-    // fetch+parse IMAP completo del mismo mensaje).
     const bodyRes = await api.get<EmailBody>(`/emails/${email.id}/body`);
-    if (token !== openToken) return; // un click más nuevo lo reemplazó
+    if (token !== openToken) return;
     body.value = bodyRes.data;
     attachments.value = bodyRes.data.attachments ?? [];
     if (!email.flags.seen) {
@@ -82,16 +166,25 @@ async function openEmail(email: Email) {
       email.flags.seen = true;
     }
   } catch {
-    if (token === openToken) error.value = 'Failed to load email';
+    if (token === openToken) error.value = t('errors.body');
   } finally {
     if (token === openToken) bodyLoading.value = false;
   }
 }
 
-async function downloadAttachment(att: AttachmentMeta) {
+async function toggleStar(email: Email, ev?: Event) {
+  ev?.stopPropagation();
+  const next = !email.flags.flagged;
+  email.flags.flagged = next;
+  try {
+    await api.patch(`/emails/${email.id}/flags`, { flagged: next });
+  } catch {
+    email.flags.flagged = !next; // rollback
+  }
+}
+
+async function downloadAttachment(att: EmailAttachmentMeta) {
   if (!selected.value) return;
-  // Descarga AUTENTICADA: fetch con Bearer → blob → link temporal (un <a href> plano
-  // no enviaría el token).
   const res = await api.get<Blob>(`/emails/${selected.value.id}/attachments/${att.id}`, {
     responseType: 'blob',
   });
@@ -101,169 +194,779 @@ async function downloadAttachment(att: AttachmentMeta) {
   a.download = att.filename;
   document.body.appendChild(a);
   a.click();
-  // Remover el <a> del DOM (evita leak) y revocar tras un tick (revocar inmediato
-  // puede abortar la descarga en algunos browsers).
   a.remove();
   setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 1000);
 }
 
-async function deleteEmail() {
-  if (!selected.value) return;
-  const id = selected.value.id;
+async function deleteEmail(email: Email | null, ev?: Event) {
+  ev?.stopPropagation();
+  if (!email) return;
+  const id = email.id;
   try {
     await api.delete(`/emails/${id}`);
     emails.value = emails.value.filter((e) => e.id !== id);
-    selected.value = null;
+    if (selected.value?.id === id) selected.value = null;
   } catch {
-    error.value = 'Failed to delete email';
+    error.value = t('errors.delete');
   }
 }
 
+function compose() {
+  void router.push({ name: 'compose-new' });
+}
 function reply() {
-  if (!selected.value) return;
-  void router.push({ name: 'compose-new', query: { replyTo: selected.value.id } });
+  if (selected.value)
+    void router.push({ name: 'compose-new', query: { replyTo: selected.value.id } });
 }
-
 function replyAll() {
-  if (!selected.value) return;
-  void router.push({ name: 'compose-new', query: { replyAll: selected.value.id } });
+  if (selected.value)
+    void router.push({ name: 'compose-new', query: { replyAll: selected.value.id } });
+}
+function forward() {
+  if (selected.value)
+    void router.push({ name: 'compose-new', query: { forward: selected.value.id } });
 }
 
-function forward() {
-  if (!selected.value) return;
-  void router.push({ name: 'compose-new', query: { forward: selected.value.id } });
-}
+const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.address);
 
 onMounted(loadAccountsAndFolders);
 </script>
 
 <template>
   <AppLayout>
-    <div class="flex h-full">
-      <aside class="w-56 border-r p-3 dark:border-gray-700">
-        <button
-          class="mb-4 w-full rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-          @click="router.push({ name: 'compose-new' })"
-        >
-          Compose
-        </button>
-        <h2 class="mb-2 px-2 text-sm font-semibold text-gray-500 uppercase">Folders</h2>
-        <ul class="space-y-1">
-          <li
-            v-for="folder in folders"
-            :key="folder.id"
-            :class="[
-              'cursor-pointer rounded-lg px-3 py-2 text-sm hover:bg-gray-100 dark:hover:bg-gray-800',
-              selectedFolderId === folder.id ? 'bg-blue-50 text-blue-700 dark:bg-gray-800' : '',
-            ]"
-            @click="selectFolder(folder.id)"
-          >
-            {{ folder.displayName }}
-          </li>
-        </ul>
-      </aside>
+    <div class="mail">
+      <!-- ===== Sidebar ===== -->
+      <nav class="sidebar" :class="{ collapsed: ui.sidebarCollapsed }">
+        <div class="compose-wrap">
+          <button class="compose" @click="compose">
+            <AppIcon name="pencil" :size="20" />
+            <span v-if="!ui.sidebarCollapsed">{{ t('compose.new') }}</span>
+          </button>
+        </div>
 
-      <!-- Lista de emails -->
-      <section class="w-80 overflow-auto border-r p-2 dark:border-gray-700">
-        <p v-if="error" class="text-sm text-red-600">{{ error }}</p>
-        <p v-if="loading" class="text-sm text-gray-500">Loading...</p>
-        <div class="space-y-1">
+        <div class="folders">
+          <button
+            v-for="f in systemFolders"
+            :key="f.id"
+            class="folder"
+            :class="{ active: selectedFolderId === f.id }"
+            :title="folderName(f)"
+            :aria-label="folderName(f)"
+            @click="selectFolder(f.id)"
+          >
+            <AppIcon :name="folderIcon(f)" :size="19" />
+            <template v-if="!ui.sidebarCollapsed">
+              <span class="folder-name">{{ folderName(f) }}</span>
+              <span v-if="f.unseenMessages > 0" class="folder-count">{{ f.unseenMessages }}</span>
+            </template>
+          </button>
+
+          <div v-if="!ui.sidebarCollapsed && labelFolders.length" class="labels">
+            <div class="section-title">{{ t('folders.labels') }}</div>
+            <button
+              v-for="f in labelFolders"
+              :key="f.id"
+              class="folder label"
+              :class="{ active: selectedFolderId === f.id }"
+              :aria-label="f.displayName"
+              @click="selectFolder(f.id)"
+            >
+              <span class="dot" :style="{ background: colorFor(f.name) }" />
+              <span class="folder-name">{{ f.displayName }}</span>
+              <span v-if="f.unseenMessages > 0" class="folder-count">{{ f.unseenMessages }}</span>
+            </button>
+          </div>
+        </div>
+      </nav>
+
+      <!-- ===== Lista ===== -->
+      <section class="list-pane" :class="{ narrow: selected }">
+        <div class="list-head">
+          <h2 class="list-title">{{ currentFolder ? folderName(currentFolder) : '' }}</h2>
+          <span class="list-count">{{ t('common.conversations', filteredEmails.length) }}</span>
+          <div class="list-actions">
+            <button
+              class="icon-btn"
+              :title="t('list.sync')"
+              @click="selectedFolderId && selectFolder(selectedFolderId)"
+            >
+              <AppIcon name="refresh" :size="18" />
+            </button>
+            <button class="icon-btn" :title="t('list.filter')">
+              <AppIcon name="filter" :size="18" />
+            </button>
+            <button class="icon-btn" :title="t('common.more')">
+              <AppIcon name="more" :size="18" />
+            </button>
+          </div>
+        </div>
+
+        <div v-if="isInbox" class="cats">
+          <button
+            v-for="c in ['primary', 'updates', 'promotions'] as const"
+            :key="c"
+            class="cat"
+            :class="{ active: category === c }"
+            @click="category = c"
+          >
+            <AppIcon
+              :name="c === 'primary' ? 'inbox' : c === 'updates' ? 'bell' : 'tag'"
+              :size="17"
+            />
+            {{ t('list.categories.' + c) }}
+          </button>
+        </div>
+
+        <div class="rows">
+          <p v-if="error" class="msg error">{{ error }}</p>
+          <p v-else-if="loading" class="msg">{{ t('common.loading') }}</p>
+          <div v-else-if="filteredEmails.length === 0" class="empty">
+            <AppIcon name="inbox" :size="48" :stroke-width="1.3" />
+            <div>{{ t('list.empty') }}</div>
+          </div>
           <div
-            v-for="email in emails"
+            v-for="email in filteredEmails"
+            v-else
             :key="email.id"
-            :class="[
-              'cursor-pointer rounded-lg border p-2 dark:border-gray-700',
-              selected?.id === email.id
-                ? 'bg-blue-50 dark:bg-gray-800'
-                : 'hover:bg-gray-50 dark:hover:bg-gray-800',
-              email.flags.seen ? 'opacity-70' : 'font-semibold',
-            ]"
+            class="row"
+            :class="{ selected: selected?.id === email.id, unread: !email.flags.seen }"
             @click="openEmail(email)"
           >
-            <div class="flex items-center justify-between">
-              <span class="truncate text-sm">{{ email.from?.name || email.from?.address }}</span>
-              <span class="ml-2 shrink-0 text-xs text-gray-500">{{
-                new Date(email.date).toLocaleDateString()
-              }}</span>
+            <button
+              class="star"
+              :class="{ on: email.flags.flagged }"
+              :title="t('thread.star')"
+              @click="toggleStar(email, $event)"
+            >
+              <AppIcon
+                name="star"
+                :size="18"
+                :fill="email.flags.flagged ? 'var(--star)' : 'none'"
+              />
+            </button>
+            <AppAvatar :name="email.from.name" :email="email.from.address" :size="30" />
+            <div class="row-from">{{ senderName(email) }}</div>
+            <div class="row-main">
+              <span class="row-subject">{{ email.subject || t('thread.noSubject') }}</span>
+              <span v-if="email.preview" class="row-preview"> — {{ email.preview }}</span>
             </div>
-            <div class="truncate text-sm text-gray-700 dark:text-gray-300">{{ email.subject }}</div>
-            <div v-if="email.hasAttachments" class="text-xs text-gray-400">📎 attachment</div>
+            <AppIcon v-if="email.hasAttachments" name="paperclip" :size="15" class="row-clip" />
+            <div class="row-end">
+              <button
+                class="icon-btn trash-hover"
+                :title="t('thread.delete')"
+                @click="deleteEmail(email, $event)"
+              >
+                <AppIcon name="trash" :size="17" />
+              </button>
+              <span class="row-date">{{ fmtDate(email.date) }}</span>
+            </div>
           </div>
         </div>
       </section>
 
-      <!-- Detalle del email -->
-      <section class="flex-1 overflow-auto p-4">
-        <div v-if="!selected" class="mt-10 text-center text-gray-400">Select an email to read</div>
-        <article v-else>
-          <header class="mb-4 border-b pb-3 dark:border-gray-700">
-            <div class="flex items-start justify-between gap-2">
-              <h1 class="text-lg font-semibold">{{ selected.subject || '(no subject)' }}</h1>
-              <div class="flex shrink-0 gap-1">
-                <button
-                  class="rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
-                  @click="reply"
-                >
-                  Reply
-                </button>
-                <button
-                  v-if="(selected.to?.length ?? 0) + (selected.cc?.length ?? 0) > 1"
-                  class="rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
-                  @click="replyAll"
-                >
-                  Reply all
-                </button>
-                <button
-                  class="rounded px-2 py-1 text-sm hover:bg-gray-100 dark:hover:bg-gray-800"
-                  @click="forward"
-                >
-                  Forward
-                </button>
-                <button
-                  class="rounded px-2 py-1 text-sm text-red-600 hover:bg-red-50 dark:hover:bg-gray-800"
-                  @click="deleteEmail"
-                >
-                  Delete
-                </button>
+      <!-- ===== Lectura ===== -->
+      <section v-if="selected" class="thread-pane">
+        <div class="thread-head">
+          <button class="icon-btn" :title="t('common.close')" @click="selected = null">
+            <AppIcon name="arrowLeft" :size="20" />
+          </button>
+          <button class="icon-btn" :title="t('thread.delete')" @click="deleteEmail(selected)">
+            <AppIcon name="trash" :size="20" />
+          </button>
+          <button class="icon-btn" :title="t('thread.snooze')">
+            <AppIcon name="clock" :size="20" />
+          </button>
+          <button class="icon-btn" :title="t('thread.tag')">
+            <AppIcon name="tag" :size="20" />
+          </button>
+          <div class="spacer" />
+          <button class="icon-btn" :title="t('thread.print')">
+            <AppIcon name="printer" :size="20" />
+          </button>
+          <button class="icon-btn" :title="t('common.more')">
+            <AppIcon name="more" :size="20" />
+          </button>
+        </div>
+
+        <div class="thread-body">
+          <div class="thread-subject-row">
+            <h1 class="thread-subject">{{ selected.subject || t('thread.noSubject') }}</h1>
+            <button
+              class="star big"
+              :class="{ on: selected.flags.flagged }"
+              @click="toggleStar(selected)"
+            >
+              <AppIcon
+                name="star"
+                :size="20"
+                :fill="selected.flags.flagged ? 'var(--star)' : 'none'"
+              />
+            </button>
+          </div>
+
+          <div class="msg-block">
+            <div class="msg-head">
+              <AppAvatar :name="selected.from.name" :email="selected.from.address" :size="40" />
+              <div class="msg-id">
+                <div class="msg-from">
+                  <span class="msg-name">{{ senderName(selected) }}</span>
+                  <span class="msg-addr">&lt;{{ selected.from.address }}&gt;</span>
+                </div>
+                <div class="msg-to">{{ t('thread.to', { name: t('thread.me') }) }}</div>
+              </div>
+              <span class="msg-date">{{ fmtFull(selected.date) }}</span>
+              <button class="icon-btn" :title="t('thread.reply')" @click="reply">
+                <AppIcon name="reply" :size="18" />
+              </button>
+            </div>
+
+            <div class="msg-content">
+              <p v-if="bodyLoading" class="msg">{{ t('common.loading') }}</p>
+              <template v-else-if="body">
+                <!-- sanitizedHtml ya viene saneado por el backend (sanitize-html). -->
+                <!-- eslint-disable vue/no-v-html -->
+                <div
+                  v-if="body.sanitizedHtml"
+                  class="prose max-w-none dark:prose-invert"
+                  v-html="body.sanitizedHtml"
+                />
+                <!-- eslint-enable vue/no-v-html -->
+                <pre v-else class="plain">{{ body.text }}</pre>
+              </template>
+
+              <div v-if="attachments.length" class="attachments">
+                <div class="att-title">
+                  <AppIcon name="paperclip" :size="14" />
+                  {{ t('thread.attachments', attachments.length) }}
+                </div>
+                <div class="att-list">
+                  <button
+                    v-for="att in attachments"
+                    :key="att.id"
+                    class="att"
+                    @click="downloadAttachment(att)"
+                  >
+                    <div class="att-icon"><AppIcon name="file" :size="18" /></div>
+                    <div class="att-meta">
+                      <div class="att-name">{{ att.filename }}</div>
+                      <div class="att-size">{{ Math.round(att.size / 1024) }} KB</div>
+                    </div>
+                    <AppIcon name="download" :size="16" class="att-dl" />
+                  </button>
+                </div>
               </div>
             </div>
-            <div class="mt-1 text-sm text-gray-600 dark:text-gray-400">
-              {{ selected.from?.name || selected.from?.address }} ·
-              {{ new Date(selected.date).toLocaleString() }}
+
+            <div class="reply-bar">
+              <button class="btn-secondary" @click="reply">
+                <AppIcon name="reply" :size="18" />{{ t('thread.reply') }}
+              </button>
+              <button class="btn-secondary" @click="replyAll">
+                <AppIcon name="replyAll" :size="18" />{{ t('thread.replyAll') }}
+              </button>
+              <button class="btn-secondary" @click="forward">
+                <AppIcon name="forward" :size="18" />{{ t('thread.forward') }}
+              </button>
             </div>
-          </header>
-
-          <p v-if="bodyLoading" class="text-gray-500">Loading body...</p>
-          <template v-else-if="body">
-            <!-- sanitizedHtml viene saneado por el backend (sanitize-html); el disable es de
-                 rango (no next-line) para sobrevivir al reformateo multilínea de prettier. -->
-            <!-- eslint-disable vue/no-v-html -->
-            <div
-              v-if="body.sanitizedHtml"
-              class="prose max-w-none dark:prose-invert"
-              v-html="body.sanitizedHtml"
-            ></div>
-            <!-- eslint-enable vue/no-v-html -->
-            <pre v-else class="whitespace-pre-wrap font-sans text-sm">{{ body.text }}</pre>
-          </template>
-
-          <div v-if="attachments.length > 0" class="mt-4 border-t pt-3 dark:border-gray-700">
-            <h3 class="mb-2 text-sm font-semibold text-gray-500">Attachments</h3>
-            <ul class="space-y-1">
-              <li v-for="att in attachments" :key="att.id">
-                <button
-                  class="text-sm text-blue-600 hover:underline"
-                  @click="downloadAttachment(att)"
-                >
-                  📎 {{ att.filename }} ({{ Math.round(att.size / 1024) }} KB)
-                </button>
-              </li>
-            </ul>
           </div>
-        </article>
+        </div>
       </section>
     </div>
   </AppLayout>
 </template>
+
+<style scoped>
+.mail {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  background: var(--bg);
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar {
+  width: 256px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  padding-top: 8px;
+  transition: width 0.18s;
+  overflow: hidden;
+}
+.sidebar.collapsed {
+  width: 72px;
+}
+.compose-wrap {
+  padding: 8px 14px 14px;
+}
+.compose {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 48px;
+  padding: 0 22px 0 16px;
+  border-radius: 14px;
+  border: none;
+  cursor: pointer;
+  background: var(--compose-bg);
+  color: var(--compose-fg);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s;
+}
+.compose:hover {
+  box-shadow: var(--shadow-md);
+}
+.collapsed .compose {
+  width: 48px;
+  height: 48px;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+}
+.folders {
+  flex: 1;
+  overflow-y: auto;
+  padding-bottom: 12px;
+}
+.folder {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: calc(100% - 8px);
+  padding: 0 16px;
+  height: 36px;
+  border: none;
+  border-radius: 0 18px 18px 0;
+  cursor: pointer;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+}
+.folder:hover {
+  background: var(--hover);
+}
+.folder.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.collapsed .folder {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto;
+  padding: 0;
+  border-radius: 50%;
+  justify-content: center;
+}
+.folder-name {
+  flex: 1;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.folder-count {
+  font-size: 12px;
+  font-weight: 700;
+  color: inherit;
+}
+.labels {
+  margin-top: 18px;
+}
+.section-title {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 0 16px 8px;
+}
+.folder.label {
+  border-radius: 0 18px 18px 0;
+  height: 34px;
+}
+.dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ---------- Lista ---------- */
+.list-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+.list-pane.narrow {
+  flex: 0 0 460px;
+  max-width: 460px;
+}
+.list-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.list-title {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.list-count {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.list-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+.cats {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  padding-left: 8px;
+}
+.cat {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-2);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.cat.active {
+  color: var(--accent);
+  font-weight: 700;
+  border-bottom-color: var(--accent);
+}
+.rows {
+  flex: 1;
+  overflow-y: auto;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 14px;
+  min-height: 52px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-dim);
+  transition: background 0.08s;
+}
+.row.unread {
+  background: var(--surface);
+}
+.row:hover {
+  box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--accent) 4%, transparent);
+}
+.row.selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.star {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.star.on {
+  color: var(--star);
+}
+.row-from {
+  width: 168px;
+  flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.row.unread .row-from,
+.row.unread .row-subject {
+  font-weight: 700;
+}
+.row-main {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.row-subject {
+  font-size: 13.5px;
+  color: var(--text-1);
+}
+.row-preview {
+  font-size: 13.5px;
+  color: var(--text-2);
+}
+.row-clip {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.row-end {
+  width: 92px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+.row-date {
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+.row.unread .row-date {
+  color: var(--accent-ink);
+  font-weight: 700;
+}
+.trash-hover {
+  display: none;
+}
+.row:hover .trash-hover {
+  display: inline-flex;
+}
+.row:hover .row-date {
+  display: none;
+}
+
+/* ---------- Lectura ---------- */
+.thread-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--surface);
+}
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 10px 0 14px;
+  height: 52px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.spacer {
+  margin-left: auto;
+}
+.thread-body {
+  flex: 1;
+  overflow-y: auto;
+}
+.thread-subject-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 22px 28px 14px;
+}
+.thread-subject {
+  flex: 1;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.3;
+  margin: 0;
+}
+.star.big {
+  padding: 4px;
+}
+.msg-block {
+  padding: 0 0 16px;
+}
+.msg-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 28px 14px;
+}
+.msg-id {
+  flex: 1;
+  min-width: 0;
+}
+.msg-from {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.msg-name {
+  font-weight: 600;
+  font-size: 14.5px;
+}
+.msg-addr {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.msg-to {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.msg-date {
+  font-size: 12.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+.msg-content {
+  padding: 0 28px 0 80px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  color: var(--text-1);
+}
+.plain {
+  white-space: pre-wrap;
+  font-family: inherit;
+  font-size: 14px;
+  margin: 0;
+}
+.attachments {
+  margin-top: 16px;
+}
+.att-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.att-list {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.att {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  min-width: 180px;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+.att:hover {
+  background: var(--hover);
+}
+.att-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.att-meta {
+  flex: 1;
+  min-width: 0;
+}
+.att-name {
+  font-size: 13px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.att-size {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+.att-dl {
+  color: var(--text-3);
+}
+.reply-bar {
+  display: flex;
+  gap: 10px;
+  padding: 8px 28px 28px 80px;
+}
+.btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.btn-secondary:hover {
+  background: var(--hover);
+}
+
+/* ---------- compartidos ---------- */
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: var(--text-2);
+}
+.icon-btn:hover {
+  background: var(--hover);
+}
+.msg {
+  padding: 16px;
+  font-size: 14px;
+  color: var(--text-2);
+}
+.msg.error {
+  color: var(--danger);
+}
+.empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 12px;
+  color: var(--text-3);
+  font-size: 14px;
+  font-weight: 500;
+  padding: 40px;
+}
+</style>

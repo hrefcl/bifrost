@@ -1,18 +1,7 @@
+/* Sistema de diseño Bifrost (tokens de la maqueta, light/dark, fuente, base).
+   @import debe ir antes de las directivas @tailwind para postcss-import. */
+@import './theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-:root {
-  --color-bg: #ffffff;
-  --color-text: #111827;
-}
-
-.dark {
-  --color-bg: #0f172a;
-  --color-text: #f8fafc;
-}
-
-body {
-  background-color: var(--color-bg);
-  color: var(--color-text);
-}
