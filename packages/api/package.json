@@ -12,6 +12,7 @@
     "test:coverage": "vitest run --coverage",
     "test": "vitest run",
     "e2e:server": "tsx e2e/server.ts",
+    "demo": "tsx demo/server.ts",
     "admin:grant": "tsx src/scripts/admin-grant.ts"
   },
   "dependencies": {

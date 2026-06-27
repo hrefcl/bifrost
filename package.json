@@ -12,7 +12,8 @@
     "test:unit": "pnpm -r --parallel test:unit",
     "test:e2e": "pnpm -r test:e2e",
     "test:coverage": "pnpm -r --parallel test:coverage",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "demo": "pnpm --filter @webmail6/api demo"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
