@@ -121,16 +121,14 @@ describe('cleanupOrphanAttachments — mark-and-sweep de blobs huérfanos', () =
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
   });
 
-  it('best-effort: si el provider falla, el doc se conserva y el lease vuelve a active (reintenta)', async () => {
+  it('DOC-FIRST: si el provider falla al borrar bytes, el DOC igual se elimina (bytes huérfanos inocuos, no ref rota)', async () => {
     const { user } = await seedUserWithAccount({ email: 'f@test.com' });
-    // providerType 's3' sin s3 configurado → providerForType('s3') lanza → doc se conserva.
+    // providerType 's3' sin s3 configurado → provider.delete lanza DESPUÉS de borrar el doc.
     const blob = await makeBlob(user._id.toString(), { ageMs: 120_000, providerType: 's3' });
     const n = await cleanupOrphanAttachments(60_000);
-    expect(n).toBe(0);
-    const after = await AttachmentBlob.findById(blob._id);
-    expect(after).not.toBeNull();
-    // El lease NO debe quedar colgado en 'deleting' (si no, nunca se reintentaría).
-    expect(after?.status).toBe('active');
+    // El doc se borró (doc-first); los bytes quedaron huérfanos (leak inocuo: nadie los referencia).
+    expect(n).toBe(1);
+    expect(await AttachmentBlob.findById(blob._id)).toBeNull();
   });
 
   it('LEASE: un blob tocado por un attach (lastReferencedAt fresco) NO se borra aunque createdAt sea viejo', async () => {
@@ -141,5 +139,32 @@ describe('cleanupOrphanAttachments — mark-and-sweep de blobs huérfanos', () =
     const n = await cleanupOrphanAttachments(60_000);
     expect(n).toBe(0);
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
+  });
+
+  it('LEASE RECOVERY: un lease "deleting" viejo (crash) se reactiva a active al inicio del sweep', async () => {
+    const { user } = await seedUserWithAccount({ email: 'h@test.com' });
+    const blob = await makeBlob(user._id.toString(), { ageMs: 0 }); // reciente → no se borra ahora
+    // Simula un lease colgado por crash: deleting hace 20 min.
+    await AttachmentBlob.updateOne(
+      { _id: blob._id },
+      { $set: { status: 'deleting', deletingSince: new Date(Date.now() - 20 * 60 * 1000) } }
+    );
+    await cleanupOrphanAttachments(60_000);
+    const after = await AttachmentBlob.findById(blob._id);
+    expect(after?.status).toBe('active'); // recuperado
+    expect(after?.deletingSince ?? null).toBeNull();
+  });
+
+  it('BACKFILL: un blob legacy sin status se trata como active y se recolecta si es huérfano viejo', async () => {
+    const { user } = await seedUserWithAccount({ email: 'i@test.com' });
+    const blob = await makeBlob(user._id.toString(), { ageMs: 120_000 });
+    // Simula un doc pre-lease: sin status ni lastReferencedAt (createdAt viejo).
+    await AttachmentBlob.collection.updateOne(
+      { _id: blob._id },
+      { $unset: { status: '', lastReferencedAt: '' } }
+    );
+    const n = await cleanupOrphanAttachments(60_000);
+    expect(n).toBe(1);
+    expect(await AttachmentBlob.findById(blob._id)).toBeNull();
   });
 });

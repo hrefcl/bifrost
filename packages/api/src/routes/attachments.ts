@@ -79,7 +79,14 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
   fastify.get('/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     objectId.parse(id);
-    const blob = await AttachmentBlob.findOne({ _id: id, userId: request.user.userId });
+    // status $ne 'deleting': un blob que el GC está reclamando no debe servirse (sus bytes
+    // pueden desaparecer en cualquier momento). Defensa; en la práctica un blob descargable
+    // está referenciado por un draft y nunca entra en lease.
+    const blob = await AttachmentBlob.findOne({
+      _id: id,
+      userId: request.user.userId,
+      status: { $ne: 'deleting' },
+    });
     if (!blob) {
       return reply
         .code(404)

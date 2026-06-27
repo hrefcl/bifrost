@@ -23,6 +23,8 @@ export interface IAttachmentBlob extends Document {
   refCount: number;
   status: 'active' | 'deleting';
   lastReferencedAt: Date;
+  /** Instante en que el GC tomó el lease 'deleting' (para recuperar leases colgados por crash). */
+  deletingSince?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -38,6 +40,7 @@ const AttachmentBlobSchema = new Schema<IAttachmentBlob>(
     refCount: { type: Number, default: 1 },
     status: { type: String, enum: ['active', 'deleting'], default: 'active' },
     lastReferencedAt: { type: Date, default: Date.now },
+    deletingSince: { type: Date },
   },
   { timestamps: true }
 );
