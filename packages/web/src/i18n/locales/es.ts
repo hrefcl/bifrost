@@ -232,6 +232,7 @@ export default {
     emails: 'No se pudieron cargar los correos',
     body: 'No se pudo cargar el mensaje',
     delete: 'No se pudo eliminar el correo',
+    move: 'No se pudo mover el correo',
   },
   settings: {
     title: 'Ajustes',

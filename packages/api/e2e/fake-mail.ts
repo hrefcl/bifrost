@@ -128,6 +128,16 @@ const FOLDERS = [
     subscribed: true,
     listed: true,
   },
+  {
+    path: 'Archive',
+    name: 'Archive',
+    delimiter: '/',
+    parentPath: '',
+    flags: new Set<string>(),
+    specialUse: '\\Archive',
+    subscribed: true,
+    listed: true,
+  },
 ];
 
 function messagesFor(path: string): FakeMessage[] {

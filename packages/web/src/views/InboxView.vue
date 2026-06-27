@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
@@ -279,6 +279,23 @@ async function deleteEmail(email: Email | null, ev?: Event) {
   }
 }
 
+/** Mover/archivar (Gmail): mueve el email a una carpeta por specialUse y lo saca de la lista. */
+async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event) {
+  ev?.stopPropagation();
+  if (!email) return;
+  const id = email.id;
+  try {
+    await api.post(`/emails/${id}/move`, { specialUse });
+    emails.value = emails.value.filter((e) => e.id !== id);
+    if (selected.value?.id === id) selected.value = null;
+  } catch {
+    error.value = t('errors.move');
+  }
+}
+function archive(email: Email | null, ev?: Event) {
+  void moveEmail(email, 'archive', ev);
+}
+
 function compose() {
   composer.openComposer();
 }
@@ -294,7 +311,30 @@ function forward() {
 
 const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.address);
 
-onMounted(loadAccountsAndFolders);
+// ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
+function onKey(e: KeyboardEvent) {
+  const el = e.target as HTMLElement | null;
+  const typing =
+    el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable === true;
+  if (typing || e.metaKey || e.ctrlKey || e.altKey || composer.open) return;
+  if (e.key === 'c') compose();
+  else if (e.key === '/') {
+    e.preventDefault();
+    ui.focusSearch();
+  } else if (selected.value) {
+    if (e.key === 'e') archive(selected.value);
+    else if (e.key === 'r') reply();
+    else if (e.key === '#' || e.key === 'Delete') void deleteEmail(selected.value);
+  }
+}
+
+onMounted(() => {
+  void loadAccountsAndFolders();
+  window.addEventListener('keydown', onKey);
+});
+onBeforeUnmount(() => {
+  window.removeEventListener('keydown', onKey);
+});
 </script>
 
 <template>
@@ -435,7 +475,14 @@ onMounted(loadAccountsAndFolders);
             <AppIcon v-if="email.hasAttachments" name="paperclip" :size="15" class="row-clip" />
             <div class="row-end">
               <button
-                class="icon-btn trash-hover"
+                class="icon-btn row-hover"
+                :title="t('thread.archive')"
+                @click="archive(email, $event)"
+              >
+                <AppIcon name="archive" :size="17" />
+              </button>
+              <button
+                class="icon-btn row-hover"
                 :title="t('thread.delete')"
                 @click="deleteEmail(email, $event)"
               >
@@ -452,6 +499,9 @@ onMounted(loadAccountsAndFolders);
         <div class="thread-head">
           <button class="icon-btn" :title="t('common.close')" @click="selected = null">
             <AppIcon name="arrowLeft" :size="20" />
+          </button>
+          <button class="icon-btn" :title="t('thread.archive')" @click="archive(selected)">
+            <AppIcon name="archive" :size="20" />
           </button>
           <button class="icon-btn" :title="t('thread.delete')" @click="deleteEmail(selected)">
             <AppIcon name="trash" :size="20" />
@@ -842,7 +892,7 @@ onMounted(loadAccountsAndFolders);
   flex-shrink: 0;
 }
 .row-end {
-  width: 92px;
+  width: 96px;
   flex-shrink: 0;
   display: flex;
   justify-content: flex-end;
@@ -856,10 +906,12 @@ onMounted(loadAccountsAndFolders);
   color: var(--accent-ink);
   font-weight: 700;
 }
-.trash-hover {
+.row-hover {
   display: none;
+  width: 30px;
+  height: 30px;
 }
-.row:hover .trash-hover {
+.row:hover .row-hover {
   display: inline-flex;
 }
 .row:hover .row-date {

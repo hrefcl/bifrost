@@ -10,10 +10,15 @@ import { defineStore } from 'pinia';
 export const useUiStore = defineStore('ui', () => {
   const searchQuery = ref('');
   const sidebarCollapsed = ref(false);
+  // Nonce para pedir foco en la barra de búsqueda desde otro componente (atajo "/").
+  const searchFocusNonce = ref(0);
 
   function toggleSidebar(): void {
     sidebarCollapsed.value = !sidebarCollapsed.value;
   }
+  function focusSearch(): void {
+    searchFocusNonce.value++;
+  }
 
-  return { searchQuery, sidebarCollapsed, toggleSidebar };
+  return { searchQuery, sidebarCollapsed, searchFocusNonce, toggleSidebar, focusSearch };
 });

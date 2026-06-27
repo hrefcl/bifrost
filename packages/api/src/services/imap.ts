@@ -409,6 +409,23 @@ export async function setEmailSeen(
   });
 }
 
+/** Mueve un mensaje (por uid) desde `folderPath` a `targetPath` vía IMAP MOVE. */
+export async function moveEmailToFolder(
+  account: IAccount,
+  folderPath: string,
+  uid: number,
+  targetPath: string
+): Promise<void> {
+  await withClient(account, async (client) => {
+    const lock = await client.getMailboxLock(folderPath);
+    try {
+      await client.messageMove(String(uid), targetPath, { uid: true });
+    } finally {
+      lock.release();
+    }
+  });
+}
+
 /** Mueve un mensaje a la carpeta Trash (por specialUse; fallback 'Trash'). */
 export async function moveEmailToTrash(
   account: IAccount,
@@ -420,14 +437,7 @@ export async function moveEmailToTrash(
     specialUse: 'trash',
   });
   const trashPath = trash?.path ?? 'Trash';
-  await withClient(account, async (client) => {
-    const lock = await client.getMailboxLock(folderPath);
-    try {
-      await client.messageMove(String(uid), trashPath, { uid: true });
-    } finally {
-      lock.release();
-    }
-  });
+  await moveEmailToFolder(account, folderPath, uid, trashPath);
 }
 
 /**

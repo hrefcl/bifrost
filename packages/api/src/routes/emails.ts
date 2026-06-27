@@ -4,6 +4,7 @@ import {
   fetchAndParseMessage,
   setEmailSeen,
   moveEmailToTrash,
+  moveEmailToFolder,
   type ParsedAttachment,
 } from '../services/imap.js';
 import { requireOwnedEmail, OwnershipError } from '../lib/authz.js';
@@ -184,6 +185,44 @@ export default function emailRoutes(fastify: FastifyInstance) {
     const { email, account } = await requireOwnedEmail(request.user.userId, emailId);
     const folderPath = await resolveFolderPath(email);
     await moveEmailToTrash(account, folderPath, email.uid);
+    await Email.deleteOne({ _id: email._id });
+    await redis.del(`emailbody:${email._id.toString()}`);
+    return { ok: true };
+  });
+
+  // Mover/archivar un email a otra carpeta (Gmail: Archivar, Spam, mover a carpeta). El destino
+  // se resuelve OWNER-BOUND: por specialUse de la cuenta, o por folderId propio. Como el uid
+  // cambia en el destino, quitamos el doc local (se re-sincroniza al sincronizar el destino),
+  // mismo patrón que el move-a-trash.
+  const moveSchema = z
+    .object({
+      specialUse: z.enum(['inbox', 'sent', 'drafts', 'trash', 'junk', 'archive']).optional(),
+      folderId: objectIdSchema.optional(),
+    })
+    .refine((b) => Boolean(b.specialUse ?? b.folderId), {
+      message: 'specialUse o folderId requerido',
+    });
+
+  fastify.post('/:emailId/move', async (request, reply) => {
+    const { emailId } = request.params as { emailId: string };
+    objectIdSchema.parse(emailId);
+    const body = moveSchema.parse(request.body);
+    const { email, account } = await requireOwnedEmail(request.user.userId, emailId);
+
+    const target = body.folderId
+      ? await Folder.findOne({ _id: body.folderId, accountId: account._id.toString() })
+      : await Folder.findOne({ accountId: account._id.toString(), specialUse: body.specialUse });
+    if (!target) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Target folder not found' });
+    }
+    if (target._id.toString() === email.folderId.toString()) {
+      return { ok: true }; // ya está en esa carpeta
+    }
+
+    const folderPath = await resolveFolderPath(email);
+    await moveEmailToFolder(account, folderPath, email.uid, target.path);
     await Email.deleteOne({ _id: email._id });
     await redis.del(`emailbody:${email._id.toString()}`);
     return { ok: true };

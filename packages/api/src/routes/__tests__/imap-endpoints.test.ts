@@ -80,6 +80,8 @@ import {
   seedFolder,
   seedEmail,
 } from '../../../test/integration-helper.js';
+import { Folder } from '../../models/Folder.js';
+import { Email } from '../../models/Email.js';
 
 describe('endpoints con IMAP (F3.1, mocks)', () => {
   let app: FastifyInstance;
@@ -289,5 +291,47 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
       headers: authHeaders(app, user._id.toString()),
     });
     expect(res.statusCode).toBe(200);
+  });
+
+  it('POST /api/emails/:id/move — archiva (mueve a Archive), saca el doc local; owner-bound', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'mv@test.com' });
+    // Índice único (accountId, specialUse) → cada carpeta de sistema con su specialUse propio.
+    const inbox = await seedFolder(account._id, { name: 'INBOX', path: 'INBOX' });
+    await Folder.updateOne({ _id: inbox._id }, { specialUse: 'inbox' });
+    const archive = await seedFolder(account._id, { name: 'Archive', path: 'Archive' });
+    await Folder.updateOne({ _id: archive._id }, { specialUse: 'archive' });
+    const email = await seedEmail(account._id, inbox._id, { uid: 20 });
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/move`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { specialUse: 'archive' },
+    });
+    expect(res.statusCode).toBe(200);
+    // El uid cambia en el destino → el doc local se quita (se re-sincroniza al sincronizar Archive).
+    expect(await Email.findById(email._id)).toBeNull();
+
+    // Carpeta destino inexistente → 404 (no se pierde el email).
+    const email2 = await seedEmail(account._id, inbox._id, { uid: 21 });
+    const noTarget = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email2._id.toString()}/move`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { specialUse: 'junk' }, // no hay carpeta junk sembrada
+    });
+    expect(noTarget.statusCode).toBe(404);
+    expect(await Email.findById(email2._id)).not.toBeNull();
+
+    // Owner-bound: OTRO usuario no puede mover este email (no fuga cross-tenant).
+    const { user: other } = await seedUserWithAccount({ email: 'mv-other@test.com' });
+    const cross = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email2._id.toString()}/move`,
+      headers: authHeaders(app, other._id.toString()),
+      payload: { specialUse: 'archive' },
+    });
+    expect([403, 404]).toContain(cross.statusCode);
+    expect(await Email.findById(email2._id)).not.toBeNull();
   });
 });

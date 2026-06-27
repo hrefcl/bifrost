@@ -232,6 +232,7 @@ export default {
     emails: 'Failed to load emails',
     body: 'Failed to load message',
     delete: 'Failed to delete email',
+    move: 'Failed to move email',
   },
   settings: {
     title: 'Settings',

@@ -371,6 +371,34 @@ test('reply-all: To=remitente, CC=resto sin uno-mismo ni el remitente (case-inse
   expect(cc).not.toContain('billing@example.com'); // remitente (ya en To), excluido
 });
 
+test('archivar: mover un email a Archivo lo saca de Recibidos (POST /move real)', async ({
+  page,
+}) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  await page.getByRole('button', { name: 'Inbox' }).click();
+  await page.getByText('Your June invoice').click();
+  await expect(page.getByRole('heading', { name: 'Your June invoice' })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // Archivar desde la toolbar de lectura (el de la barra del thread, no el del sidebar).
+  const moved = page.waitForResponse(
+    (r) =>
+      /\/api\/emails\/.+\/move$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.locator('.thread-head').getByRole('button', { name: 'Archive' }).click();
+  expect((await moved).status()).toBe(200);
+
+  // Ya no aparece en Recibidos (el doc local se quitó tras el move).
+  await expect(page.getByText('Your June invoice')).toHaveCount(0);
+});
+
 // Tests de administración al FINAL: no dependen del sync de buzón, así que se ejecutan tras
 // los flujos sync-sensibles para no alterar su timing (el server E2E es compartido).
 test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local', async ({

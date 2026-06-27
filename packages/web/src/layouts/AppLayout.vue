@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
@@ -22,6 +22,13 @@ const { t, locale } = useI18n();
 
 const searchFocused = ref(false);
 const menuOpen = ref(false);
+const searchInput = ref<HTMLInputElement | null>(null);
+
+// Atajo "/" (desde el Inbox): enfocar la barra de búsqueda.
+watch(
+  () => ui.searchFocusNonce,
+  () => searchInput.value?.focus()
+);
 
 function toggleTheme() {
   settings.setTheme(settings.theme === 'dark' ? 'light' : 'dark');
@@ -48,6 +55,7 @@ function isActive(name: string) {
         <form class="search" :class="{ focused: searchFocused }" @submit.prevent>
           <AppIcon name="search" :size="19" class="search-icon" />
           <input
+            ref="searchInput"
             v-model="ui.searchQuery"
             class="search-input"
             :placeholder="t('common.search')"
