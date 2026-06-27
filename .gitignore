@@ -40,3 +40,6 @@ grafana_data/
 # Test results
 test-results/
 playwright-report/
+
+# Storage local de adjuntos (runtime)
+data/
