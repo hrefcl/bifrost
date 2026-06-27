@@ -103,8 +103,11 @@ export async function buildApp() {
   // Rate limit global por IP. Configurable por env para no estrangular el harness E2E (suite
   // serial completa desde una sola IP = localhost, ~cientos de requests en una ventana de 1min);
   // en prod el default 100/min se mantiene. NO afecta a los límites por-ruta de auth (login/refresh).
+  // Validamos el env: un valor no numérico (typo) NO debe caer al default interno de fastify
+  // (1000/min) ni dejar el límite inoperante — cae al 100 declarado (review B+D).
+  const rateLimitMax = Number(process.env.RATE_LIMIT_MAX ?? '100');
   await app.register(rateLimit, {
-    max: Number(process.env.RATE_LIMIT_MAX ?? '100'),
+    max: Number.isFinite(rateLimitMax) && rateLimitMax > 0 ? rateLimitMax : 100,
     timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
     skipOnError: true,
   });

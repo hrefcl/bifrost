@@ -26,15 +26,20 @@ const form = ref({
   status: 'confirmed' as const,
 });
 
+// Rango del mes actual a MEDIANOCHE local (no la hora actual): si no, el día 1 antes de "ahora"
+// y el último día después de "ahora" quedaban fuera del filtro $gte/$lte del backend y se perdían
+// eventos reales del borde del mes (review B+D).
 const rangeStart = computed(() => {
   const d = new Date();
   d.setDate(1);
+  d.setHours(0, 0, 0, 0);
   return d.toISOString();
 });
 const rangeEnd = computed(() => {
   const d = new Date();
   d.setMonth(d.getMonth() + 1);
-  d.setDate(0);
+  d.setDate(0); // último día del mes actual
+  d.setHours(23, 59, 59, 999);
   return d.toISOString();
 });
 
@@ -71,19 +76,36 @@ function resetForm() {
   };
 }
 
+const error = ref('');
+
 async function submit() {
+  error.value = '';
   // `<input type="datetime-local">` da "2026-06-25T10:00" (hora local, sin segundos ni zona),
   // pero la API valida ISO 8601 completo (`z.string().datetime()`) → sin esta conversión el
-  // POST daba 400 y el evento NUNCA se creaba desde la UI. Interpretamos el valor como hora
-  // local y lo normalizamos a ISO UTC.
-  await store.createEvent({
-    ...form.value,
-    uid: `local-${String(Date.now())}`,
-    startDate: new Date(form.value.startDate).toISOString(),
-    endDate: new Date(form.value.endDate).toISOString(),
-  });
-  resetForm();
-  showForm.value = false;
+  // POST daba 400 y el evento NUNCA se creaba. Interpretamos el valor como hora local y
+  // normalizamos a ISO UTC. Si es "todo el día", inicio/fin del día local (review D).
+  const start = new Date(form.value.startDate);
+  const end = new Date(form.value.endDate);
+  if (form.value.allDay) {
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  }
+  if (!(end.getTime() > start.getTime())) {
+    error.value = t('calendar.errRange');
+    return;
+  }
+  try {
+    await store.createEvent({
+      ...form.value,
+      uid: `local-${String(Date.now())}`,
+      startDate: start.toISOString(),
+      endDate: end.toISOString(),
+    });
+    resetForm();
+    showForm.value = false;
+  } catch {
+    error.value = t('calendar.errSave');
+  }
 }
 </script>
 
@@ -130,6 +152,7 @@ async function submit() {
             <button type="button" class="ghost-btn" @click="showForm = false">
               {{ t('calendar.cancel') }}
             </button>
+            <span v-if="error" class="cal-error">{{ error }}</span>
           </div>
         </form>
 
@@ -272,7 +295,12 @@ async function submit() {
 }
 .form-actions {
   display: flex;
+  align-items: center;
   gap: 10px;
+}
+.cal-error {
+  font-size: 13px;
+  color: var(--danger);
 }
 .agenda {
   display: flex;

@@ -1,11 +1,16 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import axios from 'axios';
+import { brand } from '@/config/brand';
+import AppLogo from '@/components/AppLogo.vue';
 
 interface ValidationResponse {
   mongo: { ok: boolean; error?: string };
   redis: { ok: boolean; error?: string };
 }
+
+const { t } = useI18n();
 
 const step = ref(1);
 const loading = ref(false);
@@ -35,11 +40,11 @@ async function testConnections() {
   error.value = '';
   try {
     const { data } = await axios.post<ValidationResponse>('/api/setup/validate-db', db.value);
-    if (!data.mongo.ok) throw new Error(data.mongo.error ?? 'MongoDB connection failed');
-    if (!data.redis.ok) throw new Error(data.redis.error ?? 'Redis connection failed');
+    if (!data.mongo.ok) throw new Error(data.mongo.error ?? t('setup.errMongo'));
+    if (!data.redis.ok) throw new Error(data.redis.error ?? t('setup.errRedis'));
     step.value = 2;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Connection test failed';
+    error.value = err instanceof Error ? err.message : t('setup.errTest');
   } finally {
     loading.value = false;
   }
@@ -67,7 +72,7 @@ async function submit() {
     });
     success.value = true;
   } catch (err) {
-    error.value = err instanceof Error ? err.message : 'Setup failed';
+    error.value = err instanceof Error ? err.message : t('setup.errSetup');
   } finally {
     loading.value = false;
   }
@@ -79,124 +84,113 @@ function reloadPage() {
 </script>
 
 <template>
-  <div class="min-h-screen bg-gray-50 px-4 py-12 dark:bg-gray-950">
-    <div
-      class="mx-auto max-w-2xl rounded-2xl border bg-white p-8 shadow dark:border-gray-800 dark:bg-gray-900"
-    >
-      <h1 class="mb-2 text-3xl font-bold">Welcome to Webmail 6.0</h1>
-      <p class="mb-6 text-gray-600 dark:text-gray-400">Let's configure your installation.</p>
+  <div class="setup-bg">
+    <div class="setup-card">
+      <div class="setup-logo"><AppLogo :size="34" /></div>
+      <h1 class="setup-title">{{ t('setup.welcome', { brand: brand.name }) }}</h1>
+      <p class="setup-sub">{{ t('setup.subtitle') }}</p>
 
-      <div v-if="success" class="space-y-4">
-        <div
-          class="rounded-lg bg-green-50 p-4 text-green-800 dark:bg-green-900/30 dark:text-green-300"
-        >
-          Setup completed successfully.
-        </div>
-        <p class="text-gray-700 dark:text-gray-300">
-          Please restart the server to apply the new configuration, then refresh this page to log
-          in.
-        </p>
-        <button
-          class="rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-          @click="reloadPage"
-        >
-          Refresh
-        </button>
+      <div v-if="success" class="done">
+        <div class="done-badge">{{ t('setup.done') }}</div>
+        <p class="done-text">{{ t('setup.restart') }}</p>
+        <button class="primary" @click="reloadPage">{{ t('setup.refresh') }}</button>
       </div>
 
       <div v-else>
-        <div class="mb-6 flex items-center gap-2">
-          <div
-            v-for="s in 3"
-            :key="s"
-            :class="[
-              'h-2 flex-1 rounded-full',
-              step >= s ? 'bg-blue-600' : 'bg-gray-200 dark:bg-gray-700',
-            ]"
+        <div class="steps">
+          <div v-for="s in 3" :key="s" class="step-bar" :class="{ on: step >= s }" />
+        </div>
+
+        <p v-if="error" class="err">{{ error }}</p>
+
+        <div v-if="step === 1" class="form">
+          <h2 class="step-h">{{ t('setup.step1') }}</h2>
+          <label class="lbl"
+            >{{ t('setup.mongoUri') }}<input v-model="db.mongodbUri" type="text" class="field"
+          /></label>
+          <label class="lbl"
+            >{{ t('setup.redisUrl') }}<input v-model="db.redisUrl" type="text" class="field"
+          /></label>
+          <button class="primary full" :disabled="loading" @click="testConnections">
+            {{ loading ? t('setup.testing') : t('setup.testConnections') }}
+          </button>
+        </div>
+
+        <div v-if="step === 2" class="form">
+          <h2 class="step-h">{{ t('setup.step2') }}</h2>
+          <input
+            v-model="admin.displayName"
+            type="text"
+            :placeholder="t('setup.displayName')"
+            class="field"
           />
+          <input
+            v-model="admin.email"
+            type="email"
+            :placeholder="t('setup.adminEmail')"
+            class="field"
+          />
+          <input
+            v-model="admin.password"
+            type="password"
+            :placeholder="t('setup.password')"
+            class="field"
+          />
+          <button class="primary full" @click="step = 3">{{ t('setup.continue') }}</button>
         </div>
 
-        <p
-          v-if="error"
-          class="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-300"
-        >
-          {{ error }}
-        </p>
-
-        <div v-if="step === 1" class="space-y-4">
-          <h2 class="text-xl font-semibold">1. Database & Cache</h2>
-          <label class="block text-sm">
-            MongoDB URI
-            <input v-model="db.mongodbUri" type="text" class="input" />
-          </label>
-          <label class="block text-sm">
-            Redis URL
-            <input v-model="db.redisUrl" type="text" class="input" />
-          </label>
-          <button
-            class="w-full rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
-            :disabled="loading"
-            @click="testConnections"
-          >
-            {{ loading ? 'Testing...' : 'Test connections' }}
-          </button>
-        </div>
-
-        <div v-if="step === 2" class="space-y-4">
-          <h2 class="text-xl font-semibold">2. Admin account</h2>
-          <input v-model="admin.displayName" type="text" placeholder="Display name" class="input" />
-          <input v-model="admin.email" type="email" placeholder="Admin email" class="input" />
-          <input v-model="admin.password" type="password" placeholder="Password" class="input" />
-          <button
-            class="w-full rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700"
-            @click="step = 3"
-          >
-            Continue
-          </button>
-        </div>
-
-        <div v-if="step === 3" class="space-y-4">
-          <h2 class="text-xl font-semibold">3. Mail account</h2>
-          <input v-model="email.name" type="text" placeholder="Your name" class="input" />
-          <input v-model="email.email" type="email" placeholder="Email address" class="input" />
+        <div v-if="step === 3" class="form">
+          <h2 class="step-h">{{ t('setup.step3') }}</h2>
+          <input
+            v-model="email.name"
+            type="text"
+            :placeholder="t('setup.yourName')"
+            class="field"
+          />
+          <input
+            v-model="email.email"
+            type="email"
+            :placeholder="t('setup.emailAddress')"
+            class="field"
+          />
           <input
             v-model="email.password"
             type="password"
-            placeholder="Email password"
-            class="input"
+            :placeholder="t('setup.emailPassword')"
+            class="field"
           />
-          <div class="grid grid-cols-2 gap-2">
-            <input v-model="email.imapHost" type="text" placeholder="IMAP host" class="input" />
+          <div class="grid2">
+            <input
+              v-model="email.imapHost"
+              type="text"
+              :placeholder="t('setup.imapHost')"
+              class="field"
+            />
             <input
               v-model.number="email.imapPort"
               type="number"
-              placeholder="IMAP port"
-              class="input"
+              :placeholder="t('setup.imapPort')"
+              class="field"
             />
           </div>
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="email.imapSecure" type="checkbox" />
-            IMAP TLS
-          </label>
-          <div class="grid grid-cols-2 gap-2">
-            <input v-model="email.smtpHost" type="text" placeholder="SMTP host" class="input" />
+          <label class="check"><input v-model="email.imapSecure" type="checkbox" /> IMAP TLS</label>
+          <div class="grid2">
+            <input
+              v-model="email.smtpHost"
+              type="text"
+              :placeholder="t('setup.smtpHost')"
+              class="field"
+            />
             <input
               v-model.number="email.smtpPort"
               type="number"
-              placeholder="SMTP port"
-              class="input"
+              :placeholder="t('setup.smtpPort')"
+              class="field"
             />
           </div>
-          <label class="flex items-center gap-2 text-sm">
-            <input v-model="email.smtpSecure" type="checkbox" />
-            SMTP TLS
-          </label>
-          <button
-            class="w-full rounded-lg bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50"
-            :disabled="loading"
-            @click="submit"
-          >
-            {{ loading ? 'Finishing...' : 'Finish setup' }}
+          <label class="check"><input v-model="email.smtpSecure" type="checkbox" /> SMTP TLS</label>
+          <button class="primary full" :disabled="loading" @click="submit">
+            {{ loading ? t('setup.finishing') : t('setup.finish') }}
           </button>
         </div>
       </div>
@@ -205,7 +199,141 @@ function reloadPage() {
 </template>
 
 <style scoped>
-.input {
-  @apply mt-1 w-full rounded-lg border border-gray-300 bg-white px-4 py-2 outline-none focus:border-blue-500 dark:border-gray-700 dark:bg-gray-800;
+.setup-bg {
+  min-height: 100vh;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 48px 16px;
+  background: var(--bg);
+}
+.setup-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow-lg);
+  padding: 32px;
+}
+.setup-logo {
+  margin-bottom: 18px;
+}
+.setup-title {
+  font-size: 26px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin: 0 0 4px;
+}
+.setup-sub {
+  font-size: 14px;
+  color: var(--text-2);
+  margin: 0 0 24px;
+}
+.steps {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 22px;
+}
+.step-bar {
+  height: 6px;
+  flex: 1;
+  border-radius: 3px;
+  background: var(--border);
+}
+.step-bar.on {
+  background: var(--accent);
+}
+.err {
+  font-size: 13.5px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  padding: 10px 12px;
+  border-radius: 9px;
+  margin: 0 0 16px;
+}
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.step-h {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.lbl {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.field {
+  width: 100%;
+  padding: 11px 14px;
+  font: inherit;
+  font-size: 14px;
+  border-radius: 9px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-1);
+  outline: none;
+}
+.field:focus {
+  border-color: var(--accent);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: var(--text-1);
+}
+.primary {
+  padding: 11px 22px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.primary:hover:not(:disabled) {
+  background: var(--accent-700);
+}
+.primary:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.primary.full {
+  width: 100%;
+}
+.done {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.done-badge {
+  background: color-mix(in srgb, #16a34a 14%, transparent);
+  color: #16a34a;
+  font-weight: 600;
+  font-size: 14px;
+  padding: 12px 14px;
+  border-radius: 9px;
+}
+.done-text {
+  font-size: 14px;
+  color: var(--text-2);
+  line-height: 1.5;
+  margin: 0;
 }
 </style>

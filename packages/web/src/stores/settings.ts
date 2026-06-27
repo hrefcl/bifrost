@@ -13,7 +13,15 @@ export const useSettingsStore = defineStore('settings', () => {
 
   // Acento configurable a nivel USUARIO (override de la marca, en runtime): personaliza la
   // plataforma sin tocar build. Se persiste y se reaplica al cargar (App.vue).
-  const accent = ref<string>(localStorage.getItem('accent') ?? brand.accent);
+  // VALIDADO como HEX antes de inyectarlo en CSS (`style.setProperty('--accent', …)`): el valor
+  // viene de localStorage (controlable por el usuario) y se interpola en `color-mix(...)`; un
+  // string arbitrario podría romper la regla CSS. Si no es HEX válido, cae al accent de marca.
+  const HEX_COLOR = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+  function safeAccent(value: string | null): string {
+    const v = (value ?? '').trim();
+    return HEX_COLOR.test(v) ? v : brand.accent;
+  }
+  const accent = ref<string>(safeAccent(localStorage.getItem('accent')));
 
   function applyAccent() {
     const root = document.documentElement;
@@ -23,7 +31,7 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   function setAccent(value: string) {
-    accent.value = value;
+    accent.value = safeAccent(value);
   }
 
   watch(accent, (value) => {

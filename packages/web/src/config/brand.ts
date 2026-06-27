@@ -26,10 +26,16 @@ function envOr(value: string | undefined, fallback: string): string {
   return trimmed.length > 0 ? trimmed : fallback;
 }
 
+/** Acento validado como HEX (se inyecta en CSS vars / color-mix). Si no, default. */
+function envAccent(value: string | undefined, fallback: string): string {
+  const v = (value ?? '').trim();
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : fallback;
+}
+
 export const brand: Brand = {
   name: envOr(import.meta.env.VITE_BRAND_NAME, 'Bifrost'),
   version: envOr(import.meta.env.VITE_BRAND_VERSION, '6.0'),
-  accent: envOr(import.meta.env.VITE_BRAND_ACCENT, '#1b66ff'),
+  accent: envAccent(import.meta.env.VITE_BRAND_ACCENT, '#1b66ff'),
   tagline: envOr(import.meta.env.VITE_BRAND_TAGLINE, 'IMAP & JMAP'),
 };
 

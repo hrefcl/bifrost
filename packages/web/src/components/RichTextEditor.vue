@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { watch, onBeforeUnmount } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
+
+const { t } = useI18n();
 
 // Editor WYSIWYG mínimo estilo Gmail (Tiptap 2 / ProseMirror, per doc funcional §7.3.1).
 // Emite HTML; el backend lo re-sanitiza al guardar el draft (sanitize-html).
@@ -55,7 +58,7 @@ watch(
 
 function setLink(): void {
   const prev = editor.value?.getAttributes('link').href as string | undefined;
-  const url = window.prompt('URL del enlace:', prev ?? 'https://');
+  const url = window.prompt(t('editor.linkPrompt'), prev ?? 'https://');
   if (url === null) return; // cancelado
   if (url === '') {
     editor.value?.chain().focus().extendMarkRange('link').unsetLink().run();
@@ -79,7 +82,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb"
         :class="{ active: editor.isActive('bold') }"
-        title="Negrita"
+        :title="t('editor.bold')"
         @click="editor.chain().focus().toggleBold().run()"
       >
         <b>B</b>
@@ -88,7 +91,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb italic"
         :class="{ active: editor.isActive('italic') }"
-        title="Itálica"
+        :title="t('editor.italic')"
         @click="editor.chain().focus().toggleItalic().run()"
       >
         I
@@ -98,7 +101,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb"
         :class="{ active: editor.isActive('bulletList') }"
-        title="Lista"
+        :title="t('editor.bulletList')"
         @click="editor.chain().focus().toggleBulletList().run()"
       >
         •
@@ -107,7 +110,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb"
         :class="{ active: editor.isActive('orderedList') }"
-        title="Lista numerada"
+        :title="t('editor.orderedList')"
         @click="editor.chain().focus().toggleOrderedList().run()"
       >
         1.
@@ -116,7 +119,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb"
         :class="{ active: editor.isActive('blockquote') }"
-        title="Cita"
+        :title="t('editor.blockquote')"
         @click="editor.chain().focus().toggleBlockquote().run()"
       >
         ❝
@@ -126,7 +129,7 @@ onBeforeUnmount(() => {
         type="button"
         class="tb"
         :class="{ active: editor.isActive('link') }"
-        title="Enlace"
+        :title="t('editor.link')"
         @click="setLink"
       >
         🔗
