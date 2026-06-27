@@ -75,7 +75,7 @@ export async function sendDraft(
       options.attachments = await Promise.all(
         draft.attachments.map(async (att) => ({
           filename: att.filename,
-          content: await providerForType(att.providerType).get(att.storageKey),
+          content: await (await providerForType(att.providerType)).get(att.storageKey),
           contentType: att.contentType,
         }))
       );
