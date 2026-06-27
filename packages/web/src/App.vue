@@ -3,6 +3,7 @@ import { useSettingsStore } from '@/stores/settings';
 
 const settings = useSettingsStore();
 settings.applyTheme();
+settings.applyAccent();
 </script>
 
 <template>

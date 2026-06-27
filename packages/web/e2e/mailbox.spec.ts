@@ -318,9 +318,11 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await loginViaUi(page);
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
 
-  // Settings → escribir y guardar la firma (único editor de la página). En el shell nuevo,
-  // Ajustes es un botón-icono en la topbar (title="Settings").
+  // Settings → sección Firma → escribir y guardar (único editor de la página). En el shell
+  // nuevo, Ajustes es un botón-icono en la topbar (title="Settings") y Settings tiene nav
+  // lateral por secciones (default Apariencia) → navegamos a "Signature".
   await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Signature' }).click();
   await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
   await page.locator('.ProseMirror').click();
   await page.locator('.ProseMirror').fill('Saludos, Equipo A E2E');

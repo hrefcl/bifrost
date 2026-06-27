@@ -1,5 +1,6 @@
 import { ref, watch } from 'vue';
 import { defineStore } from 'pinia';
+import { brand } from '@/config/brand';
 
 export const useSettingsStore = defineStore('settings', () => {
   const saved = localStorage.getItem('theme');
@@ -9,6 +10,26 @@ export const useSettingsStore = defineStore('settings', () => {
       ? (saved as 'light' | 'dark' | 'system')
       : 'system'
   );
+
+  // Acento configurable a nivel USUARIO (override de la marca, en runtime): personaliza la
+  // plataforma sin tocar build. Se persiste y se reaplica al cargar (App.vue).
+  const accent = ref<string>(localStorage.getItem('accent') ?? brand.accent);
+
+  function applyAccent() {
+    const root = document.documentElement;
+    root.style.setProperty('--accent', accent.value);
+    root.style.setProperty('--accent-700', `color-mix(in srgb, ${accent.value} 82%, #000)`);
+    root.style.setProperty('--accent-300', `color-mix(in srgb, ${accent.value} 52%, #fff)`);
+  }
+
+  function setAccent(value: string) {
+    accent.value = value;
+  }
+
+  watch(accent, (value) => {
+    localStorage.setItem('accent', value);
+    applyAccent();
+  });
 
   function applyTheme() {
     const root = document.documentElement;
@@ -33,5 +54,5 @@ export const useSettingsStore = defineStore('settings', () => {
     applyTheme();
   });
 
-  return { theme, applyTheme, setTheme };
+  return { theme, applyTheme, setTheme, accent, applyAccent, setAccent };
 });
