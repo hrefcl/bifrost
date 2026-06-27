@@ -183,3 +183,13 @@ ningún merge con HIGH abierto o score <9):
   (`ubuntu-latest`→pin + `timeout-minutes`).
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
+
+### TD-UI-MAQUETA (ALTA — brecha de diseño, hallada en auto-auditoría #7)
+La UI implementada es un MVP funcional plano que **no coincide con la maqueta**
+(`maqueta/Webmail 6.0/`, prototipo React pulido). Verificado por screenshots (demo vs
+`maqueta/.../screenshots/`). Gaps: i18n inglés→español, login crudo→account-picker, sin barra de
+búsqueda, sidebar plano (sin iconos/contadores/Destacados/Pospuestos/Archivo/Etiquetas/almacenamiento),
+lista plana (sin avatares/etiquetas-de-color/categorías/estrella/checkbox), estilo Tailwind por
+defecto vs Public Sans + accent #1b66ff + temas. Esfuerzo multi-PR; requiere dirección de
+producto sobre alcance/prioridad. El backend ya soporta la mayoría de los datos (folders, flags,
+threading); falta el front. Para verlo: `pnpm demo`.

@@ -23,10 +23,11 @@ conecta al backend de mail del cliente, con un subsistema de **administración c
 | **CI/CD** (typecheck, lint, tests, coverage, E2E, docker-smoke, **audit gate**) | ✅ Verde |
 | **Provisioning de buzones** (crear cuentas email desde admin) | ⏳ Pendiente (PR-E, feature-gated) |
 
-**Madurez:** producto **funcional y hardened**; los 3 gates de producción originales cerrados
-(sync-OOM, E2E, docker). Falta sólo la feature opcional de provisioning para el caso self-hosted
-completo. Validación contra un servidor de correo / bucket S3 **real** es responsabilidad del
-operador (no testeable en CI).
+**Madurez:** backend + flujos **funcionales y hardened** (3 gates de producción cerrados, 6
+rondas de auditoría). **PERO la UI no coincide con la maqueta** — es un MVP funcional plano vs
+un diseño rico (ver §7 "Brecha de diseño"): hay un esfuerzo de UI/UX significativo pendiente
+para fidelidad visual. Falta también la feature de provisioning (PR-E). Validación contra un
+servidor de correo / bucket S3 **real** es responsabilidad del operador (no testeable en CI).
 
 ---
 
@@ -156,6 +157,27 @@ Controles activos:
 ---
 
 ## 7. Lo que falta / deuda registrada
+
+### ⚠️ Brecha de DISEÑO (UI ≠ maqueta) — significativa
+
+El backend + los flujos están completos y verificados, pero la **UI implementada es un MVP
+funcional plano que NO coincide con la maqueta** (`maqueta/Webmail 6.0/`, un prototipo React
+pulido). Verificado comparando screenshots (demo local vs `maqueta/.../screenshots/`):
+
+| Aspecto | Maqueta (diseño) | Implementación actual |
+|---------|------------------|----------------------|
+| Idioma | Español (Recibidos, Redactar, Destacados…) | Inglés (Inbox, Compose) |
+| Login | Selector de cuentas (avatars, badges IMAP/JMAP) | Form crudo email+password+host IMAP |
+| Búsqueda | Barra "Buscar en el correo" | No existe |
+| Sidebar | Iconos + contadores + Destacados/Pospuestos/Archivo/Spam + Etiquetas + barra de almacenamiento | Texto plano (INBOX/Sent), sin iconos/contadores |
+| Lista | Avatares, etiquetas de color, categorías (Principal/Novedades/Promociones), estrella, checkbox | Filas planas remitente/asunto/fecha |
+| Estilo | Public Sans + accent `#1b66ff`, pulido | Tailwind por defecto |
+
+**Conclusión honesta:** el proyecto está *funcionando de verdad* a nivel de flujos/seguridad,
+pero la fidelidad visual al diseño es baja. Alinear la UI a la maqueta es un esfuerzo de diseño
+multi-PR (i18n a español, login account-picker, search, sidebar rica, lista con avatares/
+etiquetas/categorías, design-system con fuente/accent/temas). Requiere dirección de producto
+sobre alcance/prioridad. Para verlo: `pnpm demo` (compara con `maqueta/.../screenshots/`).
 
 ### Feature pendiente (la única real)
 - **PR-E — Provisioning de buzones**: crear cuentas de email desde el admin
