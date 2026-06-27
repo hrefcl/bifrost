@@ -29,10 +29,11 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     const query = request.query as { start?: string; end?: string };
     const filter: Record<string, unknown> = { userId: request.user.userId };
     if (query.start && query.end) {
-      filter.startDate = {
-        $gte: new Date(query.start),
-        $lte: new Date(query.end),
-      };
+      // Solapamiento REAL con el rango [start,end]: el evento empieza antes del fin Y termina
+      // después del inicio. Antes se filtraba sólo por startDate dentro del rango, lo que dejaba
+      // afuera eventos que cruzan el borde (empiezan antes del mes y terminan dentro) — review B.
+      filter.startDate = { $lte: new Date(query.end) };
+      filter.endDate = { $gte: new Date(query.start) };
     }
     const events = await CalendarEvent.find(filter).sort({ startDate: 1 });
     return events.map(serializeCalendarEvent);

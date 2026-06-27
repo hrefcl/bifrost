@@ -27,20 +27,16 @@ const form = ref({
 });
 
 // Rango del mes actual a MEDIANOCHE local (no la hora actual): si no, el día 1 antes de "ahora"
-// y el último día después de "ahora" quedaban fuera del filtro $gte/$lte del backend y se perdían
-// eventos reales del borde del mes (review B+D).
+// y el último día después de "ahora" quedaban fuera del filtro del backend y se perdían eventos
+// reales del borde del mes (review B+D). Usamos el constructor new Date(y, m+1, 0) para el último
+// día: es overflow-safe (setMonth(+1) sobre un día 31 desbordaba a otro mes — review B re-review).
 const rangeStart = computed(() => {
-  const d = new Date();
-  d.setDate(1);
-  d.setHours(0, 0, 0, 0);
-  return d.toISOString();
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
 });
 const rangeEnd = computed(() => {
-  const d = new Date();
-  d.setMonth(d.getMonth() + 1);
-  d.setDate(0); // último día del mes actual
-  d.setHours(23, 59, 59, 999);
-  return d.toISOString();
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
 });
 
 function fmtRange(start: string, end: string): string {
