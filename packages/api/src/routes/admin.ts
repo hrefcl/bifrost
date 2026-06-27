@@ -3,8 +3,25 @@ import { z } from 'zod';
 import { requireAdmin } from '../lib/authz.js';
 import { getStorageConfigPublic, setStorageConfig } from '../services/storage/index.js';
 
-// PR-B: sólo `local` (sin secretos). `s3` se habilita en PR-D (endpoint+bucket+keys cifradas).
-const storageConfigSchema = z.object({ providerType: z.literal('local') }).strict();
+// `local` (sin config) o `s3` (endpoint opcional + bucket/region/keys; el secret se cifra al
+// persistir). Union discriminada → `.strict()` rechaza campos extra y mezclas inválidas.
+const storageConfigSchema = z.discriminatedUnion('providerType', [
+  z.object({ providerType: z.literal('local') }).strict(),
+  z
+    .object({
+      providerType: z.literal('s3'),
+      s3: z
+        .object({
+          endpoint: z.string().url().optional(),
+          bucket: z.string().min(1),
+          region: z.string().min(1),
+          accessKeyId: z.string().min(1),
+          secretAccessKey: z.string().min(1),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
 /**
  * Rutas del panel de administración. TODO lo de acá exige rol `admin` (verificado en DB,

@@ -85,7 +85,7 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Attachment not found' });
     }
-    const provider = providerForType(blob.providerType);
+    const provider = await providerForType(blob.providerType);
     const buf = await provider.get(blob.storageKey);
     void reply.header('X-Content-Type-Options', 'nosniff');
     void reply.header('Content-Type', blob.contentType || 'application/octet-stream');

@@ -22,6 +22,7 @@
     "@fastify/multipart": "^10.0.0",
     "@fastify/rate-limit": "^10.2.2",
     "@webmail6/shared": "workspace:*",
+    "aws4fetch": "^1.0.20",
     "bullmq": "^5.34.10",
     "dotenv": "^16.4.7",
     "fastify": "^5.2.0",

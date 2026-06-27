@@ -122,4 +122,53 @@ describe('admin role + requireAdmin (PR-A)', () => {
     expect(fresh?.role).toBe('user');
     await app.close();
   });
+
+  it('PATCH config/storage s3 → 200, persiste el secret CIFRADO y la respuesta lo OMITE (PR-D)', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+      payload: {
+        providerType: 's3',
+        s3: {
+          endpoint: 'https://minio.test',
+          bucket: 'b',
+          region: 'us-east-1',
+          accessKeyId: 'AKIA',
+          secretAccessKey: 'el-secreto-no-debe-volver',
+        },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as { s3?: { secretConfigured?: boolean } };
+    expect(body.s3?.secretConfigured).toBe(true);
+    // El secret en claro NUNCA vuelve en la respuesta.
+    expect(res.body).not.toContain('el-secreto-no-debe-volver');
+
+    // GET tampoco lo expone.
+    const get = await app.inject({
+      method: 'GET',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(get.body).not.toContain('el-secreto-no-debe-volver');
+    await app.close();
+  });
+
+  it('PATCH config/storage s3 con campos faltantes → 400', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3bad@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+      payload: { providerType: 's3', s3: { bucket: 'b' } }, // falta region/accessKeyId/secret
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
 });
