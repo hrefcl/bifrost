@@ -29,10 +29,11 @@ async function makeBlob(
     refCount: 1,
   });
   if (opts.ageMs) {
-    // Driver nativo: mongoose ignora un $set de createdAt (campo gestionado por timestamps).
+    // El GC filtra por lastReferencedAt. Driver nativo para createdAt (timestamps lo gestiona).
+    const old = new Date(Date.now() - opts.ageMs);
     await AttachmentBlob.collection.updateOne(
       { _id: blob._id },
-      { $set: { createdAt: new Date(Date.now() - opts.ageMs) } }
+      { $set: { createdAt: old, lastReferencedAt: old } }
     );
   }
   return blob;
@@ -102,13 +103,13 @@ describe('cleanupOrphanAttachments — mark-and-sweep de blobs huérfanos', () =
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
   });
 
-  it('referenciado SÓLO por un draft sent → se borra (la copia vive en IMAP Sent)', async () => {
+  it('referenciado por un draft sent → NO se borra (appendToSent es best-effort; no se asume copia)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'd@test.com' });
     const blob = await makeBlob(user._id.toString(), { ageMs: 120_000 });
     await makeDraft(user._id.toString(), account._id.toString(), 'sent', blob._id.toString());
     const n = await cleanupOrphanAttachments(60_000);
-    expect(n).toBe(1);
-    expect(await AttachmentBlob.findById(blob._id)).toBeNull();
+    expect(n).toBe(0);
+    expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
   });
 
   it('referenciado por un draft sending → NO se borra (se está leyendo)', async () => {
@@ -120,10 +121,23 @@ describe('cleanupOrphanAttachments — mark-and-sweep de blobs huérfanos', () =
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
   });
 
-  it('best-effort: si el borrado del provider falla, el doc NO se elimina (reintenta luego)', async () => {
+  it('best-effort: si el provider falla, el doc se conserva y el lease vuelve a active (reintenta)', async () => {
     const { user } = await seedUserWithAccount({ email: 'f@test.com' });
     // providerType 's3' sin s3 configurado → providerForType('s3') lanza → doc se conserva.
     const blob = await makeBlob(user._id.toString(), { ageMs: 120_000, providerType: 's3' });
+    const n = await cleanupOrphanAttachments(60_000);
+    expect(n).toBe(0);
+    const after = await AttachmentBlob.findById(blob._id);
+    expect(after).not.toBeNull();
+    // El lease NO debe quedar colgado en 'deleting' (si no, nunca se reintentaría).
+    expect(after?.status).toBe('active');
+  });
+
+  it('LEASE: un blob tocado por un attach (lastReferencedAt fresco) NO se borra aunque createdAt sea viejo', async () => {
+    const { user } = await seedUserWithAccount({ email: 'g@test.com' });
+    const blob = await makeBlob(user._id.toString(), { ageMs: 120_000 });
+    // Simula el "claim" de resolveAttachments: bump de lastReferencedAt a ahora.
+    await AttachmentBlob.updateOne({ _id: blob._id }, { $set: { lastReferencedAt: new Date() } });
     const n = await cleanupOrphanAttachments(60_000);
     expect(n).toBe(0);
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
