@@ -16,6 +16,10 @@ async function main(): Promise<void> {
     console.error('Uso: admin:grant <email>');
     process.exit(2);
   }
+  if (!/^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/.test(email)) {
+    console.error(`Email con formato inválido: ${email}`);
+    process.exit(2);
+  }
   const uri = process.env.MONGODB_URI;
   if (!uri) {
     console.error('Falta MONGODB_URI en el entorno.');

@@ -20,6 +20,13 @@ describe('admin role + requireAdmin (PR-A)', () => {
     await resetState();
   });
 
+  it('sin token → /api/admin/whoami responde 401 (auth corre antes que requireAdmin)', async () => {
+    const app = await buildTestApp();
+    const res = await app.inject({ method: 'GET', url: '/api/admin/whoami' });
+    expect(res.statusCode).toBe(401);
+    await app.close();
+  });
+
   it('usuario normal → /api/admin/whoami responde 403 (feature-gate backend)', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'normal@test.com' });
