@@ -7,14 +7,24 @@ import { api } from '@/lib/http';
 /**
  * Panel de administración — Paso 1: almacenamiento de adjuntos.
  *
- * El backend (`/api/admin/config/storage`) exige rol admin y hoy sólo persiste el provider
- * `local`. `s3` se mostrará como opción pero aún no se puede guardar (llega en una próxima
- * versión); la UI lo deja claro y, por defensa, traduce el 400 del backend a un mensaje amable.
+ * El backend (`/api/admin/config/storage`) exige rol admin. Soporta `local` (sin config) y
+ * `s3` (endpoint opcional + bucket/region/keys; el secret se cifra server-side y nunca vuelve).
+ * El secret NO se pre-rellena al editar: si ya está configurado, hay que re-ingresarlo para
+ * guardar cambios (el backend lo exige).
  */
 type ProviderType = 'local' | 's3';
 
+interface PublicS3 {
+  endpoint?: string;
+  bucket: string;
+  region: string;
+  accessKeyId: string;
+  secretConfigured: boolean;
+}
+
 interface StorageConfig {
   providerType: ProviderType;
+  s3?: PublicS3;
   updatedBy?: string;
   updatedAt?: string;
 }
@@ -26,11 +36,22 @@ const error = ref('');
 const selected = ref<ProviderType>('local');
 const current = ref<StorageConfig | null>(null);
 
+// Formulario S3 (el secret nunca llega del backend; arranca vacío).
+const s3 = ref({ endpoint: '', bucket: '', region: '', accessKeyId: '', secretAccessKey: '' });
+const secretAlreadyConfigured = ref(false);
+
 onMounted(async () => {
   try {
     const { data } = await api.get<StorageConfig>('/admin/config/storage');
     current.value = data;
     selected.value = data.providerType;
+    if (data.s3) {
+      s3.value.endpoint = data.s3.endpoint ?? '';
+      s3.value.bucket = data.s3.bucket;
+      s3.value.region = data.s3.region;
+      s3.value.accessKeyId = data.s3.accessKeyId;
+      secretAlreadyConfigured.value = data.s3.secretConfigured;
+    }
   } catch {
     error.value = 'No se pudo cargar la configuración de almacenamiento';
   } finally {
@@ -42,6 +63,25 @@ function choose(provider: ProviderType) {
   selected.value = provider;
   saved.value = false;
   error.value = '';
+  // Defensa en profundidad: no retener el secret si el admin se va de S3 sin guardar.
+  if (provider !== 's3') s3.value.secretAccessKey = '';
+}
+
+/** Limpia el "Guardado"/error previo al empezar a editar los campos (input handler). */
+function clearStatus() {
+  saved.value = false;
+  error.value = '';
+}
+
+/** Faltan datos obligatorios para guardar S3 (el secret SIEMPRE se exige al guardar). */
+function s3Incomplete(): boolean {
+  return (
+    selected.value === 's3' &&
+    (!s3.value.bucket.trim() ||
+      !s3.value.region.trim() ||
+      !s3.value.accessKeyId.trim() ||
+      !s3.value.secretAccessKey)
+  );
 }
 
 async function save() {
@@ -49,16 +89,30 @@ async function save() {
   saved.value = false;
   error.value = '';
   try {
-    const { data } = await api.patch<StorageConfig>('/admin/config/storage', {
-      providerType: selected.value,
-    });
+    const payload =
+      selected.value === 's3'
+        ? {
+            providerType: 's3' as const,
+            s3: {
+              ...(s3.value.endpoint.trim() ? { endpoint: s3.value.endpoint.trim() } : {}),
+              bucket: s3.value.bucket.trim(),
+              region: s3.value.region.trim(),
+              accessKeyId: s3.value.accessKeyId.trim(),
+              secretAccessKey: s3.value.secretAccessKey,
+            },
+          }
+        : { providerType: 'local' as const };
+    const { data } = await api.patch<StorageConfig>('/admin/config/storage', payload);
     current.value = data;
     selected.value = data.providerType;
+    if (data.s3) secretAlreadyConfigured.value = data.s3.secretConfigured;
+    s3.value.secretAccessKey = ''; // no retener el secret en memoria tras guardar
     saved.value = true;
   } catch (err) {
-    // El backend rechaza s3 con 400 (aún no implementado): mensaje claro, no un crudo error.
+    // 400 = datos S3 inválidos (endpoint/region/campos rechazados por el backend).
     if (err instanceof AxiosError && err.response?.status === 400) {
-      error.value = 'El almacenamiento S3 estará disponible en una próxima versión.';
+      error.value =
+        'Datos de S3 inválidos. Revisá los campos: endpoint (http/https, sin ruta), región (ej. us-east-1) y credenciales.';
     } else {
       error.value = 'No se pudo guardar la configuración';
     }
@@ -131,8 +185,8 @@ async function save() {
               />
               <span>
                 <span class="font-medium">S3 / compatible (MinIO, R2, …)</span>
-                <span class="ml-2 rounded bg-amber-100 px-2 py-0.5 text-xs text-amber-700"
-                  >Próximamente</span
+                <span class="ml-2 rounded bg-green-100 px-2 py-0.5 text-xs text-green-700"
+                  >Disponible</span
                 >
                 <span class="block text-sm text-gray-500">
                   Los archivos se guardan en un bucket S3. Requiere endpoint, bucket, región y
@@ -141,29 +195,46 @@ async function save() {
               </span>
             </label>
 
-            <!-- Vista previa de los campos S3 (deshabilitada hasta que se implemente). -->
+            <!-- Campos de configuración S3. @input en el contenedor (los eventos burbujean)
+                 descarta el "Guardado"/error previo al editar cualquier campo. -->
             <div
               v-if="selected === 's3'"
-              class="space-y-2 rounded-lg bg-amber-50 p-4 text-sm dark:bg-amber-950/30"
+              class="space-y-2 rounded-lg bg-gray-50 p-4 dark:bg-gray-800"
+              @input="clearStatus"
             >
-              <p class="text-amber-800 dark:text-amber-300">
-                Estos datos se pedirán cuando S3 esté disponible:
-              </p>
+              <label class="block text-sm font-medium">Endpoint (opcional para AWS)</label>
               <input
+                v-model="s3.endpoint"
                 class="adminput"
-                placeholder="Endpoint (ej. https://s3.amazonaws.com)"
-                disabled
+                placeholder="https://s3.amazonaws.com o http://minio:9000"
               />
-              <input class="adminput" placeholder="Bucket" disabled />
-              <input class="adminput" placeholder="Región (ej. us-east-1)" disabled />
-              <input class="adminput" placeholder="Access Key ID" disabled />
-              <input class="adminput" type="password" placeholder="Secret Access Key" disabled />
+              <label class="block text-sm font-medium">Bucket</label>
+              <input v-model="s3.bucket" class="adminput" placeholder="mi-bucket" />
+              <label class="block text-sm font-medium">Región</label>
+              <input v-model="s3.region" class="adminput" placeholder="us-east-1" />
+              <label class="block text-sm font-medium">Access Key ID</label>
+              <input v-model="s3.accessKeyId" class="adminput" placeholder="AKIA…" />
+              <label class="block text-sm font-medium">
+                Secret Access Key
+                <span v-if="secretAlreadyConfigured" class="text-xs font-normal text-gray-500">
+                  (ya configurada — re-ingresala para cambiar la configuración)
+                </span>
+              </label>
+              <input
+                v-model="s3.secretAccessKey"
+                type="password"
+                class="adminput"
+                :placeholder="
+                  secretAlreadyConfigured ? 'Re-ingresar secret para cambiar' : 'Secret Access Key'
+                "
+                autocomplete="new-password"
+              />
             </div>
 
             <div class="flex items-center gap-3 pt-2">
               <button
                 class="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                :disabled="saving || selected === 's3'"
+                :disabled="saving || s3Incomplete()"
                 @click="save"
               >
                 {{ saving ? 'Guardando…' : 'Guardar' }}
