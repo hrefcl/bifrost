@@ -69,6 +69,52 @@ describe('admin role + requireAdmin (PR-A)', () => {
     await app.close();
   });
 
+  it('GET /api/admin/config/storage → default local; PATCH lo persiste con updatedBy', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'cfg@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    const headers = authHeaders(app, user._id.toString());
+
+    const get = await app.inject({ method: 'GET', url: '/api/admin/config/storage', headers });
+    expect(get.statusCode).toBe(200);
+    expect((JSON.parse(get.body) as { providerType: string }).providerType).toBe('local');
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage',
+      headers,
+      payload: { providerType: 'local' },
+    });
+    expect(patch.statusCode).toBe(200);
+    expect((JSON.parse(patch.body) as { updatedBy: string }).updatedBy).toBe(user._id.toString());
+  });
+
+  it('PATCH config/storage con providerType no implementado (s3) → 400', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'cfg2@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+      payload: { providerType: 's3' },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('config/storage requiere admin: usuario normal → 403', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'cfg3@test.com' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/admin/config/storage',
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('el auto-registro por login NO crea admins (role default = user)', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'auto@test.com' });
