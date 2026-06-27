@@ -19,10 +19,18 @@ export const useCalendarStore = defineStore('calendar', () => {
     return data;
   }
 
+  /** Actualiza un evento (drag/resize en el calendario → PATCH parcial) y refleja el resultado. */
+  async function updateEvent(id: string, patch: Partial<CalendarEvent>) {
+    const { data } = await api.patch<CalendarEvent>(`/calendar/${id}`, patch);
+    const i = events.value.findIndex((e) => e.id === id);
+    if (i >= 0) events.value[i] = data;
+    return data;
+  }
+
   async function deleteEvent(id: string) {
     await api.delete(`/calendar/${id}`);
     events.value = events.value.filter((e) => e.id !== id);
   }
 
-  return { events, fetchEvents, createEvent, deleteEvent };
+  return { events, fetchEvents, createEvent, updateEvent, deleteEvent };
 });

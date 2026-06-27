@@ -1,182 +1,289 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import FullCalendar from '@fullcalendar/vue3';
+import dayGridPlugin from '@fullcalendar/daygrid';
+import timeGridPlugin from '@fullcalendar/timegrid';
+import interactionPlugin from '@fullcalendar/interaction';
+import esLocale from '@fullcalendar/core/locales/es';
+import type {
+  CalendarOptions,
+  EventInput,
+  EventClickArg,
+  EventDropArg,
+  DateSelectArg,
+  DatesSetArg,
+} from '@fullcalendar/core';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import { useCalendarStore } from '@/stores/calendar';
 import { api } from '@/lib/http';
 import { colorFor } from '@/lib/people';
-import type { Account } from '@webmail6/shared';
+import type { Account, CalendarEvent } from '@webmail6/shared';
 
-const store = useCalendarStore();
 const { t, locale } = useI18n();
+const store = useCalendarStore();
+const calendarRef = ref<InstanceType<typeof FullCalendar> | null>(null);
 const accounts = ref<Account[]>([]);
-const showForm = ref(false);
-const form = ref({
-  accountId: '',
-  calendarId: 'default',
-  calendarName: 'Personal',
-  uid: '',
-  summary: '',
-  startDate: '',
-  startTimezone: 'UTC',
-  endDate: '',
-  endTimezone: 'UTC',
-  allDay: false,
-  status: 'confirmed' as const,
-});
+const periodTitle = ref('');
+const currentView = ref<'timeGridDay' | 'timeGridWeek' | 'dayGridMonth'>('timeGridWeek');
 
-// Rango del mes actual a MEDIANOCHE local (no la hora actual): si no, el día 1 antes de "ahora"
-// y el último día después de "ahora" quedaban fuera del filtro del backend y se perdían eventos
-// reales del borde del mes (review B+D). Usamos el constructor new Date(y, m+1, 0) para el último
-// día: es overflow-safe (setMonth(+1) sobre un día 31 desbordaba a otro mes — review B re-review).
-const rangeStart = computed(() => {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
-});
-const rangeEnd = computed(() => {
-  const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
-});
+// Modal de creación rápida (Crear o arrastrar para seleccionar un rango).
+const showCreate = ref(false);
+const createForm = ref({ summary: '', startDate: '', endDate: '', allDay: false });
+const createError = ref('');
 
-function fmtRange(start: string, end: string): string {
-  const s = new Date(start);
-  const e = new Date(end);
-  return `${s.toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' })} – ${e.toLocaleTimeString(locale.value, { timeStyle: 'short' })}`;
+// Modal de detalle (click en un evento).
+const detail = ref<CalendarEvent | null>(null);
+
+function fcApi() {
+  return calendarRef.value?.getApi();
 }
 
-onMounted(async () => {
-  void store.fetchEvents(rangeStart.value, rangeEnd.value);
-  try {
-    const { data } = await api.get<Account[]>('/accounts');
-    accounts.value = data;
-    if (data.length > 0) form.value.accountId = data[0].id;
-  } catch {
-    // sin cuentas → el select queda vacío; submit lo valida (required)
-  }
-});
+/** Eventos del store → formato FullCalendar (color estable por calendario). */
+const fcEvents = computed<EventInput[]>(() =>
+  store.events.map((e) => ({
+    id: e.id,
+    title: e.summary,
+    start: e.startDate,
+    end: e.endDate,
+    allDay: e.allDay,
+    backgroundColor: colorFor(e.calendarName || e.summary),
+    borderColor: colorFor(e.calendarName || e.summary),
+  }))
+);
 
-function resetForm() {
-  form.value = {
-    accountId: accounts.value[0]?.id ?? '',
-    calendarId: 'default',
-    calendarName: 'Personal',
-    uid: '',
+// datetime-local (hora local) ↔ Date helpers.
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function onDatesSet(arg: DatesSetArg): void {
+  periodTitle.value = arg.view.title;
+  void store.fetchEvents(arg.start.toISOString(), arg.end.toISOString());
+}
+
+/** Arrastrar sobre la grilla para crear → abre el modal con el rango preseleccionado. */
+function onSelect(arg: DateSelectArg): void {
+  createForm.value = {
     summary: '',
-    startDate: '',
-    startTimezone: 'UTC',
-    endDate: '',
-    endTimezone: 'UTC',
-    allDay: false,
-    status: 'confirmed' as const,
+    startDate: toLocalInput(arg.start),
+    endDate: toLocalInput(arg.end),
+    allDay: arg.allDay,
   };
+  createError.value = '';
+  showCreate.value = true;
+  fcApi()?.unselect();
 }
 
-const error = ref('');
+/** Botón "Crear": evento de 1h desde la próxima hora en punto. */
+function openCreate(): void {
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() + 1);
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  createForm.value = {
+    summary: '',
+    startDate: toLocalInput(start),
+    endDate: toLocalInput(end),
+    allDay: false,
+  };
+  createError.value = '';
+  showCreate.value = true;
+}
 
-async function submit() {
-  error.value = '';
-  // `<input type="datetime-local">` da "2026-06-25T10:00" (hora local, sin segundos ni zona),
-  // pero la API valida ISO 8601 completo (`z.string().datetime()`) → sin esta conversión el
-  // POST daba 400 y el evento NUNCA se creaba. Interpretamos el valor como hora local y
-  // normalizamos a ISO UTC. Si es "todo el día", inicio/fin del día local (review D).
-  const start = new Date(form.value.startDate);
-  const end = new Date(form.value.endDate);
-  if (form.value.allDay) {
-    start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
-  }
+async function submitCreate(): Promise<void> {
+  createError.value = '';
+  const start = new Date(createForm.value.startDate);
+  const end = new Date(createForm.value.endDate);
   if (!(end.getTime() > start.getTime())) {
-    error.value = t('calendar.errRange');
+    createError.value = t('calendar.errRange');
     return;
   }
   try {
     await store.createEvent({
-      ...form.value,
+      accountId: accounts.value[0]?.id ?? '',
+      calendarId: 'default',
+      calendarName: 'Personal',
       uid: `local-${String(Date.now())}`,
+      summary: createForm.value.summary,
       startDate: start.toISOString(),
+      startTimezone: 'UTC',
       endDate: end.toISOString(),
+      endTimezone: 'UTC',
+      allDay: createForm.value.allDay,
+      status: 'confirmed',
     });
-    resetForm();
-    showForm.value = false;
+    showCreate.value = false;
   } catch {
-    error.value = t('calendar.errSave');
+    createError.value = t('calendar.errSave');
   }
 }
+
+function onEventClick(arg: EventClickArg): void {
+  detail.value = store.events.find((e) => e.id === arg.event.id) ?? null;
+}
+
+/** Drag o resize de un evento → PATCH de fechas; si falla, revierte la UI. */
+async function onEventChange(arg: EventDropArg): Promise<void> {
+  const ev = arg.event;
+  if (!ev.start) return;
+  try {
+    await store.updateEvent(ev.id, {
+      startDate: ev.start.toISOString(),
+      endDate: (ev.end ?? ev.start).toISOString(),
+    });
+  } catch {
+    arg.revert();
+  }
+}
+
+async function deleteDetail(): Promise<void> {
+  if (!detail.value) return;
+  await store.deleteEvent(detail.value.id);
+  detail.value = null;
+}
+
+function fmtDetail(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+function setView(v: typeof currentView.value): void {
+  currentView.value = v;
+  fcApi()?.changeView(v);
+}
+
+const calendarOptions = computed<CalendarOptions>(() => ({
+  plugins: [dayGridPlugin, timeGridPlugin, interactionPlugin],
+  initialView: 'timeGridWeek',
+  headerToolbar: false,
+  locale: locale.value === 'es' ? esLocale : 'en',
+  firstDay: 1,
+  height: '100%',
+  nowIndicator: true,
+  editable: true,
+  selectable: true,
+  selectMirror: true,
+  dayMaxEvents: true,
+  scrollTime: '08:00:00',
+  slotLabelFormat: { hour: 'numeric', minute: '2-digit', omitZeroMinute: true },
+  events: fcEvents.value,
+  datesSet: onDatesSet,
+  select: onSelect,
+  eventClick: onEventClick,
+  eventDrop: (arg) => {
+    void onEventChange(arg);
+  },
+  eventResize: (arg) => {
+    void onEventChange(arg as unknown as EventDropArg);
+  },
+}));
+
+onMounted(async () => {
+  try {
+    const { data } = await api.get<Account[]>('/accounts');
+    accounts.value = data;
+  } catch {
+    // sin cuentas: crear lo valida igual (accountId requerido por el backend)
+  }
+});
 </script>
 
 <template>
   <AppLayout>
     <div class="cal">
+      <!-- Header estilo Google Calendar / maqueta -->
       <div class="cal-head">
-        <h1 class="cal-title">{{ t('calendar.title') }}</h1>
-        <button class="primary-btn" @click="showForm = !showForm">
-          <AppIcon name="plus" :size="18" />{{ t('calendar.new') }}
-        </button>
+        <h1 class="cal-period">{{ periodTitle }}</h1>
+        <div class="nav">
+          <button class="icon-btn" :title="t('common.back')" @click="fcApi()?.prev()">
+            <AppIcon name="chevronLeft" :size="18" />
+          </button>
+          <button class="icon-btn" @click="fcApi()?.next()">
+            <AppIcon name="chevronRight" :size="18" />
+          </button>
+        </div>
+        <button class="today-btn" @click="fcApi()?.today()">{{ t('calendar.today') }}</button>
+
+        <div class="head-right">
+          <div class="seg">
+            <button
+              v-for="v in ['timeGridDay', 'timeGridWeek', 'dayGridMonth'] as const"
+              :key="v"
+              class="seg-btn"
+              :class="{ on: currentView === v }"
+              @click="setView(v)"
+            >
+              {{ t('calendar.view.' + v) }}
+            </button>
+          </div>
+          <button class="create-btn" @click="openCreate">
+            <AppIcon name="plus" :size="18" />{{ t('calendar.new') }}
+          </button>
+        </div>
       </div>
 
-      <div class="cal-body">
-        <form v-if="showForm" class="form-card" @submit.prevent="submit">
-          <input
-            v-model="form.summary"
-            type="text"
-            :placeholder="t('calendar.eventTitle')"
-            required
-            class="field"
-          />
-          <select v-model="form.accountId" required class="field">
-            <option v-for="account in accounts" :key="account.id" :value="account.id">
-              {{ account.email }}
-            </option>
-          </select>
-          <div class="grid2">
-            <label class="lbl"
-              >{{ t('calendar.start') }}
-              <input v-model="form.startDate" type="datetime-local" required class="field" />
-            </label>
-            <label class="lbl"
-              >{{ t('calendar.end') }}
-              <input v-model="form.endDate" type="datetime-local" required class="field" />
-            </label>
-          </div>
-          <label class="check-row">
-            <input v-model="form.allDay" type="checkbox" />
-            {{ t('calendar.allDay') }}
-          </label>
-          <div class="form-actions">
-            <button type="submit" class="primary-btn">{{ t('calendar.save') }}</button>
-            <button type="button" class="ghost-btn" @click="showForm = false">
-              {{ t('calendar.cancel') }}
-            </button>
-            <span v-if="error" class="cal-error">{{ error }}</span>
-          </div>
-        </form>
+      <div class="cal-grid">
+        <FullCalendar ref="calendarRef" :options="calendarOptions" />
+      </div>
+    </div>
 
-        <div v-if="store.events.length === 0" class="empty">
-          <AppIcon name="calendar" :size="44" :stroke-width="1.3" />
-          <div>{{ t('calendar.empty') }}</div>
+    <!-- Modal de creación rápida -->
+    <div v-if="showCreate" class="overlay" @click.self="showCreate = false">
+      <div class="modal">
+        <div class="modal-head">
+          <h3>{{ t('calendar.new') }}</h3>
+          <button class="icon-btn" :title="t('common.close')" @click="showCreate = false">
+            <AppIcon name="x" :size="18" />
+          </button>
         </div>
-        <div v-else class="agenda">
-          <div
-            v-for="event in store.events"
-            :key="event.id"
-            class="event"
-            :style="{ '--evcolor': colorFor(event.calendarName || event.summary) }"
-          >
-            <div class="event-text">
-              <div class="event-title">{{ event.summary }}</div>
-              <div class="event-time">
-                <AppIcon name="clock" :size="14" />{{ fmtRange(event.startDate, event.endDate) }}
-              </div>
-            </div>
-            <button
-              class="icon-btn danger"
-              :title="t('calendar.delete')"
-              @click="store.deleteEvent(event.id)"
-            >
-              <AppIcon name="trash" :size="18" />
-            </button>
-          </div>
+        <input
+          v-model="createForm.summary"
+          type="text"
+          :placeholder="t('calendar.eventTitle')"
+          class="field"
+        />
+        <div class="grid2">
+          <label class="lbl">
+            {{ t('calendar.start') }}
+            <input v-model="createForm.startDate" type="datetime-local" class="field" />
+          </label>
+          <label class="lbl">
+            {{ t('calendar.end') }}
+            <input v-model="createForm.endDate" type="datetime-local" class="field" />
+          </label>
+        </div>
+        <label class="check"
+          ><input v-model="createForm.allDay" type="checkbox" /> {{ t('calendar.allDay') }}</label
+        >
+        <p v-if="createError" class="err">{{ createError }}</p>
+        <div class="modal-foot">
+          <button class="create-btn" @click="submitCreate">{{ t('calendar.save') }}</button>
+          <button class="ghost-btn" @click="showCreate = false">{{ t('calendar.cancel') }}</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal de detalle -->
+    <div v-if="detail" class="overlay" @click.self="detail = null">
+      <div
+        class="modal"
+        :style="{ borderTop: `4px solid ${colorFor(detail.calendarName || detail.summary)}` }"
+      >
+        <div class="modal-head">
+          <h3>{{ detail.summary }}</h3>
+          <button class="icon-btn" :title="t('common.close')" @click="detail = null">
+            <AppIcon name="x" :size="18" />
+          </button>
+        </div>
+        <div class="detail-row">
+          <AppIcon name="clock" :size="15" />{{ fmtDetail(detail.startDate) }} –
+          {{ fmtDetail(detail.endDate) }}
+        </div>
+        <div class="detail-row"><AppIcon name="tag" :size="15" />{{ detail.calendarName }}</div>
+        <div class="modal-foot">
+          <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
         </div>
       </div>
     </div>
@@ -193,32 +300,92 @@ async function submit() {
 .cal-head {
   display: flex;
   align-items: center;
-  gap: 16px;
-  padding: 0 24px;
-  height: 56px;
+  gap: 12px;
+  padding: 0 20px;
+  height: 60px;
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
-.cal-title {
+.cal-period {
   font-size: 19px;
   font-weight: 600;
   letter-spacing: -0.02em;
   margin: 0;
-  flex: 1;
+  min-width: 180px;
 }
-.cal-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 24px;
-  max-width: 760px;
-  width: 100%;
-  margin: 0 auto;
+.nav {
+  display: flex;
+  gap: 2px;
 }
-.primary-btn {
+.head-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.icon-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.icon-btn:hover {
+  background: var(--hover);
+}
+.today-btn,
+.ghost-btn {
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.today-btn:hover,
+.ghost-btn:hover {
+  background: var(--hover);
+}
+.ghost-btn.danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--border));
+}
+.seg {
+  display: flex;
+  background: var(--bg);
+  border-radius: 8px;
+  padding: 3px;
+  border: 1px solid var(--border);
+}
+.seg-btn {
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-2);
+}
+.seg-btn.on {
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-sm);
+}
+.create-btn {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
+  padding: 8px 18px;
   font: inherit;
   font-size: 14px;
   font-weight: 600;
@@ -228,43 +395,90 @@ async function submit() {
   color: #fff;
   cursor: pointer;
 }
-.primary-btn:hover {
+.create-btn:hover {
   background: var(--accent-700);
 }
-.ghost-btn {
-  padding: 9px 16px;
-  font: inherit;
-  font-size: 14px;
-  font-weight: 600;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: transparent;
+.cal-grid {
+  flex: 1;
+  min-height: 0;
+  padding: 8px 12px 12px;
+}
+
+/* ---- Tema FullCalendar → tokens Bifrost ---- */
+.cal-grid :deep(.fc) {
+  --fc-border-color: var(--border);
+  --fc-page-bg-color: var(--surface);
+  --fc-neutral-bg-color: var(--surface-dim);
+  --fc-today-bg-color: color-mix(in srgb, var(--accent) 7%, transparent);
+  --fc-now-indicator-color: var(--danger);
+  --fc-event-text-color: #fff;
+  font-family: inherit;
+  font-size: 13px;
   color: var(--text-1);
+}
+.cal-grid :deep(.fc .fc-col-header-cell-cushion),
+.cal-grid :deep(.fc .fc-daygrid-day-number),
+.cal-grid :deep(.fc .fc-timegrid-slot-label-cushion),
+.cal-grid :deep(.fc .fc-list-day-text) {
+  color: var(--text-2);
+  text-decoration: none;
+}
+.cal-grid :deep(.fc .fc-timegrid-axis-cushion) {
+  color: var(--text-3);
+}
+.cal-grid :deep(.fc-event) {
+  border-radius: 6px;
+  border: none;
+  padding: 1px 4px;
+  font-weight: 600;
   cursor: pointer;
 }
-.ghost-btn:hover {
-  background: var(--hover);
+.cal-grid :deep(.fc .fc-daygrid-day.fc-day-today),
+.cal-grid :deep(.fc .fc-timegrid-col.fc-day-today) {
+  background: var(--fc-today-bg-color);
 }
-.form-card {
+
+/* ---- Modales ---- */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
   display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 18px;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+}
+.modal {
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  margin-bottom: 20px;
-  background: var(--bg);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 20px;
+}
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+.modal-head h3 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
 }
 .field {
   width: 100%;
-  padding: 10px 14px;
+  padding: 10px 12px;
   font: inherit;
   font-size: 14px;
   border-radius: 9px;
   border: 1px solid var(--border-strong);
-  background: var(--surface);
+  background: var(--bg);
   color: var(--text-1);
   outline: none;
+  margin-bottom: 10px;
 }
 .field:focus {
   border-color: var(--accent);
@@ -277,86 +491,35 @@ async function submit() {
 .lbl {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  font-size: 12.5px;
+  gap: 4px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-2);
 }
-.check-row {
+.check {
   display: flex;
   align-items: center;
   gap: 8px;
   font-size: 14px;
   color: var(--text-1);
+  margin: 4px 0 12px;
 }
-.form-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.cal-error {
+.err {
   font-size: 13px;
   color: var(--danger);
+  margin: 0 0 10px;
 }
-.agenda {
+.modal-foot {
   display: flex;
-  flex-direction: column;
   gap: 10px;
+  margin-top: 6px;
 }
-.event {
+.detail-row {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  border-left: 3px solid var(--evcolor);
-  background: color-mix(in srgb, var(--evcolor) 7%, var(--surface));
-}
-.event-text {
-  flex: 1;
-  min-width: 0;
-}
-.event-title {
-  font-size: 14.5px;
-  font-weight: 600;
-  color: var(--text-1);
-}
-.event-time {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--text-3);
-  margin-top: 2px;
-}
-.icon-btn {
-  width: 36px;
-  height: 36px;
-  border-radius: 50%;
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-}
-.icon-btn:hover {
-  background: var(--hover);
-}
-.icon-btn.danger:hover {
-  color: var(--danger);
-}
-.empty {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-  color: var(--text-3);
-  font-size: 14px;
-  font-weight: 500;
-  padding: 60px 0;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--text-2);
+  margin-bottom: 8px;
 }
 </style>

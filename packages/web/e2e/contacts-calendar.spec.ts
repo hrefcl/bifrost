@@ -54,7 +54,9 @@ test('calendario: crear evento desde la UI aparece en la agenda (regresión date
   await login(page);
 
   await page.getByRole('button', { name: 'Calendar' }).click();
-  await expect(page.getByRole('heading', { name: 'Calendar' })).toBeVisible({ timeout: 15_000 });
+  // La vista es una grilla tipo Google Calendar (FullCalendar); el header muestra el período,
+  // no "Calendar". Verificamos el botón Crear como ancla estable.
+  await expect(page.getByRole('button', { name: 'Create' })).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('button', { name: 'Create' }).click();
   await page.fill('input[placeholder="Event title"]', 'Sprint review E2E');

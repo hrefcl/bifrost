@@ -13,6 +13,11 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
+    "@fullcalendar/core": "^6.1.21",
+    "@fullcalendar/daygrid": "^6.1.21",
+    "@fullcalendar/interaction": "^6.1.21",
+    "@fullcalendar/timegrid": "^6.1.21",
+    "@fullcalendar/vue3": "^6.1.21",
     "@tiptap/extension-link": "^3.27.1",
     "@tiptap/extension-placeholder": "^3",
     "@tiptap/starter-kit": "^3.27.1",
