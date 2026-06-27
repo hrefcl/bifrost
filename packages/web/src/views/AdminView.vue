@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { AxiosError } from 'axios';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { api } from '@/lib/http';
@@ -67,15 +67,11 @@ function choose(provider: ProviderType) {
   if (provider !== 's3') s3.value.secretAccessKey = '';
 }
 
-// Al editar cualquier campo, descartar el "Guardado"/error previo (no quedan obsoletos).
-watch(
-  [s3, selected],
-  () => {
-    saved.value = false;
-    error.value = '';
-  },
-  { deep: true }
-);
+/** Limpia el "Guardado"/error previo al empezar a editar los campos (input handler). */
+function clearStatus() {
+  saved.value = false;
+  error.value = '';
+}
 
 /** Faltan datos obligatorios para guardar S3 (el secret SIEMPRE se exige al guardar). */
 function s3Incomplete(): boolean {
@@ -199,10 +195,12 @@ async function save() {
               </span>
             </label>
 
-            <!-- Campos de configuración S3. -->
+            <!-- Campos de configuración S3. @input en el contenedor (los eventos burbujean)
+                 descarta el "Guardado"/error previo al editar cualquier campo. -->
             <div
               v-if="selected === 's3'"
               class="space-y-2 rounded-lg bg-gray-50 p-4 dark:bg-gray-800"
+              @input="clearStatus"
             >
               <label class="block text-sm font-medium">Endpoint (opcional para AWS)</label>
               <input
