@@ -26,8 +26,10 @@ export async function providerForType(type: StorageType): Promise<StorageProvide
     case 'local':
       return new LocalStorage();
     case 's3': {
+      // Lee la config s3 AUNQUE el provider activo sea otro: un blob con providerType='s3'
+      // debe poder leerse siempre (provider-bound), no sólo mientras s3 esté activo.
       const cfg = await getStorageConfig();
-      if (cfg.providerType !== 's3' || !cfg.s3) {
+      if (!cfg.s3) {
         throw new Error('S3 no está configurado');
       }
       return new S3Storage({

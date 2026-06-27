@@ -171,4 +171,37 @@ describe('admin role + requireAdmin (PR-A)', () => {
     expect(res.statusCode).toBe(400);
     await app.close();
   });
+
+  it('PATCH config/storage s3 rechaza endpoint/región peligrosos → 400 (anti-SSRF/inyección)', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 's3ssrf@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    const headers = authHeaders(app, user._id.toString());
+    const base = { bucket: 'b', region: 'us-east-1', accessKeyId: 'AK', secretAccessKey: 's' };
+    const bad = [
+      { ...base, endpoint: 'http://169.254.169.254/' }, // metadata cloud
+      { ...base, endpoint: 'ftp://example.com' }, // esquema no http(s)
+      { ...base, endpoint: 'https://u:p@example.com' }, // userinfo
+      { ...base, endpoint: 'https://example.com/foo?x=1' }, // query/path (hijack de concat)
+      { ...base, region: 'us-east-1/../evil' }, // región con charset inválido
+    ];
+    for (const s3 of bad) {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/admin/config/storage',
+        headers,
+        payload: { providerType: 's3', s3 },
+      });
+      expect(res.statusCode, JSON.stringify(s3)).toBe(400);
+    }
+    // En cambio, un MinIO interno (http + host privado, sin path) SÍ se acepta.
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage',
+      headers,
+      payload: { providerType: 's3', s3: { ...base, endpoint: 'http://minio:9000' } },
+    });
+    expect(ok.statusCode).toBe(200);
+    await app.close();
+  });
 });

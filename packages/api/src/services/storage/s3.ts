@@ -1,6 +1,34 @@
 import { AwsClient } from 'aws4fetch';
 import type { StorageProvider } from './types.js';
 
+/** Timeout por operación S3 (sin esto aws4fetch puede colgar indefinidamente ante un host lento). */
+const S3_TIMEOUT_MS = 20_000;
+/** Tope defensivo de lectura: los adjuntos se acotan a 25MB al escribir; margen para overhead. */
+const S3_MAX_GET_BYTES = 30 * 1024 * 1024;
+/** IPs de metadata de cloud (IMDS) — destino clásico de SSRF; nunca un endpoint S3 legítimo. */
+const METADATA_HOSTS = new Set(['169.254.169.254', 'fd00:ec2::254', 'metadata.google.internal']);
+
+/**
+ * Valida la ESTRUCTURA del endpoint S3 (admin-controlled). No bloquea hosts internos/localhost
+ * a propósito: el caso de uso self-hosted usa MinIO interno. Lo que sí cierra: esquemas no
+ * http(s), userinfo, query/fragment/path (evita el hijack por concatenación que cambia el
+ * destino real), y la IP de metadata de cloud (SSRF clásico).
+ */
+export function isSafeS3Endpoint(endpoint: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(endpoint);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+  if (u.username || u.password) return false;
+  if (u.search || u.hash) return false;
+  if (u.pathname !== '/' && u.pathname !== '') return false;
+  if (METADATA_HOSTS.has(u.hostname)) return false;
+  return true;
+}
+
 export interface S3Options {
   /** Endpoint del servicio (MinIO/R2/etc.). Si se omite, se usa AWS S3 estándar de la región. */
   endpoint?: string;
@@ -52,6 +80,7 @@ export class S3Storage implements StorageProvider {
       method: 'PUT',
       body: body8,
       headers: { 'content-length': String(body.length) },
+      signal: AbortSignal.timeout(S3_TIMEOUT_MS),
     });
     if (!res.ok) {
       throw new Error(`S3 put failed: ${String(res.status)}`);
@@ -59,15 +88,30 @@ export class S3Storage implements StorageProvider {
   }
 
   async get(key: string): Promise<Buffer> {
-    const res = await this.client.fetch(this.url(key), { method: 'GET' });
+    const res = await this.client.fetch(this.url(key), {
+      method: 'GET',
+      signal: AbortSignal.timeout(S3_TIMEOUT_MS),
+    });
     if (!res.ok) {
       throw new Error(`S3 get failed: ${String(res.status)}`);
     }
-    return Buffer.from(await res.arrayBuffer());
+    // Tope defensivo: un endpoint comprometido podría devolver un cuerpo enorme y presionar RAM.
+    const declared = Number(res.headers.get('content-length'));
+    if (Number.isFinite(declared) && declared > S3_MAX_GET_BYTES) {
+      throw new Error('S3 get: objeto excede el tamaño máximo');
+    }
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (buf.length > S3_MAX_GET_BYTES) {
+      throw new Error('S3 get: objeto excede el tamaño máximo');
+    }
+    return buf;
   }
 
   async delete(key: string): Promise<void> {
-    const res = await this.client.fetch(this.url(key), { method: 'DELETE' });
+    const res = await this.client.fetch(this.url(key), {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(S3_TIMEOUT_MS),
+    });
     // S3 devuelve 204 al borrar; 404 es idempotente (ya no está) → no es error.
     if (!res.ok && res.status !== 404) {
       throw new Error(`S3 delete failed: ${String(res.status)}`);

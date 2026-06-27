@@ -65,6 +65,18 @@ describe('S3Storage (fetch mockeado — verifica request firmada; no toca S3 rea
     await expect(new S3Storage(OPTS).put('k', Buffer.from('x'))).rejects.toThrow(/S3 put failed/);
   });
 
+  it('get: rechaza si content-length excede el tope defensivo', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() =>
+        Promise.resolve(
+          new Response('x', { status: 200, headers: { 'content-length': '999999999' } })
+        )
+      )
+    );
+    await expect(new S3Storage(OPTS).get('huge')).rejects.toThrow(/tamaño máximo/);
+  });
+
   it('sin endpoint → usa el host AWS estándar de la región', async () => {
     const calls = stubFetch(200);
     const { endpoint: _drop, ...noEndpoint } = OPTS;

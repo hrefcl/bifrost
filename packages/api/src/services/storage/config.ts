@@ -90,26 +90,34 @@ export async function getStorageConfigPublic(): Promise<PublicStorageConfig> {
 /**
  * Persiste la config del admin. Para `s3` cifra la `secretAccessKey` antes de guardar y
  * devuelve la VISTA PÚBLICA (sin secret). El secret en claro nunca sale de esta función.
+ *
+ * PROVIDER-BOUND: al volver a `local` se PRESERVA la config s3 existente (sólo cambia el
+ * provider ACTIVO para escrituras nuevas). Si no, los AttachmentBlob con providerType='s3'
+ * quedarían ilegibles — viola §6.bis-C (cambiar el activo no rompe blobs viejos).
  */
 export async function setStorageConfig(
   input: StorageConfigInput,
   updatedBy: string
 ): Promise<PublicStorageConfig> {
   const meta = { updatedBy, updatedAt: new Date().toISOString() };
-  const value: StorageConfig =
-    input.providerType === 's3'
-      ? {
-          providerType: 's3',
-          s3: {
-            endpoint: input.s3.endpoint,
-            bucket: input.s3.bucket,
-            region: input.s3.region,
-            accessKeyId: input.s3.accessKeyId,
-            secretAccessKey: encrypt(input.s3.secretAccessKey),
-          },
-          ...meta,
-        }
-      : { providerType: 'local', ...meta };
+  let value: StorageConfig;
+  if (input.providerType === 's3') {
+    value = {
+      providerType: 's3',
+      s3: {
+        endpoint: input.s3.endpoint,
+        bucket: input.s3.bucket,
+        region: input.s3.region,
+        accessKeyId: input.s3.accessKeyId,
+        secretAccessKey: encrypt(input.s3.secretAccessKey),
+      },
+      ...meta,
+    };
+  } else {
+    // local activo, pero conservamos la config s3 ya guardada (para leer blobs s3 históricos).
+    const existing = await getStorageConfig();
+    value = { providerType: 'local', ...(existing.s3 ? { s3: existing.s3 } : {}), ...meta };
+  }
   await SystemConfig.findOneAndUpdate({ key: KEY }, { $set: { value } }, { upsert: true });
   return toPublicStorageConfig(value);
 }

@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, teardownTestDb, resetState } from '../../../../test/integration-helper.js';
-import { setStorageConfig, getStorageConfig, getStorageConfigPublic } from '../index.js';
+import {
+  setStorageConfig,
+  getStorageConfig,
+  getStorageConfigPublic,
+  providerForType,
+} from '../index.js';
 import { decrypt } from '../../../config/crypto.js';
 import { SystemConfig } from '../../../models/SystemConfig.js';
 
@@ -58,10 +63,23 @@ describe('storage config: cifrado del secret S3 (PR-D)', () => {
     expect(JSON.stringify(await getStorageConfigPublic())).not.toContain('super-secret-key');
   });
 
-  it('volver a local limpia el provider activo (los blobs s3 viejos se siguen leyendo provider-bound)', async () => {
+  it('PROVIDER-BOUND: volver a local CONSERVA la config s3 (para leer blobs s3 viejos)', async () => {
     await setStorageConfig(S3_INPUT, 'admin-1');
     const pub = await setStorageConfig({ providerType: 'local' }, 'admin-1');
+    // El provider ACTIVO es local, pero la config s3 sigue presente.
     expect(pub.providerType).toBe('local');
-    expect(pub.s3).toBeUndefined();
+    expect(pub.s3?.secretConfigured).toBe(true);
+    // Y el secret cifrado se preservó (descifrable).
+    const internal = await getStorageConfig();
+    expect(internal.providerType).toBe('local');
+    expect(internal.s3?.bucket).toBe('mybucket');
+  });
+
+  it('PROVIDER-BOUND: providerForType("s3") sigue funcionando con el activo en local', async () => {
+    await setStorageConfig(S3_INPUT, 'admin-1');
+    await setStorageConfig({ providerType: 'local' }, 'admin-1');
+    // Un blob con providerType='s3' debe poder reconstruir su provider aunque el activo sea local.
+    const provider = await providerForType('s3');
+    expect(provider.type).toBe('s3');
   });
 });
