@@ -196,6 +196,7 @@ export interface DraftAttachment {
   contentType: string;
   size: number;
   storageKey: string;
+  providerType: 'local' | 's3';
 }
 
 export interface Draft {

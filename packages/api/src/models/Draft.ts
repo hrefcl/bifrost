@@ -40,6 +40,8 @@ const DraftAttachmentSchema = new Schema(
     contentType: { type: String, required: true },
     size: { type: Number, required: true },
     storageKey: { type: String, required: true },
+    // PROVIDER-bound: se lee del provider de origen aunque el activo cambie (storage §6.bis-C).
+    providerType: { type: String, enum: ['local', 's3'], required: true },
   },
   { _id: false }
 );

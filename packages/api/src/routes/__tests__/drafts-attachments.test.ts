@@ -1,0 +1,190 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import type { FastifyInstance } from 'fastify';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import { rm } from 'node:fs/promises';
+
+const h = vi.hoisted(() => ({ lastRaw: '' }));
+
+vi.mock('nodemailer', () => ({
+  createTransport: () => ({
+    sendMail: (opts: { raw?: Buffer | string }) => {
+      h.lastRaw = opts.raw?.toString() ?? '';
+      return Promise.resolve({ messageId: '<smtp@test>' });
+    },
+    close: () => undefined,
+  }),
+}));
+
+vi.mock('imapflow', () => {
+  class ImapFlow {
+    constructor(_o: unknown) {}
+    connect(): Promise<void> {
+      return Promise.resolve();
+    }
+    logout(): Promise<void> {
+      return Promise.resolve();
+    }
+    append(): Promise<void> {
+      return Promise.resolve();
+    }
+  }
+  return { ImapFlow };
+});
+
+import {
+  setupTestDb,
+  teardownTestDb,
+  resetState,
+  buildTestApp,
+  authHeaders,
+  seedUserWithAccount,
+} from '../../../test/integration-helper.js';
+
+const attDir = path.join(tmpdir(), `bifrost-draft-att-${randomUUID()}`);
+
+function multipart(filename: string, contentType: string, content: Buffer) {
+  const boundary = '----biftest';
+  const body = Buffer.concat([
+    Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\n` +
+        `Content-Type: ${contentType}\r\n\r\n`
+    ),
+    content,
+    Buffer.from(`\r\n--${boundary}--\r\n`),
+  ]);
+  return { body, contentType: `multipart/form-data; boundary=${boundary}` };
+}
+
+async function upload(app: FastifyInstance, userId: string, filename: string, content: Buffer) {
+  const mp = multipart(filename, 'application/octet-stream', content);
+  const res = await app.inject({
+    method: 'POST',
+    url: '/api/attachments',
+    headers: { ...authHeaders(app, userId), 'content-type': mp.contentType },
+    payload: mp.body,
+  });
+  expect(res.statusCode).toBe(200);
+  return (JSON.parse(res.body) as { id: string }).id;
+}
+
+describe('adjuntos en drafts + envío (PR-C2)', () => {
+  let app: FastifyInstance;
+
+  beforeAll(async () => {
+    process.env.ATTACHMENTS_DIR = attDir;
+    await setupTestDb();
+    app = await buildTestApp();
+  });
+  afterAll(async () => {
+    await app.close();
+    await teardownTestDb();
+    await rm(attDir, { recursive: true, force: true });
+  });
+  beforeEach(async () => {
+    await resetState();
+    h.lastRaw = '';
+  });
+
+  it('crea draft con attachmentIds propios → persiste metadata + providerType', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const blobId = await upload(app, uid, 'doc.pdf', Buffer.from('hola adjunto'));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: [blobId],
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const draft = JSON.parse(res.body) as {
+      attachments: { filename: string; size: number; providerType: string; storageKey: string }[];
+    };
+    expect(draft.attachments).toHaveLength(1);
+    expect(draft.attachments[0].filename).toBe('doc.pdf');
+    expect(draft.attachments[0].providerType).toBe('local');
+    expect(draft.attachments[0].storageKey).toBeTruthy();
+  });
+
+  it('OWNERSHIP: adjuntar el blob de OTRO usuario → 404 (sin filtrar existencia)', async () => {
+    const { user: owner } = await seedUserWithAccount({ email: 'owner@test.com' });
+    const { user: other, account: otherAcc } = await seedUserWithAccount({
+      email: 'other@test.com',
+    });
+    const foreignBlob = await upload(app, owner._id.toString(), 'secreto.txt', Buffer.from('x'));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, other._id.toString()),
+      payload: {
+        accountId: otherAcc._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: [foreignBlob],
+      },
+    });
+    expect(res.statusCode).toBe(404);
+  });
+
+  it('PATCH attachmentIds=[] limpia los adjuntos del draft', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const blobId = await upload(app, uid, 'a.txt', Buffer.from('aaa'));
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'x@test.com' }],
+        attachmentIds: [blobId],
+      },
+    });
+    const draftId = (JSON.parse(created.body) as { id: string }).id;
+
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: `/api/drafts/${draftId}`,
+      headers: authHeaders(app, uid),
+      payload: { attachmentIds: [] },
+    });
+    expect(patched.statusCode).toBe(200);
+    expect((JSON.parse(patched.body) as { attachments: unknown[] }).attachments).toHaveLength(0);
+  });
+
+  it('SEND: el raw incluye el adjunto (filename + bytes del provider de origen)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const uid = user._id.toString();
+    const content = Buffer.from('ATTACH-ME-PAYLOAD-1234567890');
+    const blobId = await upload(app, uid, 'reporte.bin', content);
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/drafts',
+      headers: authHeaders(app, uid),
+      payload: {
+        accountId: account._id.toString(),
+        to: [{ address: 'dest@test.com' }],
+        subject: 's',
+        bodyText: 'cuerpo',
+        attachmentIds: [blobId],
+      },
+    });
+    const draftId = (JSON.parse(created.body) as { id: string }).id;
+
+    const sent = await app.inject({
+      method: 'POST',
+      url: `/api/drafts/${draftId}/send`,
+      headers: authHeaders(app, uid),
+    });
+    expect(sent.statusCode).toBe(200);
+    // MailComposer codifica el adjunto en base64 dentro del raw MIME.
+    expect(h.lastRaw).toContain('reporte.bin');
+    expect(h.lastRaw).toContain(content.toString('base64'));
+  });
+});
