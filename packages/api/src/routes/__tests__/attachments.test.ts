@@ -122,6 +122,48 @@ describe('adjuntos: upload + download (PR-C1)', () => {
     await app.close();
   });
 
+  it('CUOTA: al alcanzar el máximo de blobs por usuario → 429 (anti disk-fill)', async () => {
+    const { AttachmentBlob } = await import('../../models/AttachmentBlob.js');
+    process.env.ATTACHMENTS_MAX_PER_USER = '2';
+    try {
+      const app = await buildTestApp();
+      const { user } = await seedUserWithAccount({ email: 'quota@test.com' });
+      const headers = authHeaders(app, user._id.toString());
+      // Pre-sembrar 2 blobs activos (alcanza el cap).
+      await AttachmentBlob.create([
+        {
+          storageKey: 'k1',
+          providerType: 'local',
+          userId: user._id,
+          filename: 'a',
+          contentType: 'text/plain',
+          size: 1,
+        },
+        {
+          storageKey: 'k2',
+          providerType: 'local',
+          userId: user._id,
+          filename: 'b',
+          contentType: 'text/plain',
+          size: 1,
+        },
+      ]);
+      const mp = multipart('c.txt', 'text/plain', Buffer.from('c'));
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/attachments',
+        headers: { ...headers, 'content-type': mp.contentType },
+        payload: mp.body,
+      });
+      expect(res.statusCode).toBe(429);
+      // No se creó un 3er blob.
+      expect(await AttachmentBlob.countDocuments({ userId: user._id })).toBe(2);
+      await app.close();
+    } finally {
+      delete process.env.ATTACHMENTS_MAX_PER_USER;
+    }
+  });
+
   it('id malformado en download → 400', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'badid@test.com' });

@@ -103,9 +103,18 @@ describe('cleanupOrphanAttachments — mark-and-sweep de blobs huérfanos', () =
     expect(await AttachmentBlob.findById(blob._id)).not.toBeNull();
   });
 
-  it('referenciado por un draft sent → NO se borra (appendToSent es best-effort; no se asume copia)', async () => {
+  it('referenciado SÓLO por un draft sent → SE borra tras la gracia (el envío ya usó el blob; IMAP Sent tiene la copia)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'd@test.com' });
     const blob = await makeBlob(user._id.toString(), { ageMs: 120_000 });
+    await makeDraft(user._id.toString(), account._id.toString(), 'sent', blob._id.toString());
+    const n = await cleanupOrphanAttachments(60_000);
+    expect(n).toBe(1);
+    expect(await AttachmentBlob.findById(blob._id)).toBeNull();
+  });
+
+  it('referenciado por un draft sent PERO reciente (dentro de gracia) → NO se borra aún', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'd2@test.com' });
+    const blob = await makeBlob(user._id.toString(), { ageMs: 0 });
     await makeDraft(user._id.toString(), account._id.toString(), 'sent', blob._id.toString());
     const n = await cleanupOrphanAttachments(60_000);
     expect(n).toBe(0);

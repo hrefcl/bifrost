@@ -6,6 +6,17 @@ import { getActiveStorage, providerForType, newStorageKey } from '../services/st
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB (alineado con MAX_MESSAGE_BYTES del parseo IMAP)
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i);
 
+/**
+ * Cuota de blobs por usuario (anti disk-fill DoS): el cap de 25MB/archivo y el rate-limit
+ * acotan el RITMO, no el TOTAL. Sin esto, un usuario autenticado podría subir blobs sin
+ * adjuntarlos y la gracia del GC los retiene → llenar disco. Override por env (entero > 0;
+ * valores inválidos/0/negativos caen al default). Se lee por request para ajustarlo/testearlo.
+ */
+function maxBlobsPerUser(): number {
+  const n = Number(process.env.ATTACHMENTS_MAX_PER_USER);
+  return Number.isInteger(n) && n > 0 ? n : 1000;
+}
+
 /** Content-Disposition seguro: SIEMPRE attachment + filename ASCII-saneado (anti header-injection). */
 function contentDisposition(filename: string): string {
   const ascii = filename.replace(/[^\x20-\x7e]/g, '_').replace(/["\\\r\n]/g, '_');
@@ -58,15 +69,44 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
     const active = await getActiveStorage();
     await active.put(storageKey, buf);
 
-    const blob = await AttachmentBlob.create({
-      storageKey,
-      providerType: active.type,
-      userId: request.user.userId,
-      filename,
-      contentType: mimetype,
-      size: buf.length,
-      refCount: 1,
-    });
+    // Si la creación del doc falla tras escribir los bytes, limpiamos los bytes para no dejar
+    // un huérfano sin doc (el GC no lo reclamaría: no hay documento) — review D.
+    let blob;
+    try {
+      blob = await AttachmentBlob.create({
+        storageKey,
+        providerType: active.type,
+        userId: request.user.userId,
+        filename,
+        contentType: mimetype,
+        size: buf.length,
+        refCount: 1,
+      });
+    } catch (err) {
+      await active.delete(storageKey).catch(() => undefined);
+      throw err;
+    }
+
+    // CUOTA anti disk-fill, OPTIMISTA con rollback (no un check-antes racy, ni un counter con
+    // drift): tras crear el blob contamos TODOS los blobs del usuario (no sólo 'active' →
+    // los 'deleting' también ocupan disco). Si excede el cap, deshacemos. Es FAIL-CLOSED: bajo
+    // un burst grande varios pueden revertir y quedar por DEBAJO de max — acota el total
+    // PERSISTIDO (no el pico temporal de disco, que rate-limit + 25MB acotan en la práctica).
+    const total = await AttachmentBlob.countDocuments({ userId: request.user.userId });
+    if (total > maxBlobsPerUser()) {
+      // DOC-FIRST como el GC: borrar bytes SÓLO si el doc se borró (si no, no dejamos un doc
+      // 'active' apuntando a bytes inexistentes; si falla el doc-delete, los bytes siguen sanos).
+      const del = await AttachmentBlob.deleteOne({ _id: blob._id }).catch(() => ({
+        deletedCount: 0,
+      }));
+      if (del.deletedCount === 1) await active.delete(storageKey).catch(() => undefined);
+      return reply.code(429).send({
+        statusCode: 429,
+        error: 'Too Many Requests',
+        message: 'Attachment storage quota reached. Quitá adjuntos de borradores y reintentá.',
+      });
+    }
+
     return {
       id: blob._id.toString(),
       filename: blob.filename,
