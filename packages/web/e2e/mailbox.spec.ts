@@ -270,26 +270,45 @@ test('reply: precarga Re:/destinatario y persiste el threading In-Reply-To', asy
   await sendResp;
 });
 
-test('interceptor de refresh: access token vencido se renueva solo (401 → refresh → retry)', async ({
+test('interceptor de refresh: una 401 se renueva sola (401 → refresh → retry)', async ({
   page,
 }) => {
-  // El server E2E emite access tokens con TTL corto (JWT_ACCESS_TTL=3s). Tras vencer, la
-  // PRIMERA petición autenticada da 401 y el interceptor de axios debe renovar con la
-  // cookie (single-flight) y reintentar de forma transparente. Sin esto la sesión moriría
-  // a los 15min en producción pese a la cookie de refresh viva.
+  // Una petición autenticada que da 401 (access token vencido) debe gatillar un POST
+  // /auth/refresh (single-flight) + retry transparente. Sin esto la sesión moriría a los 15min
+  // en prod pese a la cookie de refresh viva.
+  //
+  // Forzamos la 401 de forma DETERMINISTA con page.route (inyectando un 401 en la próxima GET
+  // /accounts), en vez de depender de un TTL corto global: ese TTL=3s hacía que tests lentos
+  // cruzaran la expiración y se volvieran flaky. Así el TTL del server puede ser cómodo.
   await loginViaUi(page);
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
+  // Esperar a que la carga inicial del inbox (GET /accounts) termine, para inyectar la 401
+  // recién en la request que dispara el composer, no en la del inbox.
+  await page.waitForResponse(
+    (r) => r.url().includes('/api/accounts') && r.request().method() === 'GET'
+  );
 
-  // Dejar vencer el access token (TTL=3s).
-  await page.waitForTimeout(3_500);
+  let injected = false;
+  await page.route('**/api/accounts', async (route) => {
+    if (!injected && route.request().method() === 'GET') {
+      injected = true;
+      await route.fulfill({
+        status: 401,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'token expirado (inyectado)' }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
 
-  // Acción autenticada nueva (composer → GET /accounts). Su 1ª request vence con 401 y el
-  // interceptor la rescata con un POST /auth/refresh + retry.
-  const refreshAfterExpiry = page.waitForResponse(
+  // Acción autenticada nueva (composer → GET /accounts): la 1ª da 401 inyectada → el interceptor
+  // renueva (POST /auth/refresh) y reintenta; el retry pasa por route.continue() → 200 real.
+  const refreshResp = page.waitForResponse(
     (r) => r.url().includes('/api/auth/refresh') && r.request().method() === 'POST'
   );
   await page.getByRole('button', { name: 'Compose' }).click();
-  expect((await refreshAfterExpiry).status(), 'el interceptor debe renovar el token').toBe(200);
+  expect((await refreshResp).status(), 'el interceptor debe renovar el token').toBe(200);
 
   // El retry transparente repuebla la cuenta en el composer → la app sigue usable.
   await expect(page.locator('select')).toContainText('e2e@example.com', { timeout: 15_000 });
@@ -366,7 +385,7 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
   // La config actual se cargó desde GET /admin/config/storage (default local).
   await expect(page.getByText('Servidor local', { exact: false })).toBeVisible();
 
-  // Guardar 'local' → PATCH /admin/config/storage 200 → "Guardado".
+  // Guardar 'local' → PATCH /admin/config/storage 200 → "Guardado" (indicador de éxito real).
   const patchResp = page.waitForResponse(
     (r) =>
       r.url().endsWith('/api/admin/config/storage') &&

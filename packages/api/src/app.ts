@@ -100,9 +100,12 @@ export async function buildApp() {
     limits: { fileSize: 25 * 1024 * 1024, files: 1 },
   });
 
+  // Rate limit global por IP. Configurable por env para no estrangular el harness E2E (suite
+  // serial completa desde una sola IP = localhost, ~cientos de requests en una ventana de 1min);
+  // en prod el default 100/min se mantiene. NO afecta a los límites por-ruta de auth (login/refresh).
   await app.register(rateLimit, {
-    max: 100,
-    timeWindow: '1 minute',
+    max: Number(process.env.RATE_LIMIT_MAX ?? '100'),
+    timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
     skipOnError: true,
   });
 

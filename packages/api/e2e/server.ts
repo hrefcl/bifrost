@@ -31,9 +31,16 @@ async function main(): Promise<void> {
   process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'e2e-jwt-secret-e2e-jwt-secret-0123456789';
   process.env.ENCRYPTION_KEY = process.env.ENCRYPTION_KEY ?? 'a'.repeat(64);
   process.env.LOG_LEVEL = process.env.LOG_LEVEL ?? 'warn';
-  // Access token de vida corta para ejercitar el interceptor de refresh-on-401 del front
-  // (en prod es 15m). El flujo feliz dura <1s; el test del interceptor espera a que expire.
-  process.env.JWT_ACCESS_TTL = process.env.JWT_ACCESS_TTL ?? '3s';
+  // Access token con TTL cómodo (en prod es 15m). ANTES era 3s para que el test del
+  // interceptor de refresh esperara la expiración natural — pero eso hacía que CUALQUIER
+  // test lento (p.ej. admin al final del spec serial) cruzara la expiración y dependiera del
+  // refresh, con carreras intermitentes (flake real). Ahora el test del interceptor fuerza una
+  // 401 determinista vía page.route, así ningún test depende de un TTL corto global.
+  process.env.JWT_ACCESS_TTL = process.env.JWT_ACCESS_TTL ?? '60s';
+  // Rate limit global desactivado de hecho: la suite serial completa golpea desde una sola IP
+  // (localhost) y excede las 100/min por defecto hacia el final del spec → 429 en los últimos
+  // tests (p.ej. el PATCH de storage del admin). En prod el límite real (100/min) se mantiene.
+  process.env.RATE_LIMIT_MAX = process.env.RATE_LIMIT_MAX ?? '100000';
   // Storage de adjuntos (provider local) en un tmp efímero, no en el repo.
   process.env.ATTACHMENTS_DIR =
     process.env.ATTACHMENTS_DIR ?? path.join(tmpdir(), 'bifrost-e2e-attachments');
