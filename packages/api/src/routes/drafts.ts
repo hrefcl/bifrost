@@ -371,9 +371,12 @@ export async function recoverStuckDrafts(maxAgeMs = 5 * 60 * 1000): Promise<numb
  *  1. CAS atómico active→deleting condicionado a lastReferencedAt < cutoff. Si un attach acaba
  *     de tocar el blob (lastReferencedAt=now), el CAS no matchea → se salta.
  *  2. Re-chequeo: ¿algún draft lo referencia ahora? Si sí → revertir a 'active', saltar.
- *  3. Recién entonces borrar bytes + doc. resolveAttachments rechaza blobs 'deleting', así que
- *     ningún attach nuevo puede engancharse a un blob en borrado.
- * Si el provider falla, se revierte el lease a 'active' para reintentar en el próximo barrido.
+ *  3. DOC-FIRST: borrar el DOC (deleteOne condicionado a 'deleting') ANTES que los bytes.
+ *     resolveAttachments rechaza blobs 'deleting', así que ningún attach nuevo se engancha.
+ * Orden de fallos: si deleteOne falla → bytes intactos, se revierte el lease para reintentar.
+ * Si provider.delete falla DESPUÉS del deleteOne → el doc ya no existe: quedan bytes huérfanos
+ * (leak inocuo, sin referencia), NO se revierte. Leases colgados por crash se recuperan por
+ * deletingSince (ver más abajo).
  */
 /** Un lease 'deleting' más viejo que esto se considera colgado (crash) y se recupera. */
 const LEASE_TIMEOUT_MS = 10 * 60 * 1000;
