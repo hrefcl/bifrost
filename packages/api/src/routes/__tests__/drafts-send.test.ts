@@ -185,6 +185,30 @@ describe('envío de drafts (F3.5)', () => {
     expect(after?.sentMessageId).toBe('<keep@test>');
   });
 
+  it('PATCH de un draft sent → 409 (terminal; el GC limpia sus adjuntos, no se reabre)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    const draft = await Draft.create({
+      userId: user._id,
+      accountId: account._id,
+      to: [{ address: 'x@test.com' }],
+      subject: 's',
+      status: 'sent',
+      sentMessageId: '<sent@test>',
+      sentAt: new Date(),
+      lastModifiedAt: new Date(),
+    });
+    const res = await app.inject({
+      method: 'PATCH',
+      url: `/api/drafts/${draft._id.toString()}`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { subject: 'reopen' },
+    });
+    expect(res.statusCode).toBe(409);
+    const after = await Draft.findById(draft._id);
+    expect(after?.status).toBe('sent'); // intacto, no reabierto
+    expect(after?.subject).toBe('s');
+  });
+
   it('el raw enviado/copiado a Sent NO contiene cabecera/dirección Bcc', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
     const draft = await Draft.create({

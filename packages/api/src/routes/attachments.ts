@@ -69,26 +69,37 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
     const active = await getActiveStorage();
     await active.put(storageKey, buf);
 
-    const blob = await AttachmentBlob.create({
-      storageKey,
-      providerType: active.type,
-      userId: request.user.userId,
-      filename,
-      contentType: mimetype,
-      size: buf.length,
-      refCount: 1,
-    });
+    // Si la creación del doc falla tras escribir los bytes, limpiamos los bytes para no dejar
+    // un huérfano sin doc (el GC no lo reclamaría: no hay documento) — review D.
+    let blob;
+    try {
+      blob = await AttachmentBlob.create({
+        storageKey,
+        providerType: active.type,
+        userId: request.user.userId,
+        filename,
+        contentType: mimetype,
+        size: buf.length,
+        refCount: 1,
+      });
+    } catch (err) {
+      await active.delete(storageKey).catch(() => undefined);
+      throw err;
+    }
 
     // CUOTA anti disk-fill, OPTIMISTA con rollback (no un check-antes racy, ni un counter con
-    // drift): tras crear el blob, contamos los blobs del usuario; si excede el cap, deshacemos
-    // (borramos doc + bytes). Bajo N uploads concurrentes, todos crean y luego los que ven el
-    // count por encima del cap hacen rollback → el estado CONVERGE a max (derivado del count
-    // REAL, sin contador que pueda divergir). El cap cuenta TODOS los blobs del usuario (no sólo
-    // 'active') porque todos ocupan disco. Ver review B/D del PR de cuota.
+    // drift): tras crear el blob contamos TODOS los blobs del usuario (no sólo 'active' →
+    // los 'deleting' también ocupan disco). Si excede el cap, deshacemos. Es FAIL-CLOSED: bajo
+    // un burst grande varios pueden revertir y quedar por DEBAJO de max — acota el total
+    // PERSISTIDO (no el pico temporal de disco, que rate-limit + 25MB acotan en la práctica).
     const total = await AttachmentBlob.countDocuments({ userId: request.user.userId });
     if (total > maxBlobsPerUser()) {
-      await AttachmentBlob.deleteOne({ _id: blob._id }).catch(() => undefined);
-      await active.delete(storageKey).catch(() => undefined);
+      // DOC-FIRST como el GC: borrar bytes SÓLO si el doc se borró (si no, no dejamos un doc
+      // 'active' apuntando a bytes inexistentes; si falla el doc-delete, los bytes siguen sanos).
+      const del = await AttachmentBlob.deleteOne({ _id: blob._id }).catch(() => ({
+        deletedCount: 0,
+      }));
+      if (del.deletedCount === 1) await active.delete(storageKey).catch(() => undefined);
       return reply.code(429).send({
         statusCode: 429,
         error: 'Too Many Requests',

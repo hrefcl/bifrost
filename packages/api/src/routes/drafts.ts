@@ -209,6 +209,14 @@ export default function draftRoutes(fastify: FastifyInstance) {
         .code(409)
         .send({ statusCode: 409, error: 'Conflict', message: 'Draft is being sent' });
     }
+    // 'sent' es TERMINAL: el correo ya salió (la copia canónica vive en IMAP Sent) y el GC
+    // limpia sus adjuntos tras la gracia — reabrirlo a 'editing' podría dejar attachments
+    // apuntando a blobs ya borrados (review B/D). Para re-enviar, se compone uno nuevo.
+    if (draft.status === 'sent') {
+      return reply
+        .code(409)
+        .send({ statusCode: 409, error: 'Conflict', message: 'Draft already sent' });
+    }
 
     if (body.to !== undefined) draft.to = body.to;
     if (body.cc !== undefined) draft.cc = body.cc;
@@ -219,8 +227,8 @@ export default function draftRoutes(fastify: FastifyInstance) {
     if (body.attachmentIds !== undefined) {
       draft.attachments = await resolveAttachments(request.user.userId, body.attachmentIds);
     }
-    // Editar un draft 'sent'/'failed' lo vuelve editable (y descarta el sentMessageId
-    // viejo para que un nuevo envío genere uno fresco).
+    // Editar un draft 'failed' lo vuelve editable para reintentar (descarta el sentMessageId
+    // viejo para que un nuevo envío genere uno fresco). 'sent' ya se rechazó arriba.
     if (draft.status !== 'editing') {
       draft.status = 'editing';
       draft.sentMessageId = undefined;
@@ -361,10 +369,11 @@ export async function recoverStuckDrafts(maxAgeMs = 5 * 60 * 1000): Promise<numb
 /**
  * Recolección de AttachmentBlobs huérfanos (MARK-AND-SWEEP con LEASE atómico, no refcount).
  *
- * Borra (bytes del provider + doc Mongo) los blobs que NO referencia NINGÚN draft (en ningún
- * estado) y son más viejos que `maxAgeMs` (gracia desde el último uso). Recupera: subidas
- * descartadas y adjuntos de drafts borrados. (Los blobs de drafts 'sent' se conservan: la copia
- * a IMAP Sent es best-effort y podría haber fallado — no asumimos que el blob ya es redundante.)
+ * Borra (bytes del provider + doc Mongo) los blobs que NO referencia ningún draft ACCIONABLE
+ * (editing/failed/sending) y son más viejos que `maxAgeMs` (gracia desde el último uso).
+ * Recupera: subidas descartadas, adjuntos de drafts borrados y de drafts 'sent' (terminal: el
+ * envío SMTP ya construyó el MIME y no se relee — la copia vive en IMAP Sent; PATCH de 'sent'
+ * se rechaza con 409, así que no hay re-edición que dependa del blob).
  *
  * Seguridad ante races (review B): el borrado NO es seguro si un attach concurrente referencia
  * el blob entre el "mark" y el "delete". Lo cerramos con un LEASE:
