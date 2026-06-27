@@ -18,13 +18,37 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
    * id del blob (NO el storageKey) — el cliente referencia adjuntos por id, nunca por key cruda.
    */
   fastify.post('/', async (request, reply) => {
-    const file = await request.file();
-    if (!file) {
+    // Itera TODO el multipart (no sólo el primer file): exige EXACTAMENTE 1 file llamado
+    // 'file' y RECHAZA fields o archivos extra. Recién guarda tras consumir/validar todo el
+    // request — un 2º archivo (aunque sea >25MB) no se acepta ni deja un blob a medias.
+    let buf: Buffer | undefined;
+    let filename = '';
+    let mimetype = 'application/octet-stream';
+    let tooLarge = false;
+    for await (const part of request.parts()) {
+      if (part.type !== 'file') {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: 'Unexpected form field' });
+      }
+      if (buf !== undefined || part.fieldname !== 'file') {
+        await part.toBuffer().catch(() => undefined); // drenar para no colgar el stream
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Expected exactly one file field named "file"',
+        });
+      }
+      const b = await part.toBuffer();
+      if (part.file.truncated || b.length > MAX_BYTES) tooLarge = true;
+      buf = b;
+      filename = part.filename;
+      mimetype = part.mimetype || 'application/octet-stream';
+    }
+    if (buf === undefined) {
       return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: 'No file' });
     }
-    const buf = await file.toBuffer();
-    // `truncated` se marca si superó limits.fileSize del plugin; doble cap defensivo por tamaño.
-    if (file.file.truncated || buf.length > MAX_BYTES) {
+    if (tooLarge) {
       return reply
         .code(413)
         .send({ statusCode: 413, error: 'Payload Too Large', message: 'Attachment too large' });
@@ -38,8 +62,8 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
       storageKey,
       providerType: active.type,
       userId: request.user.userId,
-      filename: file.filename,
-      contentType: file.mimetype || 'application/octet-stream',
+      filename,
+      contentType: mimetype,
       size: buf.length,
       refCount: 1,
     });

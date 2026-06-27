@@ -87,6 +87,53 @@ describe('adjuntos: upload + download (PR-C1)', () => {
     await app.close();
   });
 
+  it('RECHAZA un 2º archivo o un field extra (no acota a 1 archivo = el bug que marcó B)', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'multi@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const boundary = '----biftest';
+    // dos files
+    const twoFiles = Buffer.concat([
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="a.txt"\r\nContent-Type: text/plain\r\n\r\nA\r\n`
+      ),
+      Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="b.txt"\r\nContent-Type: text/plain\r\n\r\nB\r\n--${boundary}--\r\n`
+      ),
+    ]);
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/attachments',
+      headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: twoFiles,
+    });
+    expect(r1.statusCode).toBeGreaterThanOrEqual(400); // NUNCA 200
+    // un field no-file
+    const withField = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="evil"\r\n\r\nx\r\n--${boundary}--\r\n`
+    );
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/attachments',
+      headers: { ...headers, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: withField,
+    });
+    expect(r2.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('id malformado en download → 400', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'badid@test.com' });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/attachments/not-an-objectid',
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('requiere auth: upload/download sin token → 401', async () => {
     const app = await buildTestApp();
     const mp = multipart('x.txt', 'text/plain', Buffer.from('x'));
