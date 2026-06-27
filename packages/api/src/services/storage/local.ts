@@ -19,11 +19,23 @@ export class LocalStorage implements StorageProvider {
     this.root = path.resolve(root ?? process.env.ATTACHMENTS_DIR ?? './data/attachments');
   }
 
-  /** Resuelve la ruta de una key y verifica que NO escape del root (anti traversal). */
+  /**
+   * Resuelve la ruta de una key y verifica que NO escape del root (anti traversal).
+   * Rechaza además keys vacías, '.', '..' o cualquier componente que apunte al propio root,
+   * porque permitirían leer/escribir/borrar el directorio de attachments.
+   */
   private resolveKey(key: string): string {
+    if (!key || typeof key !== 'string' || key.includes('\0')) {
+      throw new Error('Invalid storage key');
+    }
+    // Rechazar componentes '.' / '..' y paths que no generen un archivo dentro del root.
+    const parts = key.split(path.sep).filter((part) => part.length > 0);
+    if (parts.length === 0 || parts.some((part) => part === '.' || part === '..')) {
+      throw new Error('Invalid storage key (path traversal)');
+    }
     const full = path.resolve(this.root, key);
     const rootWithSep = this.root.endsWith(path.sep) ? this.root : this.root + path.sep;
-    if (full !== this.root && !full.startsWith(rootWithSep)) {
+    if (!full.startsWith(rootWithSep)) {
       throw new Error('Invalid storage key (path traversal)');
     }
     return full;
@@ -33,8 +45,16 @@ export class LocalStorage implements StorageProvider {
     await mkdir(this.root, { recursive: true });
     const dest = this.resolveKey(key);
     const tmp = `${dest}.${randomUUID()}.tmp`;
-    await writeFile(tmp, body, { flag: 'wx' }); // wx: falla si el tmp ya existe
-    await rename(tmp, dest); // rename atómico dentro del mismo fs
+    try {
+      await writeFile(tmp, body, { flag: 'wx' }); // wx: falla si el tmp ya existe
+      await rename(tmp, dest); // rename atómico dentro del mismo fs
+    } catch (err) {
+      // Best-effort: no dejar tmp huérfano si writeFile/rename fallan (disco lleno, etc.).
+      await rm(tmp, { force: true }).catch(() => {
+        /* tmp puede no existir; ignorar errores de limpieza */
+      });
+      throw err;
+    }
   }
 
   async get(key: string): Promise<Buffer> {

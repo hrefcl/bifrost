@@ -35,6 +35,20 @@ describe('LocalStorage', () => {
     await expect(store.delete('../../etc/x')).rejects.toThrow(/path traversal/i);
   });
 
+  it('RECHAZA keys que apuntan al propio root (vacía, ".", "..", subidas normalizadas)', async () => {
+    for (const bad of ['', '.', '..', 'foo/..', 'foo/.', 'foo/../..']) {
+      await expect(store.get(bad), `get(${JSON.stringify(bad)})`).rejects.toThrow(
+        /Invalid storage key/i
+      );
+      await expect(store.put(bad, Buffer.from('x')), `put(${JSON.stringify(bad)})`).rejects.toThrow(
+        /Invalid storage key/i
+      );
+      await expect(store.delete(bad), `delete(${JSON.stringify(bad)})`).rejects.toThrow(
+        /Invalid storage key/i
+      );
+    }
+  });
+
   it('newStorageKey genera keys únicas (uuid)', () => {
     expect(newStorageKey()).not.toBe(newStorageKey());
   });
