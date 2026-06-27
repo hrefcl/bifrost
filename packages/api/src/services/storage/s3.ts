@@ -8,6 +8,14 @@ const S3_MAX_GET_BYTES = 30 * 1024 * 1024;
 /** IPs de metadata de cloud (IMDS) — destino clásico de SSRF; nunca un endpoint S3 legítimo. */
 const METADATA_HOSTS = new Set(['169.254.169.254', 'fd00:ec2::254', 'metadata.google.internal']);
 
+/** Normaliza el hostname para comparar: minúsculas, sin trailing dot ni brackets IPv6. */
+function normalizeHost(host: string): string {
+  return host
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^\[|\]$/g, '');
+}
+
 /**
  * Valida la ESTRUCTURA del endpoint S3 (admin-controlled). No bloquea hosts internos/localhost
  * a propósito: el caso de uso self-hosted usa MinIO interno. Lo que sí cierra: esquemas no
@@ -25,7 +33,7 @@ export function isSafeS3Endpoint(endpoint: string): boolean {
   if (u.username || u.password) return false;
   if (u.search || u.hash) return false;
   if (u.pathname !== '/' && u.pathname !== '') return false;
-  if (METADATA_HOSTS.has(u.hostname)) return false;
+  if (METADATA_HOSTS.has(normalizeHost(u.hostname))) return false;
   return true;
 }
 
@@ -96,15 +104,30 @@ export class S3Storage implements StorageProvider {
       throw new Error(`S3 get failed: ${String(res.status)}`);
     }
     // Tope defensivo: un endpoint comprometido podría devolver un cuerpo enorme y presionar RAM.
+    // Precheck por content-length, pero NO confiamos en él (puede faltar/mentir): leemos por
+    // streaming y abortamos en cuanto se excede, sin materializar el cuerpo completo.
     const declared = Number(res.headers.get('content-length'));
     if (Number.isFinite(declared) && declared > S3_MAX_GET_BYTES) {
       throw new Error('S3 get: objeto excede el tamaño máximo');
     }
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (buf.length > S3_MAX_GET_BYTES) {
-      throw new Error('S3 get: objeto excede el tamaño máximo');
+    if (!res.body) {
+      // Sin stream (respuesta vacía): arrayBuffer es seguro y pequeño.
+      return Buffer.from(await res.arrayBuffer());
     }
-    return buf;
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > S3_MAX_GET_BYTES) {
+        await reader.cancel();
+        throw new Error('S3 get: objeto excede el tamaño máximo');
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks);
   }
 
   async delete(key: string): Promise<void> {

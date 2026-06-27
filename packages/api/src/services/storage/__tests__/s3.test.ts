@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { S3Storage } from '../s3.js';
+import { S3Storage, isSafeS3Endpoint } from '../s3.js';
 
 const OPTS = {
   endpoint: 'https://minio.test',
@@ -63,6 +63,33 @@ describe('S3Storage (fetch mockeado — verifica request firmada; no toca S3 rea
   it('put: lanza si S3 responde no-2xx', async () => {
     stubFetch(500);
     await expect(new S3Storage(OPTS).put('k', Buffer.from('x'))).rejects.toThrow(/S3 put failed/);
+  });
+
+  it('get: corta por STREAMING si el cuerpo excede el tope SIN content-length (chunked)', async () => {
+    // Stream sin content-length que emite >30MB → la lectura debe abortar sin materializar todo.
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array(31 * 1024 * 1024));
+        controller.close();
+      },
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(stream, { status: 200 })))
+    );
+    await expect(new S3Storage(OPTS).get('chunked-huge')).rejects.toThrow(/tamaño máximo/);
+  });
+
+  it('isSafeS3Endpoint: bloquea metadata (incl. variantes), esquemas y estructura peligrosa', () => {
+    expect(isSafeS3Endpoint('https://s3.amazonaws.com')).toBe(true);
+    expect(isSafeS3Endpoint('http://minio:9000')).toBe(true);
+    expect(isSafeS3Endpoint('http://169.254.169.254/')).toBe(false);
+    expect(isSafeS3Endpoint('http://metadata.google.internal./')).toBe(false); // trailing dot
+    expect(isSafeS3Endpoint('http://[fd00:ec2::254]/')).toBe(false); // IPv6 con brackets
+    expect(isSafeS3Endpoint('ftp://example.com')).toBe(false);
+    expect(isSafeS3Endpoint('https://u:p@example.com')).toBe(false);
+    expect(isSafeS3Endpoint('https://example.com/foo')).toBe(false);
+    expect(isSafeS3Endpoint('https://example.com?x=1')).toBe(false);
   });
 
   it('get: rechaza si content-length excede el tope defensivo', async () => {
