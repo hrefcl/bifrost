@@ -20,9 +20,9 @@ interface LoginResult {
   accountId: string;
 }
 
-async function loginViaUi(page: Page): Promise<LoginResult> {
+async function loginViaUi(page: Page, email: string = LOGIN.email): Promise<LoginResult> {
   await page.goto('/login');
-  await page.fill('input[type="email"]', LOGIN.email);
+  await page.fill('input[type="email"]', email);
   await page.fill('input[type="password"]', LOGIN.password);
 
   const loginResp = page.waitForResponse(
@@ -340,4 +340,52 @@ test('reply-all: To=remitente, CC=resto sin uno-mismo ni el remitente (case-inse
   expect(cc).toContain('boss@example.com');
   expect(cc).not.toContain('e2e@example.com'); // uno mismo, excluido
   expect(cc).not.toContain('billing@example.com'); // remitente (ya en To), excluido
+});
+
+// Tests de administración al FINAL: no dependen del sync de buzón, así que se ejecutan tras
+// los flujos sync-sensibles para no alterar su timing (el server E2E es compartido).
+test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local', async ({
+  page,
+}) => {
+  // Usuario admin pre-sembrado en el server E2E (role=admin). Verifica el gate de UI + el
+  // wizard de configuración de almacenamiento (Paso 1) contra el backend real.
+  await loginViaUi(page, 'admin-e2e@example.com');
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  // El link Admin sólo aparece para role==='admin'.
+  await page.getByRole('link', { name: 'Admin' }).click();
+  await expect(page.getByRole('heading', { name: 'Administración' })).toBeVisible({
+    timeout: 15_000,
+  });
+  // La config actual se cargó desde GET /admin/config/storage (default local).
+  await expect(page.getByText('Servidor local', { exact: false })).toBeVisible();
+
+  // Guardar 'local' → PATCH /admin/config/storage 200 → "Guardado".
+  const patchResp = page.waitForResponse(
+    (r) =>
+      r.url().endsWith('/api/admin/config/storage') &&
+      r.request().method() === 'PATCH' &&
+      r.status() === 200
+  );
+  await page.getByRole('button', { name: 'Guardar' }).click();
+  expect((await patchResp).status()).toBe(200);
+  await expect(page.getByText('Guardado', { exact: true })).toBeVisible({ timeout: 15_000 });
+});
+
+test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox', async ({
+  page,
+}) => {
+  // Gate de UI: el usuario normal (role=user) no debe ver ni alcanzar /admin. El backend ya
+  // re-valida con 403 en cada endpoint (test de integración); esto cubre el lado cliente.
+  await loginViaUi(page); // e2e@example.com → role 'user'
+  await expect(page.getByRole('heading', { name: 'Folders' })).toBeVisible({ timeout: 15_000 });
+
+  await expect(page.getByRole('link', { name: 'Admin' })).toHaveCount(0);
+
+  // Navegación directa a /admin: el guard lo saca de ahí. Invariante de seguridad robusto —
+  // el no-admin NO queda en /admin ni ve el panel (va a inbox si la sesión sigue viva tras el
+  // reload, o a login si se perdió; ambos son "fuera del panel").
+  await page.goto('/admin');
+  await expect(page).not.toHaveURL(/\/admin/);
+  await expect(page.getByRole('heading', { name: 'Administración' })).toHaveCount(0);
 });
