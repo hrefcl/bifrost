@@ -60,9 +60,15 @@ test('calendario: crear evento desde la UI aparece en la agenda (regresión date
 
   await page.getByRole('button', { name: 'Create' }).click();
   await page.fill('input[placeholder="Event title"]', 'Sprint review E2E');
+  // Fecha relativa a HOY: FullCalendar sólo renderiza eventos del rango VISIBLE (semana actual),
+  // así que un evento debe caer en la semana de hoy o no aparece en la grilla. Una fecha
+  // hardcodeada se rompería sola al avanzar el calendario del sistema.
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const today = `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   // datetime-local: hora LOCAL; la vista la convierte a ISO antes del POST (el fix del bug).
-  await page.fill('input[type="datetime-local"] >> nth=0', '2026-06-25T10:00');
-  await page.fill('input[type="datetime-local"] >> nth=1', '2026-06-25T11:00');
+  await page.fill('input[type="datetime-local"] >> nth=0', `${today}T10:00`);
+  await page.fill('input[type="datetime-local"] >> nth=1', `${today}T11:00`);
 
   // El POST debe ser 200 (antes daba 400 por el formato de fecha → evento nunca creado).
   const created = page.waitForResponse(
