@@ -8,9 +8,14 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: el GITHUB_TOKEN sólo necesita leer el repo (no escribe nada).
+permissions:
+  contents: read
+
 jobs:
   ci:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       mongo:
         image: mongo:7
@@ -34,6 +39,14 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Gate de seguridad: falla el build si hay CVEs high/critical en dependencias de PRODUCCIÓN.
+      # Previene shippear vulnerabilidades como las de fast-jwt (auth-bypass) / nodemailer que la
+      # auto-auditoría encontró manualmente. --prod ignora devDeps (no se shippean) → menos ruido.
+      # Si aparece un CVE sin fix disponible, documentar y usar pnpm.auditConfig.ignoreCves
+      # (en pnpm v11+ el campo es pnpm.auditConfig.ignoreGhsas).
+      - name: Security audit (prod deps)
+        run: pnpm audit --prod --audit-level high
 
       # `@webmail6/shared` resuelve sus tipos desde dist (types: ./dist/index.d.ts). En un
       # checkout limpio dist no existe, así que typecheck/lint/test de api y web no pueden
