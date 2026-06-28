@@ -25,23 +25,55 @@ const eventBodySchema = z.object({
 });
 
 export default function calendarRoutes(fastify: FastifyInstance) {
-  fastify.get('/', async (request) => {
-    const query = request.query as { start?: string; end?: string };
-    const filter: Record<string, unknown> = { userId: request.user.userId };
-    if (query.start && query.end) {
-      // Solapamiento REAL con el rango [start,end]: el evento empieza antes del fin Y termina
-      // después del inicio. Antes se filtraba sólo por startDate dentro del rango, lo que dejaba
-      // afuera eventos que cruzan el borde (empiezan antes del mes y terminan dentro) — review B.
-      filter.startDate = { $lte: new Date(query.end) };
-      filter.endDate = { $gte: new Date(query.start) };
+  // El rango [start,end] es OBLIGATORIO y acotado: sin él, GET /calendar devolvía TODO el histórico
+  // del usuario (vector de abuso/escala — un cliente autenticado podía pedir años repetidamente bajo
+  // el rate-limit). Ventana máxima 366 días (cubre día/semana/mes con holgura). Review B.
+  const MAX_RANGE_MS = 366 * 24 * 60 * 60 * 1000;
+  const rangeSchema = z
+    .object({ start: z.string().datetime(), end: z.string().datetime() })
+    .refine((q) => new Date(q.end).getTime() > new Date(q.start).getTime(), {
+      message: 'end debe ser posterior a start',
+    })
+    .refine((q) => new Date(q.end).getTime() - new Date(q.start).getTime() <= MAX_RANGE_MS, {
+      message: 'rango demasiado grande (máx 366 días)',
+    });
+
+  fastify.get('/', async (request, reply) => {
+    const parsed = rangeSchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'start y end requeridos (≤366 días)',
+        });
     }
-    const events = await CalendarEvent.find(filter).sort({ startDate: 1 });
+    const { start, end } = parsed.data;
+    // Solapamiento REAL con el rango [start,end]: el evento empieza antes del fin Y termina
+    // después del inicio. Antes se filtraba sólo por startDate dentro del rango, lo que dejaba
+    // afuera eventos que cruzan el borde (empiezan antes del mes y terminan dentro) — review B.
+    const events = await CalendarEvent.find({
+      userId: request.user.userId,
+      startDate: { $lte: new Date(end) },
+      endDate: { $gte: new Date(start) },
+    }).sort({ startDate: 1 });
     return events.map(serializeCalendarEvent);
   });
 
-  fastify.post('/', async (request) => {
+  fastify.post('/', async (request, reply) => {
     const body = eventBodySchema.parse(request.body);
     await requireOwnedAccount(request.user.userId, body.accountId);
+    // Invariante fin>inicio también en create (antes sólo se validaba en PATCH) — review B.
+    if (new Date(body.endDate).getTime() <= new Date(body.startDate).getTime()) {
+      return reply
+        .code(400)
+        .send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'endDate must be after startDate',
+        });
+    }
     const event = await CalendarEvent.create({
       ...body,
       userId: request.user.userId,

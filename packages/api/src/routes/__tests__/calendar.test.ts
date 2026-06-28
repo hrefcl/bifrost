@@ -67,6 +67,46 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
     const got = (JSON.parse(res.body) as Array<{ summary: string }>).map((e) => e.summary).sort();
 
     expect(got).toEqual(['cruza-inicio', 'dentro']); // 'fuera' excluido; 'cruza-inicio' incluido
+
+    // GET sin rango → 400 (antes devolvía TODO el histórico = vector de abuso/escala).
+    const noRange = await app.inject({ method: 'GET', url: '/api/calendar', headers });
+    expect(noRange.statusCode).toBe(400);
+    const oneBound = await app.inject({
+      method: 'GET',
+      url: `/api/calendar?start=${rangeStart}`,
+      headers,
+    });
+    expect(oneBound.statusCode).toBe(400);
+
+    // Rango > 366 días → 400 (ventana acotada).
+    const huge = await app.inject({
+      method: 'GET',
+      url: `/api/calendar?start=2024-01-01T00:00:00.000Z&end=2026-06-01T00:00:00.000Z`,
+      headers,
+    });
+    expect(huge.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('POST /calendar — endDate <= startDate → 400 (invariante también en create)', async () => {
+    const app = await buildTestApp();
+    const { user, account } = await seedUserWithAccount({ email: 'cal-inv@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/calendar',
+      headers,
+      payload: {
+        accountId: account._id.toString(),
+        calendarId: 'default',
+        calendarName: 'Personal',
+        uid: 'uid-inv',
+        summary: 'Rango inválido',
+        startDate: '2026-06-10T11:00:00.000Z',
+        endDate: '2026-06-10T10:00:00.000Z', // antes del inicio
+      },
+    });
+    expect(res.statusCode).toBe(400);
     await app.close();
   });
 

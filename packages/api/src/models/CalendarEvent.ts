@@ -66,6 +66,10 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
 );
 
 CalendarEventSchema.index({ userId: 1, startDate: 1 });
+// Solapamiento de rango: la query usa startDate<=end Y endDate>=start. Con sólo {userId,startDate}
+// el planner filtra endDate como residual (escanea histórico). Este índice por endDate deja que el
+// planner elija el bound más selectivo (eventos que terminan tras el inicio de la ventana) — review B.
+CalendarEventSchema.index({ userId: 1, endDate: 1 });
 CalendarEventSchema.index({ accountId: 1, calendarId: 1, uid: 1 }, { unique: true });
 
 export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
