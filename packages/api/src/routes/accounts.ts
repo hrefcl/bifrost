@@ -161,7 +161,31 @@ export default function accountRoutes(fastify: FastifyInstance) {
     objectIdSchema.parse(accountId);
     await requireOwnedAccount(request.user.userId, accountId);
     const folders = await Folder.find({ accountId }).sort({ sortOrder: 1, name: 1 });
-    return folders.map(serializeFolder);
+
+    // Badge de no-leídos CONSCIENTE DE SNOOZE (paridad Gmail). `unseenMessages` viene del sync IMAP
+    // y cuenta TODOS los no-leídos, incluidos los pospuestos — que están OCULTOS de su carpeta. Si
+    // no se restan, posponer un email no-leído infla el badge respecto a la lista visible. Restamos
+    // los no-leídos ocultos por snooze (snoozedUntil futuro) con UNA agregación indexada
+    // ({accountId, snoozedUntil}); cubre cualquier carpeta aunque snooze sea de facto solo-INBOX.
+    const hiddenSnoozed = await Email.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+      {
+        $match: {
+          accountId: new mongoose.Types.ObjectId(accountId),
+          snoozedUntil: { $gt: new Date() },
+          'flags.seen': false,
+        },
+      },
+      { $group: { _id: '$folderId', n: { $sum: 1 } } },
+    ]);
+    const hiddenByFolder = new Map(hiddenSnoozed.map((h) => [h._id.toString(), h.n]));
+
+    return folders.map((folder) => {
+      const dto = serializeFolder(folder);
+      const hidden = hiddenByFolder.get(dto.id) ?? 0;
+      return hidden > 0
+        ? { ...dto, unseenMessages: Math.max(0, dto.unseenMessages - hidden) }
+        : dto;
+    });
   });
 
   fastify.post('/:accountId/folders/:folderId/sync', async (request) => {
