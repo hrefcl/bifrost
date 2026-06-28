@@ -68,7 +68,7 @@ import {
   resetState,
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
-import { syncAccount, syncStaleAccounts } from '../account-sync.js';
+import { syncAccount, syncStaleAccounts, withAccountLock } from '../account-sync.js';
 import { Account } from '../../models/Account.js';
 import { redis } from '../../config/redis.js';
 
@@ -117,6 +117,28 @@ describe('account-sync (sync IMAP de fondo)', () => {
     expect(after?.status).toBe('error');
     expect(after?.lastError).toContain('IMAP');
     expect(await redis.get(`sync:account:${account._id.toString()}`)).toBeNull(); // liberado
+  });
+
+  it('release ATÓMICO: no borra el lock si OTRA instancia lo tomó tras una expiración (token)', async () => {
+    const key = 'sync:account:fake-id';
+    // Simula: durante nuestro fn, el TTL expira y OTRA instancia toma el lock (token distinto).
+    const r = await withAccountLock('fake-id', async () => {
+      await redis.set(key, 'foreign-instance-token'); // pisa nuestro token
+      return 1;
+    });
+    expect(r.skipped).toBe(false);
+    // Nuestro release (Lua compare-and-del) NO debe haber borrado el lock ajeno.
+    expect(await redis.get(key)).toBe('foreign-instance-token');
+    await redis.del(key);
+  });
+
+  it('withAccountLock se SALTA si el lock está tomado y NO lo borra al salir', async () => {
+    const key = 'sync:account:held';
+    await redis.set(key, 'someone-else', 'EX', 300, 'NX');
+    const r = await withAccountLock('held', async () => 42);
+    expect(r.skipped).toBe(true);
+    expect(await redis.get(key)).toBe('someone-else'); // intacto
+    await redis.del(key);
   });
 
   it('syncStaleAccounts: sincroniza las cuentas no deshabilitadas; salta las disabled', async () => {

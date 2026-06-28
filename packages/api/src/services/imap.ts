@@ -6,7 +6,6 @@ import {
 } from 'imapflow';
 import PostalMime from 'postal-mime';
 import type { IAccount } from '../models/Account.js';
-import { Account } from '../models/Account.js';
 import { Folder } from '../models/Folder.js';
 import { Email } from '../models/Email.js';
 import { redis } from '../config/redis.js';
@@ -194,7 +193,9 @@ export async function listAndSyncFolders(account: IAccount): Promise<number> {
       count++;
     }
 
-    await Account.updateOne({ _id: account._id }, { $set: { lastSyncedAt: new Date() } });
+    // NOTA: `lastSyncedAt` NO se setea aquí (sólo se sincronizó la LISTA de carpetas, no los
+    // mensajes). El sync completo lo marca `syncAccount` tras sincronizar también los headers — si
+    // se seteara acá y luego fallaran los headers, mentiría como "último sync exitoso" (review B).
     return count;
   });
 }

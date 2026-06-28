@@ -6,6 +6,7 @@ import { Folder } from '../models/Folder.js';
 import { Email } from '../models/Email.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { listAndSyncFolders, syncFolderHeaders } from '../services/imap.js';
+import { withAccountLock } from '../services/account-sync.js';
 import { requireOwnedAccount, requireOwnedFolder } from '../lib/authz.js';
 import type {
   Account as AccountDto,
@@ -159,12 +160,19 @@ export default function accountRoutes(fastify: FastifyInstance) {
     return { usedBytes, limitBytes };
   });
 
-  fastify.post('/:accountId/sync/folders', async (request) => {
+  fastify.post('/:accountId/sync/folders', async (request, reply) => {
     const { accountId } = request.params as { accountId: string };
     objectIdSchema.parse(accountId);
     const account = await requireOwnedAccount(request.user.userId, accountId);
-    const count = await listAndSyncFolders(account);
-    return { synced: count };
+    // Mismo lock distribuido que el barrido de fondo: si la cuenta ya se está sincronizando (otra
+    // instancia o el sweep), no se pisan → 409 (review B+D).
+    const r = await withAccountLock(accountId, () => listAndSyncFolders(account));
+    if (r.skipped) {
+      return reply
+        .code(409)
+        .send({ statusCode: 409, error: 'Conflict', message: 'Sync ya en progreso' });
+    }
+    return { synced: r.result };
   });
 
   fastify.get('/:accountId/folders', async (request) => {
@@ -198,13 +206,18 @@ export default function accountRoutes(fastify: FastifyInstance) {
     });
   });
 
-  fastify.post('/:accountId/folders/:folderId/sync', async (request) => {
+  fastify.post('/:accountId/folders/:folderId/sync', async (request, reply) => {
     const { accountId, folderId } = request.params as { accountId: string; folderId: string };
     objectIdSchema.parse(accountId);
     objectIdSchema.parse(folderId);
     const { account } = await requireOwnedFolder(request.user.userId, accountId, folderId);
-    const synced = await syncFolderHeaders(account, folderId);
-    return { synced };
+    const r = await withAccountLock(accountId, () => syncFolderHeaders(account, folderId));
+    if (r.skipped) {
+      return reply
+        .code(409)
+        .send({ statusCode: 409, error: 'Conflict', message: 'Sync ya en progreso' });
+    }
+    return { synced: r.result };
   });
 
   fastify.get('/:accountId/folders/:folderId/emails', async (request) => {

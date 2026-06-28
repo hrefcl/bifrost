@@ -12,8 +12,7 @@ import { env, isSetupMode } from './config/env.js';
 
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
 let stuckSweep: ReturnType<typeof setInterval> | undefined;
-let accountSyncSweep: ReturnType<typeof setInterval> | undefined;
-let accountSyncKickoff: ReturnType<typeof setTimeout> | undefined;
+let accountSyncSweep: ReturnType<typeof setTimeout> | undefined;
 
 async function main() {
   if (isSetupMode()) {
@@ -72,30 +71,31 @@ async function main() {
   stuckSweep.unref();
 
   // Sync IMAP de FONDO (automático): sin esto el usuario no ve correo nuevo hasta pulsar sync.
-  // Cada tick sincroniza el lote de cuentas más desactualizadas, con lock distribuido y status.
-  // El primer disparo lleva JITTER aleatorio (0–60s) para que, con N instancias, no golpeen todas
-  // Mongo/IMAP al mismo tiempo (thundering herd — re-auditoría).
+  // Loop AUTO-AGENDADO (no setInterval): cada vuelta sincroniza el lote de cuentas más
+  // desactualizadas (lock distribuido + status) y AGENDA la siguiente sólo cuando termina — así no se
+  // solapan barridos si uno tarda más que el intervalo (review B+D). Delay con JITTER en CADA tick
+  // (no sólo el primero) → con N instancias no golpean Mongo/IMAP sincronizadas (thundering herd).
   const { syncStaleAccounts } = await import('./services/account-sync.js');
-  const runAccountSync = () => {
-    void syncStaleAccounts().then(
-      (r) => {
-        if (r.accounts > 0)
-          app.log.info(`bg sync: ${String(r.accounts)} cuenta(s), ${String(r.synced)} msg nuevos`);
-      },
-      (err: unknown) => {
-        app.log.error(err);
-      }
-    );
+  const nextSyncDelay = () => 2 * 60 * 1000 + Math.floor(Math.random() * 60_000);
+  const scheduleAccountSync = () => {
+    accountSyncSweep = setTimeout(() => {
+      void syncStaleAccounts()
+        .then((r) => {
+          if (r.accounts > 0)
+            app.log.info(
+              `bg sync: ${String(r.accounts)} cuenta(s), ${String(r.synced)} msg nuevos`
+            );
+        })
+        .catch((err: unknown) => {
+          app.log.error(err);
+        })
+        .finally(() => {
+          if (!shutdownPromise) scheduleAccountSync(); // re-agenda salvo en shutdown
+        });
+    }, nextSyncDelay());
+    accountSyncSweep.unref();
   };
-  accountSyncKickoff = setTimeout(
-    () => {
-      runAccountSync();
-      accountSyncSweep = setInterval(runAccountSync, 2 * 60 * 1000);
-      accountSyncSweep.unref();
-    },
-    Math.floor(Math.random() * 60_000)
-  );
-  accountSyncKickoff.unref();
+  scheduleAccountSync();
 
   try {
     await app.listen({ port: env.PORT, host: env.HOST });
@@ -120,8 +120,7 @@ async function doShutdown() {
   // Cada paso aislado: si Redis ya murió (posible causa del shutdown), su quit() no debe
   // impedir el cierre ordenado de Mongo.
   if (stuckSweep) clearInterval(stuckSweep);
-  if (accountSyncSweep) clearInterval(accountSyncSweep);
-  if (accountSyncKickoff) clearTimeout(accountSyncKickoff);
+  if (accountSyncSweep) clearTimeout(accountSyncSweep);
   try {
     await serverApp?.close();
   } catch (err) {
