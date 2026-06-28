@@ -10,6 +10,9 @@ describe('buildUserData (cloud-init)', () => {
 
   it('instala docker, clona el stack, parametriza el dominio y levanta compose', () => {
     const s = buildUserData({ ...base, useS3: false });
+    // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).
+    expect(s).toContain('aws.amazon.com');
+    expect(s).toContain('seq 1 30');
     expect(s).toContain('get.docker.com');
     expect(s).toContain('git clone');
     expect(s).toContain('deploy/example-mailserver'); // REUSA la plantilla existente

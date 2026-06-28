@@ -44,6 +44,11 @@ echo "STORAGE_PROVIDER=local" >> .env${
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
+# 0) ESPERAR salida a internet: en una VPC recién creada la ruta al IGW puede tardar unos segundos
+# en estar lista y el EC2 puede bootear antes (CloudFormation no ordena la instancia tras la ruta).
+# Sin esto, los pasos que bajan paquetes (docker/git/apt) fallarían en el arranque.
+for i in $(seq 1 30); do curl -fsS --max-time 5 https://aws.amazon.com >/dev/null 2>&1 && break; sleep 5; done
+
 # 1) Docker + compose plugin
 curl -fsSL https://get.docker.com | sh
 

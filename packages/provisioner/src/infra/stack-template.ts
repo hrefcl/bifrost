@@ -44,7 +44,9 @@ export function buildStackTemplate(): Record<string, unknown> {
       UserData: { Type: 'String' },
       SshCidr: { Type: 'String', Default: '0.0.0.0/0' },
       // 'create' = crear S3 cifrado + KMS + rol IAM para el box; 'none' = storage local (sin S3).
-      S3Mode: { Type: 'String', Default: 'create', AllowedValues: ['create', 'none'] },
+      // Default 'none' (SEGURO): un deploy "pelado" del YAML funciona con storage local sin exigir un
+      // nombre de bucket. El wizard pasa 'create' + S3BucketName explícito cuando se elige S3.
+      S3Mode: { Type: 'String', Default: 'none', AllowedValues: ['create', 'none'] },
       // Nombre del bucket a crear (debe ser globalmente único; el CLI lo deriva del dominio).
       S3BucketName: { Type: 'String', Default: '' },
     },

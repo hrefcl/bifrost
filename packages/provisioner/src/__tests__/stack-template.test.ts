@@ -32,6 +32,8 @@ describe('buildStackTemplate (CloudFormation)', () => {
         'SshCidr',
       ])
     );
+    // Default SEGURO: un deploy pelado no exige bucket (storage local).
+    expect(t.Parameters.S3Mode).toMatchObject({ Default: 'none' });
   });
 
   it('crea TODA la red bajo la condición CreateNetwork (cuenta nueva sin VPC)', () => {
