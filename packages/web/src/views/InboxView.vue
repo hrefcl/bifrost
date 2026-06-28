@@ -156,26 +156,39 @@ function removeFromLists(id: string) {
 }
 
 /**
- * Ajusta el badge de no-leídos de una carpeta en local (clamp a 0) para que reaccione al instante a
- * las acciones, sin esperar al próximo sync de carpetas. El backend ya es consciente de snooze al
- * recargar; esto sólo mantiene el badge vivo entre cargas (review B: posponer un no-leído debe
- * bajar el badge ya, no quedar inflado hasta recargar).
+ * Refresca los badges de no-leídos desde el BACKEND (fuente autoritativa, ya consciente de snooze)
+ * tras una acción que cambia el conteo. Reemplaza el ajuste local por-delta, que era frágil ante
+ * concurrencia: snapshots `wasInBadge` capturados antes de un await podían quedar obsoletos si
+ * `openEmail` marcaba leído en paralelo → doble ajuste (review B). Aquí el backend recalcula la
+ * verdad; un token descarta respuestas viejas y el debounce coalesce ráfagas (leer varios emails
+ * seguidos = una sola petición). Sólo se mezcla `unseenMessages` para no pisar el resto del folder.
  */
-function adjustFolderUnread(folderId: string, delta: number) {
-  const f = folders.value.find((x) => x.id === folderId);
-  if (f) f.unseenMessages = Math.max(0, f.unseenMessages + delta);
+let badgeTimer: ReturnType<typeof setTimeout> | null = null;
+let badgeToken = 0;
+async function refreshBadges() {
+  const id = accountId();
+  if (!id) return;
+  const token = ++badgeToken;
+  try {
+    const { data } = await api.get<Folder[]>(`/accounts/${id}/folders`);
+    if (token !== badgeToken) return; // llegó una más nueva.
+    const byId = new Map(data.map((f) => [f.id, f.unseenMessages]));
+    folders.value.forEach((f) => {
+      const n = byId.get(f.id);
+      if (n !== undefined) f.unseenMessages = n;
+    });
+  } catch {
+    /* badge queda como estaba; se corrige en el próximo refresh/sync. */
+  }
+}
+function scheduleBadgeRefresh() {
+  if (badgeTimer) clearTimeout(badgeTimer);
+  badgeTimer = setTimeout(() => void refreshBadges(), 400);
 }
 
-/**
- * ¿Este email cuenta HOY en el badge de no-leídos visible? Sólo si está no-leído Y NO está pospuesto
- * (snoozedUntil futuro) — el backend ya excluye del badge los pospuestos. Sin este guard, abrir o
- * re-posponer un no-leído YA pospuesto (desde Pospuestos/búsqueda) restaría de más (review B).
- */
+/** ¿El email está pospuesto AHORA (snoozedUntil futuro)? Gobierna el botón Recuperar/Unsnooze. */
 function isSnoozedNow(email: Email): boolean {
   return email.snoozedUntil ? new Date(email.snoozedUntil).getTime() > Date.now() : false;
-}
-function contributesToBadge(email: Email): boolean {
-  return !email.flags.seen && !isSnoozedNow(email);
 }
 const selectedSnoozed = computed(() => (selected.value ? isSnoozedNow(selected.value) : false));
 // Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
@@ -336,19 +349,14 @@ async function openEmail(email: Email) {
     if (token !== openToken) return;
     body.value = bodyRes.data;
     attachments.value = bodyRes.data.attachments ?? [];
-    if (!email.flags.seen && !removedIds.has(email.id)) {
-      // badge vivo: abrir un no-leído lo baja ya — pero sólo si contribuía (no si estaba pospuesto,
-      // ya excluido por el backend). Optimista con rollback si el PATCH falla (review B).
-      // Guard removedIds: si una acción concurrente (snooze/unsnooze/delete/move) ya removió este
-      // email durante el fetch del body, NO lo marcamos leído ni tocamos el badge — esa acción ya
-      // ajustó el conteo; marcarlo aquí causaría una carrera de doble-ajuste del badge (review B).
-      const wasInBadge = contributesToBadge(email);
-      const fid = email.folderId;
+    if (!email.flags.seen) {
+      // Marca leído optimista (row instantánea) con rollback si el PATCH falla. El badge lo recalcula
+      // el backend vía refreshBadges() — sin deltas locales, sin carreras de conteo (review B).
       email.flags.seen = true;
-      if (wasInBadge) adjustFolderUnread(fid, -1);
+      scheduleBadgeRefresh();
       void api.patch(`/emails/${email.id}/flags`, { seen: true }).catch(() => {
         email.flags.seen = false;
-        if (wasInBadge) adjustFolderUnread(fid, 1);
+        scheduleBadgeRefresh();
       });
     }
   } catch {
@@ -358,11 +366,15 @@ async function openEmail(email: Email) {
   }
 }
 
+// Guard de estrella SEPARADO de actionInFlight: destacar no remueve el email, así que no debe
+// bloquear un delete/move/snooze inmediato sobre el mismo id (review B) — sólo evita dos PATCH
+// de estrella con valores opuestos por doble-click.
+const starInFlight = new Set<string>();
 async function toggleStar(email: Email, ev?: Event) {
   ev?.stopPropagation();
   const id = email.id;
-  if (actionInFlight.has(id)) return; // anti doble-click: evita dos PATCH con valores opuestos.
-  actionInFlight.add(id);
+  if (starInFlight.has(id)) return;
+  starInFlight.add(id);
   const next = !email.flags.flagged;
   email.flags.flagged = next;
   try {
@@ -370,7 +382,7 @@ async function toggleStar(email: Email, ev?: Event) {
   } catch {
     email.flags.flagged = !next; // rollback
   } finally {
-    actionInFlight.delete(id);
+    starInFlight.delete(id);
   }
 }
 
@@ -397,12 +409,10 @@ async function deleteEmail(email: Email | null, ev?: Event) {
   const id = email.id;
   if (actionInFlight.has(id)) return;
   actionInFlight.add(id);
-  const wasInBadge = contributesToBadge(email);
-  const fid = email.folderId;
   try {
     await api.delete(`/emails/${id}`);
     removeFromLists(id);
-    if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído borrado deja de contar.
+    scheduleBadgeRefresh(); // si era no-leído, el backend recalcula el badge.
   } catch {
     error.value = t('errors.delete');
   } finally {
@@ -417,12 +427,10 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
   const id = email.id;
   if (actionInFlight.has(id)) return;
   actionInFlight.add(id);
-  const wasInBadge = contributesToBadge(email);
-  const fid = email.folderId;
   try {
     await api.post(`/emails/${id}/move`, { specialUse });
     removeFromLists(id);
-    if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído movido sale de su carpeta origen.
+    scheduleBadgeRefresh(); // si era no-leído, sale de la carpeta origen → backend recalcula.
   } catch {
     error.value = t('errors.move');
   } finally {
@@ -480,13 +488,10 @@ async function doSnooze(until: Date) {
   const id = email.id;
   if (actionInFlight.has(id)) return; // anti doble-submit.
   actionInFlight.add(id);
-  // Sólo baja el badge si el email contribuía al conteo visible (no-leído y NO ya pospuesto):
-  // re-posponer uno ya pospuesto no debe restar de nuevo (review B).
-  const wasInBadge = contributesToBadge(email);
   try {
     await api.post(`/emails/${id}/snooze`, { until: until.toISOString() });
     removeFromLists(id);
-    if (wasInBadge) adjustFolderUnread(email.folderId, -1);
+    scheduleBadgeRefresh(); // pospuesto = oculto de la carpeta → backend recalcula el badge.
   } catch {
     error.value = t('errors.snooze');
   } finally {
@@ -498,16 +503,12 @@ async function doUnsnooze(email: Email | null, ev?: Event) {
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
-  if (actionInFlight.has(id)) return; // anti doble-click (no inflar el badge).
+  if (actionInFlight.has(id)) return; // anti doble-click.
   actionInFlight.add(id);
-  // Sólo suma al badge si el email REALMENTE estaba excluido por snooze (no-leído Y pospuesto-ahora):
-  // si el snooze ya venció en el cliente, el backend ya lo contaba → no sumar de nuevo (review B+D).
-  const wasExcludedFromBadge = !email.flags.seen && isSnoozedNow(email);
-  const fid = email.folderId;
   try {
     await api.post(`/emails/${id}/unsnooze`);
     removeFromLists(id); // sale de la lista de Pospuestos
-    if (wasExcludedFromBadge) adjustFolderUnread(fid, 1);
+    scheduleBadgeRefresh(); // vuelve a su carpeta → backend recalcula el badge (snooze-aware).
   } catch {
     error.value = t('errors.unsnooze');
   } finally {
@@ -553,6 +554,7 @@ onMounted(() => {
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKey);
+  if (badgeTimer) clearTimeout(badgeTimer); // no refrescar tras desmontar.
 });
 </script>
 
