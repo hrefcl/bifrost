@@ -120,14 +120,18 @@ async function submitCreate(): Promise<void> {
   createError.value = '';
   const start = new Date(createForm.value.startDate);
   const end = new Date(createForm.value.endDate);
-  // "Todo el día": inicio = 00:00 del día; fin = 00:00 del día SIGUIENTE al último (EXCLUSIVO,
-  // convención FullCalendar/iCal) → un evento de un día dura exactamente un día, sin off-by-one en
-  // multi-día (review B). Mínimo un día completo.
+  // "Todo el día": inicio = 00:00; fin = fin EXCLUSIVO (convención FullCalendar/iCal: 00:00 del día
+  // siguiente al último). El `endDate` del form YA viene exclusivo desde la selección de FullCalendar
+  // (onSelect → arg.end) y desde un evento guardado (openEdit), así que sólo hay que avanzar un día
+  // cuando el fin NO es ya posterior al inicio (fin inclusivo: mismo día, p.ej. al marcar allDay en
+  // el modal manual). Así el round-trip editar→guardar es estable y un día no se duplica (review B).
   if (createForm.value.allDay) {
     start.setHours(0, 0, 0, 0);
     end.setHours(0, 0, 0, 0);
-    if (end.getTime() <= start.getTime()) end.setTime(start.getTime());
-    end.setDate(end.getDate() + 1);
+    if (end.getTime() <= start.getTime()) {
+      end.setTime(start.getTime());
+      end.setDate(end.getDate() + 1);
+    }
   }
   if (!(end.getTime() > start.getTime())) {
     createError.value = t('calendar.errRange');

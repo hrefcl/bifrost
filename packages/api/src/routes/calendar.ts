@@ -93,9 +93,20 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);
 
-    existing.set(update);
-    await existing.save();
-    return serializeCalendarEvent(existing);
+    // Escritura ATÓMICA y PARCIAL ($set sólo de los campos del body): evita el lost-update de un
+    // read-modify-write con save() (que reescribiría el doc entero y pisaría cambios concurrentes en
+    // campos ajenos al PATCH). El findOne previo es sólo para validar el invariante (review D).
+    const event = await CalendarEvent.findOneAndUpdate(
+      { _id: eventId, userId: request.user.userId },
+      { $set: update },
+      { new: true }
+    );
+    if (!event) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
+    }
+    return serializeCalendarEvent(event);
   });
 
   fastify.delete('/:eventId', async (request, reply) => {
