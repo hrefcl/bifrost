@@ -165,6 +165,9 @@ importers:
       '@inquirer/prompts':
         specifier: ^7.2.1
         version: 7.10.1(@types/node@22.20.0)
+      yaml:
+        specifier: ^2.6.1
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^22.10.0

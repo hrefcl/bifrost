@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { buildStackTemplate, MAIL_INGRESS_PORTS } from '../infra/stack-template.js';
+import { parse as yamlParse } from 'yaml';
+import {
+  buildStackTemplate,
+  MAIL_INGRESS_PORTS,
+  templateToYaml,
+  templateToJson,
+} from '../infra/stack-template.js';
 
 interface TplView {
   Parameters: Record<string, unknown>;
@@ -69,10 +75,43 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(t.Resources.Instance?.Properties.UserData).toHaveProperty('Fn::Base64');
   });
 
+  it('crea S3 cifrado + KMS + rol IAM bajo CreateS3; la instancia usa el perfil por rol', () => {
+    for (const r of [
+      'KmsKey',
+      'KmsAlias',
+      'S3Bucket',
+      'S3BucketPolicy',
+      'S3Role',
+      'InstanceProfile',
+    ]) {
+      expect(t.Resources[r]?.Condition, r).toBe('CreateS3');
+    }
+    const enc = (
+      t.Resources.S3Bucket?.Properties.BucketEncryption as {
+        ServerSideEncryptionConfiguration: {
+          ServerSideEncryptionByDefault: { SSEAlgorithm: string };
+        }[];
+      }
+    ).ServerSideEncryptionConfiguration[0]?.ServerSideEncryptionByDefault.SSEAlgorithm;
+    expect(enc).toBe('aws:kms');
+    expect(t.Resources.Instance?.Properties.IamInstanceProfile).toEqual({
+      'Fn::If': ['CreateS3', { Ref: 'InstanceProfile' }, { Ref: 'AWS::NoValue' }],
+    });
+  });
+
   it('outputs exponen la IP pública y el instanceId; serializa a JSON (TemplateBody)', () => {
     expect(Object.keys(t.Outputs)).toEqual(
       expect.arrayContaining(['PublicIp', 'InstanceId', 'VpcId'])
     );
     expect(() => JSON.parse(JSON.stringify(t))).not.toThrow();
+  });
+
+  it('emite YAML válido (el entregable) y JSON; el YAML re-parsea al mismo template', () => {
+    const yaml = templateToYaml();
+    expect(yaml).toContain('AWSTemplateFormatVersion');
+    expect(yaml).toContain('AWS::EC2::VPC');
+    expect(yaml).toContain('AWS::S3::Bucket');
+    expect(yamlParse(yaml)).toEqual(buildStackTemplate());
+    expect(() => JSON.parse(templateToJson())).not.toThrow();
   });
 });

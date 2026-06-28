@@ -32,7 +32,12 @@ export {
 export { buildPlan, type PlanInput, type PlanStep, type ProvisionPlan } from './plan.js';
 export { teardownOrder, TEARDOWN_NOTES } from './teardown.js';
 export { buildUserData, type UserDataInput } from './mailserver/user-data.js';
-export { buildStackTemplate, MAIL_INGRESS_PORTS } from './infra/stack-template.js';
+export {
+  buildStackTemplate,
+  templateToYaml,
+  templateToJson,
+  MAIL_INGRESS_PORTS,
+} from './infra/stack-template.js';
 export { listVpcs, listSubnets, type VpcInfo, type SubnetInfo } from './aws/vpc.js';
 export {
   deployStack,
