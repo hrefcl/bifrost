@@ -150,6 +150,7 @@ export default {
     filterUnread: 'Unread',
     filterStarred: 'Starred',
     filterAttachments: 'With attachments',
+    loadMore: 'Load more',
     empty: 'Nothing here',
     searchResultsFor: 'Results for “{q}”',
     selectPrompt: 'Select a conversation',

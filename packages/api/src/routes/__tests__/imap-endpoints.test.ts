@@ -407,6 +407,38 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect(bad.statusCode).toBe(400);
   });
 
+  it('GET folders/:id/emails — paginación page/limit/hasMore (contrato de "cargar más")', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'page@test.com' });
+    const inbox = await seedFolder(account._id);
+    // 3 emails; uid mayor = más nuevo (orden date desc, uid desc → 52, 51, 50).
+    for (let i = 0; i < 3; i++) {
+      const e = await seedEmail(account._id, inbox._id, { uid: 50 + i });
+      await Email.updateOne({ _id: e._id }, { date: new Date(Date.now() - (2 - i) * 60_000) });
+    }
+    const headers = authHeaders(app, user._id.toString());
+    const base = `/api/accounts/${account._id.toString()}/folders/${inbox._id.toString()}/emails`;
+    const page = async (qs: string) => {
+      const res = await app.inject({ method: 'GET', url: base + qs, headers });
+      expect(res.statusCode).toBe(200);
+      return JSON.parse(res.body) as {
+        data: { uid: number }[];
+        pagination: { page: number; total: number; hasMore: boolean };
+      };
+    };
+
+    const p1 = await page('?page=1&limit=2');
+    expect(p1.data.map((e) => e.uid)).toEqual([52, 51]); // 2 más nuevos
+    expect(p1.pagination).toMatchObject({ page: 1, total: 3, hasMore: true });
+
+    const p2 = await page('?page=2&limit=2');
+    expect(p2.data.map((e) => e.uid)).toEqual([50]); // el restante
+    expect(p2.pagination).toMatchObject({ page: 2, total: 3, hasMore: false });
+
+    // No hay solape entre páginas (cada email aparece una sola vez).
+    const all = [...p1.data, ...p2.data].map((e) => e.uid);
+    expect(new Set(all).size).toBe(3);
+  });
+
   it('PATCH /api/emails/:id/flags — persiste flagged (estrella) y seen; vacío → 400', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'star@test.com' });
     const folder = await seedFolder(account._id);

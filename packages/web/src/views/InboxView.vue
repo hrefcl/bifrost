@@ -16,6 +16,7 @@ import type {
   EmailBody,
   EmailAttachmentMeta,
   SpecialUse,
+  Paginated,
 } from '@webmail6/shared';
 
 const ui = useUiStore();
@@ -47,6 +48,13 @@ function matchesListFilter(e: Email): boolean {
   if (listFilter.value === 'attachments') return e.hasAttachments;
   return true;
 }
+
+// Paginación de la carpeta (estilo Gmail "cargar más"): el inbox NO debe quedarse en los 20
+// primeros. El backend devuelve {page,hasMore,total}; aquí se acumulan páginas con "Cargar más".
+const PAGE_LIMIT = 20;
+const folderPage = ref(1);
+const hasMore = ref(false);
+const loadingMore = ref(false);
 
 const selected = ref<Email | null>(null);
 const body = ref<EmailBody | null>(null);
@@ -319,21 +327,62 @@ async function selectFolder(folderId: string) {
   // server-side en el fetch (review B+D: client-side sólo veía la página cargada).
   loading.value = true;
   error.value = ''; // limpia un error previo al iniciar la carga (review D)
+  folderPage.value = 1;
+  hasMore.value = false;
   const token = ++loadToken;
   const gen = removalGen; // generación de remociones al arrancar (para descartar revivals stale)
   try {
-    const params = listFilter.value !== 'all' ? { filter: listFilter.value } : undefined;
-    const { data } = await api.get<{ data: Email[] }>(
+    const params = {
+      page: 1,
+      limit: PAGE_LIMIT,
+      ...(listFilter.value !== 'all' ? { filter: listFilter.value } : {}),
+    };
+    const { data } = await api.get<Paginated<Email>>(
       `/accounts/${accountId()}/folders/${folderId}/emails`,
       { params }
     );
     if (token !== loadToken) return; // una carga/filtro más nueva ganó
     // Excluye los removidos DESPUÉS de arrancar este GET (snapshot stale → no revivir) — review B.
     emails.value = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen);
+    hasMore.value = data.pagination.hasMore;
   } catch {
     if (token === loadToken) error.value = t('errors.emails');
   } finally {
     if (token === loadToken) loading.value = false;
+  }
+}
+
+/** "Cargar más": trae la siguiente página de la carpeta actual y la ACUMULA. No bumpea loadToken
+ *  (continúa el contexto de carga actual); si se navega/cambia filtro mientras tanto, el token nuevo
+ *  hace que esta respuesta se descarte. Dedup + gen-filter para no revivir ni duplicar (review B). */
+async function loadMore() {
+  const folderId = selectedFolderId.value;
+  if (!folderId || loadingMore.value || !hasMore.value || virtualView.value || inSearch.value)
+    return;
+  const nextPage = folderPage.value + 1;
+  loadingMore.value = true;
+  const token = loadToken;
+  const gen = removalGen;
+  try {
+    const params = {
+      page: nextPage,
+      limit: PAGE_LIMIT,
+      ...(listFilter.value !== 'all' ? { filter: listFilter.value } : {}),
+    };
+    const { data } = await api.get<Paginated<Email>>(
+      `/accounts/${accountId()}/folders/${folderId}/emails`,
+      { params }
+    );
+    if (token !== loadToken) return; // navegó/cambió filtro → descartar esta página
+    const seen = new Set(emails.value.map((e) => e.id));
+    const fresh = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen && !seen.has(e.id));
+    emails.value = [...emails.value, ...fresh];
+    folderPage.value = nextPage;
+    hasMore.value = data.pagination.hasMore;
+  } catch {
+    if (token === loadToken) error.value = t('errors.emails');
+  } finally {
+    if (token === loadToken) loadingMore.value = false;
   }
 }
 
@@ -908,6 +957,14 @@ onBeforeUnmount(() => {
               <span class="row-date">{{ fmtDate(email.date) }}</span>
             </div>
           </div>
+          <button
+            v-if="hasMore && !virtualView && !inSearch && !loading"
+            class="load-more"
+            :disabled="loadingMore"
+            @click="loadMore"
+          >
+            {{ loadingMore ? t('common.loading') : t('list.loadMore') }}
+          </button>
         </div>
       </section>
 
@@ -1302,6 +1359,27 @@ onBeforeUnmount(() => {
 .rows {
   flex: 1;
   overflow-y: auto;
+}
+.load-more {
+  display: block;
+  width: calc(100% - 24px);
+  margin: 10px 12px 16px;
+  padding: 10px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--accent);
+  background: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  cursor: pointer;
+}
+.load-more:hover:not(:disabled) {
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+}
+.load-more:disabled {
+  opacity: 0.6;
+  cursor: default;
 }
 .row {
   display: flex;
