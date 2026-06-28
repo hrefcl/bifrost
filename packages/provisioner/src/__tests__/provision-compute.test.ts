@@ -94,22 +94,28 @@ const instInput = {
 };
 
 describe('provisionInstance', () => {
-  it('fresh: asigna EIP, lanza instancia (user-data base64, gp3 cifrado), asocia y registra', async () => {
+  it('fresh: asigna EIP, lanza instancia (user-data base64, gp3 cifrado), asocia, marca associated y persiste incremental', async () => {
     ec2.on(AllocateAddressCommand).resolves({ AllocationId: 'eipalloc-1', PublicIp: '1.2.3.4' });
     ec2.on(RunInstancesCommand).resolves({ Instances: [{ InstanceId: 'i-abc' }] });
     ec2.on(AssociateAddressCommand).resolves({});
+    const saves: number[] = [];
 
     const r = await provisionInstance(
       clients().ec2,
       instInput,
-      emptyState('us-east-1', 'acme.com')
+      emptyState('us-east-1', 'acme.com'),
+      {
+        onResource: (st) => saves.push(st.resources.length),
+      }
     );
 
     expect(r.instanceId).toBe('i-abc');
-    expect(r.allocationId).toBe('eipalloc-1');
     expect(r.publicIp).toBe('1.2.3.4');
     expect(r.state.resources.map((x) => x.kind)).toEqual(['elastic-ip', 'ec2-instance']);
-    // user-data va en base64.
+    // La instancia quedó marcada associated (para no re-asociar en un re-run).
+    expect(r.state.resources.find((x) => x.kind === 'ec2-instance')?.meta?.associated).toBe('true');
+    // Persistencia incremental: EIP, instancia (pre-associate), instancia (post-associate) = 3.
+    expect(saves).toEqual([1, 2, 2]);
     const runCall = ec2.commandCalls(RunInstancesCommand)[0]?.args[0].input;
     const decoded = Buffer.from(String(runCall?.UserData), 'base64').toString('utf8');
     expect(decoded).toContain('#!/bin/bash');
@@ -118,17 +124,30 @@ describe('provisionInstance', () => {
     expect(ec2.commandCalls(AssociateAddressCommand)).toHaveLength(1);
   });
 
-  it('idempotente: instancia + EIP ya en el state → NO gasta (cero allocate/run)', async () => {
+  it('terminado (instancia associated) → cero allocate/run/associate', async () => {
     let s = emptyState('us-east-1', 'acme.com');
     s = addResource(s, { kind: 'elastic-ip', id: 'eipalloc-1', meta: { publicIp: '1.2.3.4' } });
-    s = addResource(s, { kind: 'ec2-instance', id: 'i-existing' });
+    s = addResource(s, { kind: 'ec2-instance', id: 'i-existing', meta: { associated: 'true' } });
 
     const r = await provisionInstance(clients().ec2, instInput, s);
 
     expect(r.instanceId).toBe('i-existing');
-    expect(r.publicIp).toBe('1.2.3.4');
     expect(ec2.commandCalls(AllocateAddressCommand)).toHaveLength(0);
     expect(ec2.commandCalls(RunInstancesCommand)).toHaveLength(0);
+    expect(ec2.commandCalls(AssociateAddressCommand)).toHaveLength(0);
+  });
+
+  it('crash tras RunInstances (instancia SIN associated) → reintenta associate, NO relanza', async () => {
+    let s = emptyState('us-east-1', 'acme.com');
+    s = addResource(s, { kind: 'elastic-ip', id: 'eipalloc-1', meta: { publicIp: '1.2.3.4' } });
+    s = addResource(s, { kind: 'ec2-instance', id: 'i-half' }); // creada pero no asociada
+    ec2.on(AssociateAddressCommand).resolves({});
+
+    const r = await provisionInstance(clients().ec2, instInput, s);
+
+    expect(ec2.commandCalls(RunInstancesCommand)).toHaveLength(0); // NO se relanza otra instancia
+    expect(ec2.commandCalls(AssociateAddressCommand)).toHaveLength(1); // se reintenta la asociación
+    expect(r.state.resources.find((x) => x.kind === 'ec2-instance')?.meta?.associated).toBe('true');
   });
 
   it('resumible: EIP asignada pero sin instancia → reusa EIP (no re-asigna) y lanza la instancia', async () => {
@@ -142,7 +161,6 @@ describe('provisionInstance', () => {
     expect(ec2.commandCalls(AllocateAddressCommand)).toHaveLength(0); // reusa la EIP
     expect(r.allocationId).toBe('eipalloc-9');
     expect(r.instanceId).toBe('i-new');
-    // asocia la EIP reusada a la instancia nueva.
     expect(ec2.commandCalls(AssociateAddressCommand)[0]?.args[0].input).toMatchObject({
       AllocationId: 'eipalloc-9',
       InstanceId: 'i-new',
