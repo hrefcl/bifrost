@@ -2,7 +2,9 @@
 
 > Capturado: 2026-06-28. Origen: feedback directo del PM ("estamos mucho mejor… pero faltan cosas").
 > Estado general del proyecto: F3.0–F3.9 APPROVED; `/health/ready` cerrado y commiteado.
-> Estos NO están hechos — son la cola de trabajo a retomar.
+>
+> **Estado al 2026-06-28: PM-01..04 y N1..N5 RESUELTOS y commiteados (3 commits, gates verdes:
+> api 191/191, web 20/20, typecheck+lint+build).** Detalle de cada uno abajo (marcados `hecho`).
 
 ## Leyenda
 
@@ -11,7 +13,7 @@
 
 ---
 
-## PM-01 — Logout no funciona bien  · P0 · `pendiente`
+## PM-01 — Logout no funciona bien  · P0 · `hecho`
 
 **Síntoma (PM):** "el logout no funciona bien OJO".
 
@@ -33,7 +35,7 @@ limpia). Verificar el guard del router (`router/index.ts`) por si requiere un re
 
 ---
 
-## PM-02 — Modal de crear evento se ve mal (overflow)  · P0 · `pendiente`
+## PM-02 — Modal de crear evento se ve mal (overflow)  · P0 · `hecho`
 
 **Síntoma (PM):** "el modal de crear evento se ve mal [imagen] pero genera". La imagen
 muestra el input "Fin" (`datetime-local`) desbordándose por el borde derecho del modal.
@@ -51,7 +53,7 @@ del modal.
 
 ---
 
-## PM-03 — Admin no permite gestionar cuentas/cuotas  · P1 · `pendiente`
+## PM-03 — Admin no permite gestionar cuentas/cuotas  · P1 · `hecho`
 
 **Síntoma (PM):** "admin@example.com … no me permite crear más cuentas ni administrar
 cuenta existente ni cuota ni nada… faltan más opciones, recordemos que esto es un
@@ -72,7 +74,7 @@ modelos `User`/`Account` (cuota nueva). Backend nuevo: endpoints CRUD de cuentas
 
 ---
 
-## PM-04 — Branding (nombre + logo de empresa) no configurable en UI  · P1 · `pendiente`
+## PM-04 — Branding (nombre + logo de empresa) no configurable en UI  · P1 · `hecho`
 
 **Síntoma (PM):** "no vi dónde puedo configurar el nombre de la empresa ni el logo de la
 empresa". Es un webmail white-label (reemplazo de Roundcube brandeable por empresa).
@@ -96,3 +98,21 @@ servir el branding al frontend al boot, y sección en `AdminView.vue` para edita
 - Migrar sync IMAP de fondo a BullMQ (hoy loop auto-agendado con lock distribuido).
 - Limpieza de índices muertos/redundantes; cap de `removedAt`; `snoozed $in`; índices de drafts.
 - Gates abiertos previos: E2E completo y docker (verificar antes de cierre).
+
+---
+
+## Segunda tanda — Reading pane + TopBar (2026-06-28)  · todos `hecho`
+
+- **N1 — Kebab (3 puntos) del reading pane** no abría menú → menú con Responder/Reenviar/
+  Marcar como no leído (nuevo: PATCH `seen:false` + vuelve a la lista)/Imprimir/Eliminar.
+- **N2 — Modal "Posponer hasta"** descuadrado → label arriba, fila input+botón abajo
+  (`min-width:0`/`box-sizing`).
+- **N3 — "Mover a"** casi siempre vacío/deshabilitado → `moveTargets` ahora son TODAS las
+  carpetas salvo la actual, ordenadas estilo Gmail.
+- **N4 — Embudo de filtro del TopBar** no hacía nada → popover de filtros (Todos/No leídos/
+  Destacados/Con adjuntos) que controla el filtro de la lista vía `store ui` (compartido con el
+  Inbox; `listFilter` movido al store). La barra de búsqueda ya estaba cableada (Enter →
+  `/emails/search`, `$text`); si vuelve a fallar, hace falta un repro concreto.
+- **N5 — Dropdown de filtro de la lista** se desbordaba a la derecha (`left:0` → `.right`
+  `right:0`) y el kebab de la lista no hacía nada → menú "Marcar todas como leídas" + "Actualizar".
+
