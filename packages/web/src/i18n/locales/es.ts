@@ -161,6 +161,7 @@ export default {
     delete: 'Eliminar',
     snooze: 'Posponer',
     unsnooze: 'Recuperar',
+    moveToLabel: 'Mover a etiqueta',
     tag: 'Etiquetar',
     print: 'Imprimir',
     reply: 'Responder',

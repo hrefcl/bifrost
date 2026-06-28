@@ -424,14 +424,18 @@ async function deleteEmail(email: Email | null, ev?: Event) {
 }
 
 /** Mover/archivar (Gmail): mueve el email a una carpeta por specialUse y lo saca de la lista. */
-async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event) {
+async function doMove(
+  email: Email | null,
+  payload: { specialUse: SpecialUse } | { folderId: string },
+  ev?: Event
+) {
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
   if (actionInFlight.has(id)) return;
   actionInFlight.add(id);
   try {
-    await api.post(`/emails/${id}/move`, { specialUse });
+    await api.post(`/emails/${id}/move`, payload);
     removeFromLists(id);
     scheduleBadgeRefresh(); // si era no-leído, sale de la carpeta origen → backend recalcula.
   } catch {
@@ -440,8 +444,22 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
     actionInFlight.delete(id);
   }
 }
+function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event) {
+  return doMove(email, { specialUse }, ev);
+}
 function archive(email: Email | null, ev?: Event) {
   void moveEmail(email, 'archive', ev);
+}
+
+// ---- Etiquetar (mover a una carpeta-etiqueta, estilo Roundcube/IMAP: las etiquetas SON carpetas) ----
+const showLabelMenu = ref(false);
+function toggleLabelMenu() {
+  if (labelFolders.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
+}
+/** Aplica una etiqueta = mueve el email a esa carpeta-etiqueta (owner-bound en el backend). */
+function applyLabel(email: Email | null, folderId: string) {
+  showLabelMenu.value = false;
+  void doMove(email, { folderId });
 }
 
 // ---- Posponer (snooze, estilo Gmail) ----
@@ -596,13 +614,19 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
+// Cierra el menú de etiquetas al hacer click fuera (el botón y el menú usan @click.stop).
+function closeLabelMenu() {
+  showLabelMenu.value = false;
+}
 onMounted(() => {
   void loadAccountsAndFolders();
   window.addEventListener('keydown', onKey);
+  window.addEventListener('click', closeLabelMenu);
 });
 onBeforeUnmount(() => {
   disposed = true; // descarta refreshBadges() en vuelo (no mutar tras desmontar).
   window.removeEventListener('keydown', onKey);
+  window.removeEventListener('click', closeLabelMenu);
   if (badgeTimer) clearTimeout(badgeTimer);
 });
 </script>
@@ -795,9 +819,27 @@ onBeforeUnmount(() => {
           <button v-else class="icon-btn" :title="t('thread.snooze')" @click="openSnooze(selected)">
             <AppIcon name="clock" :size="20" />
           </button>
-          <button class="icon-btn" :title="t('thread.tag')">
-            <AppIcon name="tag" :size="20" />
-          </button>
+          <div class="label-wrap">
+            <button
+              class="icon-btn"
+              :title="t('thread.tag')"
+              :disabled="labelFolders.length === 0"
+              @click.stop="toggleLabelMenu"
+            >
+              <AppIcon name="tag" :size="20" />
+            </button>
+            <div v-if="showLabelMenu" class="label-menu" @click.stop>
+              <div class="label-menu-head">{{ t('thread.moveToLabel') }}</div>
+              <button
+                v-for="f in labelFolders"
+                :key="f.id"
+                class="label-menu-item"
+                @click="applyLabel(selected, f.id)"
+              >
+                <AppIcon name="tag" :size="15" />{{ f.displayName }}
+              </button>
+            </div>
+          </div>
           <div class="spacer" />
           <button
             class="icon-btn"
@@ -1256,6 +1298,50 @@ onBeforeUnmount(() => {
 }
 .spacer {
   margin-left: auto;
+}
+.label-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.label-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 4px;
+  min-width: 200px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
+}
+.label-menu-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-2);
+  padding: 4px 8px 6px;
+}
+.label-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13.5px;
+  color: var(--text-1);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+}
+.label-menu-item:hover {
+  background: var(--surface-2, rgba(127, 127, 127, 0.12));
 }
 .thread-body {
   flex: 1;

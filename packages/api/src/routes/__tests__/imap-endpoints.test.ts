@@ -336,6 +336,39 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect(await Email.findById(email2._id)).not.toBeNull();
   });
 
+  it('POST /api/emails/:id/move por folderId — mueve a una carpeta-etiqueta; folderId de otra cuenta → 404', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'lbl@test.com' });
+    const inbox = await seedFolder(account._id, { name: 'INBOX', path: 'INBOX' });
+    await Folder.updateOne({ _id: inbox._id }, { specialUse: 'inbox' });
+    // Carpeta-etiqueta SIN specialUse (lo que el front muestra como "etiqueta").
+    const label = await seedFolder(account._id, { name: 'Proyectos', path: 'Proyectos' });
+    const email = await seedEmail(account._id, inbox._id, { uid: 30 });
+    const headers = authHeaders(app, user._id.toString());
+
+    const ok = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/move`,
+      headers,
+      payload: { folderId: label._id.toString() },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(await Email.findById(email._id)).toBeNull(); // salió de INBOX hacia la etiqueta
+
+    // SEGURIDAD: mover a una carpeta de OTRA cuenta (folderId ajeno) → 404 (la búsqueda de carpeta
+    // está acotada a la cuenta del email; no se puede inyectar destino cross-tenant).
+    const { account: other } = await seedUserWithAccount({ email: 'lbl-other@test.com' });
+    const otherFolder = await seedFolder(other._id, { name: 'Ajena', path: 'Ajena' });
+    const email2 = await seedEmail(account._id, inbox._id, { uid: 31 });
+    const crossFolder = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email2._id.toString()}/move`,
+      headers,
+      payload: { folderId: otherFolder._id.toString() },
+    });
+    expect(crossFolder.statusCode).toBe(404);
+    expect(await Email.findById(email2._id)).not.toBeNull(); // no se movió
+  });
+
   it('PATCH /api/emails/:id/flags — persiste flagged (estrella) y seen; vacío → 400', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'star@test.com' });
     const folder = await seedFolder(account._id);

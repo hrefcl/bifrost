@@ -161,6 +161,7 @@ export default {
     delete: 'Delete',
     snooze: 'Snooze',
     unsnooze: 'Unsnooze',
+    moveToLabel: 'Move to label',
     tag: 'Label',
     print: 'Print',
     reply: 'Reply',
