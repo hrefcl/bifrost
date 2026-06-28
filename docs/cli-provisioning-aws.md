@@ -114,6 +114,28 @@ IAM extra requerido para esto: `kms:CreateKey/CreateAlias/Encrypt/Decrypt/Genera
 Puertos del Security Group: 22 (SSH, idealmente restringido a la IP del admin), 25, 465, 587,
 143, 993, 80, 443.
 
+## 3.ter — PIVOTE a CloudFormation (decisión del PM, sesión 6)
+
+**El CLI: pregunta → arma el YAML/JSON de CloudFormation → lo corre él mismo.** Esto reemplaza el
+enfoque imperativo previo (RunInstances/EIP/SG + state/teardown propios), que estaba **reinventando
+CloudFormation** (hallazgo de la auto-auditoría, dim. 5). CFN es superior para esta misión:
+- **Turnkey real para cuenta nueva sin nada:** un solo stack crea **VPC + subnet + IGW + route table
+  + SG + EIP + EC2** con dependencias y rollback automáticos. Si ya hay VPC → el CLI **pregunta en
+  cuál** (lista VPCs/subnets) y pasa `ExistingVpcId/ExistingSubnetId` (el template las usa por condición).
+- **Teardown trivial y sin huérfanos:** borrar el stack = borrar TODO. Supera al teardown imperativo.
+- **Idempotencia/resumibilidad nativas:** Create si no existe, Update si existe; `OnFailure: DELETE`.
+
+Implementado: `infra/stack-template.ts` (builder del template, condición `CreateNetwork`), `aws/vpc.ts`
+(listVpcs/listSubnets para la pregunta), `aws/cloudformation.ts` (deployStack/getStackOutputs/
+getStackStatus/deleteStack). Todo mock-testeable.
+
+**Lo que QUEDA fuera de CFN (por necesidad):** (1) **key pair** — el CLI lo crea por SDK para obtener
+el `.pem` (CFN no devuelve la clave privada); (2) **DKIM** — la clave se genera en el box al boot, así
+que su registro Route53 se agrega DESPUÉS por SDK (los A/MX/SPF/DMARC sí pueden ir en el template).
+**SUPERSEDED:** el cómputo imperativo (`aws/compute.ts` run/eip + `provisionInstance`) y el
+state/teardown propios — se retiran cuando el flujo CFN esté cableado en el CLI (evitar deuda de dos
+caminos). El `user-data`, el preflight y el cost-calc se CONSERVAN (CFN pasa el user-data como param).
+
 ## 4. Arquitectura del código
 
 Nuevo paquete **`packages/provisioner`** (TS, ESM, parte del monorepo pnpm):

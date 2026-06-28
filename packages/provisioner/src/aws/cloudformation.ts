@@ -1,0 +1,97 @@
+import {
+  CloudFormationClient,
+  CreateStackCommand,
+  UpdateStackCommand,
+  DescribeStacksCommand,
+  DeleteStackCommand,
+} from '@aws-sdk/client-cloudformation';
+
+/** Parámetro del stack (lo que el CLI arma a partir de las preguntas). */
+export interface StackParameter {
+  key: string;
+  value: string;
+}
+
+function toCfnParams(params: StackParameter[]): { ParameterKey: string; ParameterValue: string }[] {
+  return params.map((p) => ({ ParameterKey: p.key, ParameterValue: p.value }));
+}
+
+export async function stackExists(cfn: CloudFormationClient, stackName: string): Promise<boolean> {
+  try {
+    const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+    return (res.Stacks ?? []).length > 0;
+  } catch {
+    // ValidationError "Stack does not exist" → no existe.
+    return false;
+  }
+}
+
+export interface DeployStackInput {
+  stackName: string;
+  templateBody: string;
+  params: StackParameter[];
+}
+
+/**
+ * Despliega el stack: lo CREA si no existe, o lo ACTUALIZA si ya existe (idempotente — re-correr no
+ * duplica). `OnFailure: DELETE` en la creación → si algo falla, CloudFormation limpia solo (no deja
+ * un stack a medias). Devuelve la acción tomada. CAPABILITY_NAMED_IAM para cuando el template sume
+ * el instance profile de S3 (hoy no crea IAM, pero pasarla de más es inocuo).
+ */
+export async function deployStack(
+  cfn: CloudFormationClient,
+  input: DeployStackInput
+): Promise<'created' | 'updated'> {
+  if (await stackExists(cfn, input.stackName)) {
+    await cfn.send(
+      new UpdateStackCommand({
+        StackName: input.stackName,
+        TemplateBody: input.templateBody,
+        Parameters: toCfnParams(input.params),
+        Capabilities: ['CAPABILITY_NAMED_IAM'],
+      })
+    );
+    return 'updated';
+  }
+  await cfn.send(
+    new CreateStackCommand({
+      StackName: input.stackName,
+      TemplateBody: input.templateBody,
+      Parameters: toCfnParams(input.params),
+      Capabilities: ['CAPABILITY_NAMED_IAM'],
+      OnFailure: 'DELETE',
+    })
+  );
+  return 'created';
+}
+
+/** Estado actual del stack (para que el CLI haga polling hasta *_COMPLETE), o null si no existe. */
+export async function getStackStatus(
+  cfn: CloudFormationClient,
+  stackName: string
+): Promise<string | null> {
+  try {
+    const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+    return res.Stacks?.[0]?.StackStatus ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Outputs del stack (PublicIp, InstanceId, VpcId) cuando terminó. */
+export async function getStackOutputs(
+  cfn: CloudFormationClient,
+  stackName: string
+): Promise<Record<string, string>> {
+  const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+  const out: Record<string, string> = {};
+  for (const o of res.Stacks?.[0]?.Outputs ?? []) {
+    if (o.OutputKey && o.OutputValue) out[o.OutputKey] = o.OutputValue;
+  }
+  return out;
+}
+
+/** Teardown = borrar el stack (CloudFormation destruye TODO lo del stack, sin huérfanos). */
+export async function deleteStack(cfn: CloudFormationClient, stackName: string): Promise<void> {
+  await cfn.send(new DeleteStackCommand({ StackName: stackName }));
+}
