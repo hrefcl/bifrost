@@ -146,6 +146,10 @@ export default {
   list: {
     sync: 'Sync',
     filter: 'Filter',
+    filterAll: 'All',
+    filterUnread: 'Unread',
+    filterStarred: 'Starred',
+    filterAttachments: 'With attachments',
     empty: 'Nothing here',
     searchResultsFor: 'Results for “{q}”',
     selectPrompt: 'Select a conversation',

@@ -146,6 +146,10 @@ export default {
   list: {
     sync: 'Sincronizar',
     filter: 'Filtrar',
+    filterAll: 'Todos',
+    filterUnread: 'No leídos',
+    filterStarred: 'Destacados',
+    filterAttachments: 'Con adjuntos',
     empty: 'No hay nada por aquí',
     searchResultsFor: 'Resultados de «{q}»',
     selectPrompt: 'Selecciona una conversación',

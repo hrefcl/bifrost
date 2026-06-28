@@ -30,6 +30,16 @@ const loading = ref(false);
 const error = ref('');
 const category = ref<'primary' | 'updates' | 'promotions'>('primary');
 
+// Filtro de la lista visible (estilo Gmail): todos / no leídos / destacados / con adjuntos.
+type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
+const listFilter = ref<ListFilter>('all');
+const LIST_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
+  { key: 'all', label: 'list.filterAll', icon: 'mail' },
+  { key: 'unread', label: 'list.filterUnread', icon: 'dot' },
+  { key: 'starred', label: 'list.filterStarred', icon: 'star' },
+  { key: 'attachments', label: 'list.filterAttachments', icon: 'paperclip' },
+];
+
 const selected = ref<Email | null>(null);
 const body = ref<EmailBody | null>(null);
 const attachments = ref<EmailAttachmentMeta[]>([]);
@@ -95,6 +105,10 @@ const currentTitle = computed(() => {
 const filteredEmails = computed(() => {
   let list = emails.value; // Pospuestos: emails.value ya viene de GET /emails/snoozed
   if (virtualView.value === 'starred') list = list.filter((e) => e.flags.flagged);
+  // Filtro de la barra de la lista (independiente de la vista/carpeta actual).
+  if (listFilter.value === 'unread') list = list.filter((e) => !e.flags.seen);
+  else if (listFilter.value === 'starred') list = list.filter((e) => e.flags.flagged);
+  else if (listFilter.value === 'attachments') list = list.filter((e) => e.hasAttachments);
   const q = ui.searchQuery.trim().toLowerCase();
   if (q) {
     list = list.filter(
@@ -278,6 +292,7 @@ async function selectFolder(folderId: string) {
   selectedFolderId.value = folderId;
   selected.value = null;
   category.value = 'primary';
+  listFilter.value = 'all';
   loading.value = true;
   try {
     const { data } = await api.get<{ data: Email[] }>(
@@ -299,6 +314,7 @@ async function selectStandard(item: StdItem) {
   }
   selectedKey.value = item.key;
   selected.value = null;
+  listFilter.value = 'all'; // el filtro de lista no persiste entre carpetas
   if (item.virtual) {
     virtualView.value = item.virtual;
     selectedFolderId.value = null;
@@ -466,6 +482,16 @@ const moveTargets = computed(() => {
 function toggleLabelMenu() {
   if (moveTargets.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
 }
+
+// ---- Filtro de la lista ----
+const showFilterMenu = ref(false);
+function toggleFilterMenu() {
+  showFilterMenu.value = !showFilterMenu.value;
+}
+function setListFilter(v: ListFilter) {
+  listFilter.value = v;
+  showFilterMenu.value = false;
+}
 /** Mueve el email a la carpeta/etiqueta elegida (owner-bound en el backend, por folderId). */
 function applyLabel(email: Email | null, folderId: string) {
   showLabelMenu.value = false;
@@ -609,8 +635,9 @@ function printEmail() {
 
 // ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && showLabelMenu.value) {
-    showLabelMenu.value = false; // Escape cierra el menú "Mover a" (review D)
+  if (e.key === 'Escape' && (showLabelMenu.value || showFilterMenu.value)) {
+    showLabelMenu.value = false; // Escape cierra los menús (Mover a / Filtro) — review D
+    showFilterMenu.value = false;
     return;
   }
   const el = e.target as HTMLElement | null;
@@ -628,19 +655,20 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-// Cierra el menú de etiquetas al hacer click fuera (el botón y el menú usan @click.stop).
-function closeLabelMenu() {
+// Cierra los menús flotantes al hacer click fuera (los botones/menús usan @click.stop).
+function closeMenus() {
   showLabelMenu.value = false;
+  showFilterMenu.value = false;
 }
 onMounted(() => {
   void loadAccountsAndFolders();
   window.addEventListener('keydown', onKey);
-  window.addEventListener('click', closeLabelMenu);
+  window.addEventListener('click', closeMenus);
 });
 onBeforeUnmount(() => {
   disposed = true; // descarta refreshBadges() en vuelo (no mutar tras desmontar).
   window.removeEventListener('keydown', onKey);
-  window.removeEventListener('click', closeLabelMenu);
+  window.removeEventListener('click', closeMenus);
   if (badgeTimer) clearTimeout(badgeTimer);
 });
 </script>
@@ -722,9 +750,28 @@ onBeforeUnmount(() => {
             >
               <AppIcon name="refresh" :size="18" />
             </button>
-            <button class="icon-btn" :title="t('list.filter')">
-              <AppIcon name="filter" :size="18" />
-            </button>
+            <div class="label-wrap">
+              <button
+                class="icon-btn"
+                :class="{ on: listFilter !== 'all' }"
+                :title="t('list.filter')"
+                @click.stop="toggleFilterMenu"
+              >
+                <AppIcon name="filter" :size="18" />
+              </button>
+              <div v-if="showFilterMenu" class="label-menu" @click.stop>
+                <button
+                  v-for="f in LIST_FILTERS"
+                  :key="f.key"
+                  class="label-menu-item"
+                  :class="{ sel: listFilter === f.key }"
+                  @click="setListFilter(f.key)"
+                >
+                  <AppIcon :name="f.icon" :size="15" />{{ t(f.label) }}
+                  <AppIcon v-if="listFilter === f.key" name="check" :size="14" class="fm-check" />
+                </button>
+              </div>
+            </div>
             <button class="icon-btn" :title="t('common.more')">
               <AppIcon name="more" :size="18" />
             </button>
@@ -1358,6 +1405,17 @@ onBeforeUnmount(() => {
 }
 .label-menu-item:hover {
   background: var(--surface-2, rgba(127, 127, 127, 0.12));
+}
+.label-menu-item.sel {
+  color: var(--accent);
+  font-weight: 600;
+}
+.fm-check {
+  margin-left: auto;
+  color: var(--accent);
+}
+.icon-btn.on {
+  color: var(--accent);
 }
 .thread-body {
   flex: 1;

@@ -469,6 +469,27 @@ test('snooze + unsnooze: posponer saca de Recibidos → Pospuestos → recuperar
   await expect(page.getByText('Welcome to Webmail 6.0')).toHaveCount(0);
 });
 
+test('filtro de lista: Destacados oculta los no-destacados; Todos restaura', async ({ page }) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  await page.getByRole('button', { name: 'Inbox' }).click();
+  await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible({ timeout: 15_000 });
+
+  // Abrir el menú de filtro (toolbar de la lista) y elegir "Starred".
+  await page.locator('.list-actions').getByRole('button', { name: 'Filter' }).click();
+  await page.locator('.label-menu').getByRole('button', { name: 'Starred' }).click();
+  // Ningún email está destacado → desaparece de la lista.
+  await expect(page.getByText('Welcome to Webmail 6.0')).toHaveCount(0);
+
+  // Volver a "All" → reaparece.
+  await page.locator('.list-actions').getByRole('button', { name: 'Filter' }).click();
+  await page.locator('.label-menu').getByRole('button', { name: 'All' }).click();
+  await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible({ timeout: 15_000 });
+});
+
 // Tests de administración al FINAL: no dependen del sync de buzón, así que se ejecutan tras
 // los flujos sync-sensibles para no alterar su timing (el server E2E es compartido).
 test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local', async ({
