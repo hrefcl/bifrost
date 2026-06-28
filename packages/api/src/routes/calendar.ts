@@ -70,6 +70,18 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     if (body.accountId) {
       await requireOwnedAccount(request.user.userId, body.accountId);
     }
+    // Si el update trae ambas fechas (drag/resize), el fin debe ser posterior al inicio.
+    if (body.startDate && body.endDate) {
+      if (new Date(body.endDate).getTime() <= new Date(body.startDate).getTime()) {
+        return reply
+          .code(400)
+          .send({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: 'endDate must be after startDate',
+          });
+      }
+    }
     const update: Record<string, unknown> = { ...body };
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);

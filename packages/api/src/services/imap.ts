@@ -395,13 +395,34 @@ export async function setEmailSeen(
   uid: number,
   seen: boolean
 ): Promise<void> {
+  await setEmailFlag(account, folderPath, uid, '\\Seen', seen);
+}
+
+/** Marca/desmarca un email como destacado (\\Flagged = estrella de Gmail). */
+export async function setEmailFlagged(
+  account: IAccount,
+  folderPath: string,
+  uid: number,
+  flagged: boolean
+): Promise<void> {
+  await setEmailFlag(account, folderPath, uid, '\\Flagged', flagged);
+}
+
+/** Agrega o quita un IMAP flag (\\Seen, \\Flagged, …) de un mensaje por uid. */
+async function setEmailFlag(
+  account: IAccount,
+  folderPath: string,
+  uid: number,
+  flag: string,
+  on: boolean
+): Promise<void> {
   await withClient(account, async (client) => {
     const lock = await client.getMailboxLock(folderPath);
     try {
-      if (seen) {
-        await client.messageFlagsAdd(String(uid), ['\\Seen'], { uid: true });
+      if (on) {
+        await client.messageFlagsAdd(String(uid), [flag], { uid: true });
       } else {
-        await client.messageFlagsRemove(String(uid), ['\\Seen'], { uid: true });
+        await client.messageFlagsRemove(String(uid), [flag], { uid: true });
       }
     } finally {
       lock.release();

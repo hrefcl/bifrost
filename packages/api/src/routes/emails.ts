@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   fetchAndParseMessage,
   setEmailSeen,
+  setEmailFlagged,
   moveEmailToTrash,
   moveEmailToFolder,
   type ParsedAttachment,
@@ -166,17 +167,30 @@ export default function emailRoutes(fastify: FastifyInstance) {
     }));
   });
 
-  const flagsSchema = z.object({ seen: z.boolean() });
+  // Acepta `seen` y/o `flagged` (estrella de Gmail). Al menos uno requerido.
+  const flagsSchema = z
+    .object({ seen: z.boolean().optional(), flagged: z.boolean().optional() })
+    .refine((b) => b.seen !== undefined || b.flagged !== undefined, {
+      message: 'seen o flagged requerido',
+    });
 
   fastify.patch('/:emailId/flags', async (request) => {
     const { emailId } = request.params as { emailId: string };
     objectIdSchema.parse(emailId);
-    const { seen } = flagsSchema.parse(request.body);
+    const body = flagsSchema.parse(request.body);
     const { email, account } = await requireOwnedEmail(request.user.userId, emailId);
     const folderPath = await resolveFolderPath(email);
-    await setEmailSeen(account, folderPath, email.uid, seen);
-    await Email.updateOne({ _id: email._id }, { $set: { 'flags.seen': seen } });
-    return { ok: true, seen };
+    const set: Record<string, boolean> = {};
+    if (body.seen !== undefined) {
+      await setEmailSeen(account, folderPath, email.uid, body.seen);
+      set['flags.seen'] = body.seen;
+    }
+    if (body.flagged !== undefined) {
+      await setEmailFlagged(account, folderPath, email.uid, body.flagged);
+      set['flags.flagged'] = body.flagged;
+    }
+    await Email.updateOne({ _id: email._id }, { $set: set });
+    return { ok: true, ...body };
   });
 
   fastify.delete('/:emailId', async (request) => {

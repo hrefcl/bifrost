@@ -97,6 +97,11 @@ async function submitCreate(): Promise<void> {
   createError.value = '';
   const start = new Date(createForm.value.startDate);
   const end = new Date(createForm.value.endDate);
+  // "Todo el día": normalizar a inicio/fin del día local (review B/D).
+  if (createForm.value.allDay) {
+    start.setHours(0, 0, 0, 0);
+    end.setHours(23, 59, 59, 999);
+  }
   if (!(end.getTime() > start.getTime())) {
     createError.value = t('calendar.errRange');
     return;
@@ -106,7 +111,7 @@ async function submitCreate(): Promise<void> {
       accountId: accounts.value[0]?.id ?? '',
       calendarId: 'default',
       calendarName: 'Personal',
-      uid: `local-${String(Date.now())}`,
+      uid: `local-${crypto.randomUUID()}`,
       summary: createForm.value.summary,
       startDate: start.toISOString(),
       startTimezone: 'UTC',

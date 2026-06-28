@@ -141,7 +141,9 @@ export default function accountRoutes(fastify: FastifyInstance) {
       { $group: { _id: null, bytes: { $sum: '$size' } } },
     ]);
     const usedBytes = agg[0]?.bytes ?? 0;
-    const limitBytes = Number(process.env.STORAGE_LIMIT_BYTES ?? String(15 * 1024 * 1024 * 1024));
+    const DEFAULT_LIMIT = 15 * 1024 * 1024 * 1024; // 15 GB
+    const envLimit = Number(process.env.STORAGE_LIMIT_BYTES ?? String(DEFAULT_LIMIT));
+    const limitBytes = Number.isFinite(envLimit) && envLimit > 0 ? envLimit : DEFAULT_LIMIT;
     return { usedBytes, limitBytes };
   });
 

@@ -334,4 +334,26 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect([403, 404]).toContain(cross.statusCode);
     expect(await Email.findById(email2._id)).not.toBeNull();
   });
+
+  it('PATCH /api/emails/:id/flags — persiste flagged (estrella) y seen; vacío → 400', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'star@test.com' });
+    const folder = await seedFolder(account._id);
+    const email = await seedEmail(account._id, folder._id, { uid: 30 });
+    const headers = authHeaders(app, user._id.toString());
+    const url = `/api/emails/${email._id.toString()}/flags`;
+
+    // flagged: la estrella (antes la ruta sólo aceptaba `seen` → el star nunca persistía).
+    const star = await app.inject({ method: 'PATCH', url, headers, payload: { flagged: true } });
+    expect(star.statusCode).toBe(200);
+    expect((await Email.findById(email._id))?.flags.flagged).toBe(true);
+
+    // seen sigue funcionando.
+    const seen = await app.inject({ method: 'PATCH', url, headers, payload: { seen: true } });
+    expect(seen.statusCode).toBe(200);
+    expect((await Email.findById(email._id))?.flags.seen).toBe(true);
+
+    // body sin seen ni flagged → 400.
+    const empty = await app.inject({ method: 'PATCH', url, headers, payload: {} });
+    expect(empty.statusCode).toBe(400);
+  });
 });

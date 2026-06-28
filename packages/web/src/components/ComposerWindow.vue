@@ -210,6 +210,7 @@ function hasContent(): boolean {
   return Boolean(
     form.value.to.trim() ||
     form.value.cc.trim() ||
+    form.value.bcc.trim() ||
     form.value.subject.trim() ||
     attachments.value.length ||
     editor.value?.getText().trim()
@@ -227,11 +228,22 @@ watch(
   }
 );
 
-async function saveDraft(silent = false): Promise<void> {
+// Single-flight: autosave y send() pueden pedir guardar a la vez; sin compartir la MISMA
+// promesa, ambos crearían un draft distinto (uno enviado + uno huérfano editing) — review B.
+let saveInFlight: Promise<void> | null = null;
+function saveDraft(silent = false): Promise<void> {
   if (uploading.value) {
     if (!silent) error.value = t('composer.errUploadWait');
-    return;
+    return Promise.resolve();
   }
+  if (saveInFlight) return saveInFlight;
+  saveInFlight = doSaveDraft(silent).finally(() => {
+    saveInFlight = null;
+  });
+  return saveInFlight;
+}
+
+async function doSaveDraft(silent: boolean): Promise<void> {
   try {
     if (draftId.value) {
       await draftStore.updateDraft(draftId.value, composerState());
@@ -329,6 +341,29 @@ async function send() {
   }
 }
 
+/** Cerrar (X / minimizar→cerrar): conserva el borrador. Flushea un último save si hay cambios
+ *  sin guardar dentro de la ventana del debounce, para no perder lo recién escrito (review B). */
+async function closeKeep(): Promise<void> {
+  clearTimeout(autosaveTimer);
+  if (!uploading.value && dirty.value && hasContent()) {
+    await saveDraft();
+  }
+  composer.close();
+}
+
+/** Descartar (papelera): borra el borrador del servidor y cierra, sin guardar (review B/D). */
+async function discard(): Promise<void> {
+  clearTimeout(autosaveTimer);
+  if (draftId.value) {
+    try {
+      await draftStore.deleteDraft(draftId.value);
+    } catch {
+      /* best-effort: igual cerramos */
+    }
+  }
+  composer.close();
+}
+
 // beforeunload anti-pérdida (la navegación SPA no aplica: el composer es overlay).
 function beforeUnloadHandler(e: BeforeUnloadEvent): void {
   if (dirty.value && hasContent()) e.preventDefault();
@@ -347,7 +382,7 @@ onBeforeUnmount(() => {
   <!-- Minimizado: barra compacta abajo-derecha -->
   <div v-if="composer.minimized" class="cw-min" @click="composer.toggleMinimize()">
     <span class="cw-min-title">{{ form.subject || windowTitle }}</span>
-    <button class="cw-head-btn" :title="t('common.close')" @click.stop="composer.close()">
+    <button class="cw-head-btn" :title="t('common.close')" @click.stop="closeKeep()">
       <AppIcon name="x" :size="18" />
     </button>
   </div>
@@ -363,7 +398,7 @@ onBeforeUnmount(() => {
       >
         <AppIcon name="chevronDown" :size="18" />
       </button>
-      <button class="cw-head-btn" :title="t('common.close')" @click="composer.close()">
+      <button class="cw-head-btn" :title="t('common.close')" @click="closeKeep()">
         <AppIcon name="x" :size="18" />
       </button>
     </div>
@@ -487,7 +522,7 @@ onBeforeUnmount(() => {
         </label>
       </div>
       <span class="cw-status">{{ savedStatus }}</span>
-      <button class="cw-tool" :title="t('composer.discard')" @click="composer.close()">
+      <button class="cw-tool" :title="t('composer.discard')" @click="discard()">
         <AppIcon name="trash" :size="17" />
       </button>
     </div>

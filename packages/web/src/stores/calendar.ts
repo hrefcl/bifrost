@@ -6,9 +6,13 @@ import type { CalendarEvent } from '@webmail6/shared';
 export const useCalendarStore = defineStore('calendar', () => {
   const events = ref<CalendarEvent[]>([]);
 
+  // Token de cancelación: al navegar rápido entre rangos, una respuesta vieja no debe
+  // sobreescribir el rango actual con datos stale (review B).
+  let fetchToken = 0;
   async function fetchEvents(start: string, end: string) {
+    const token = ++fetchToken;
     const { data } = await api.get<CalendarEvent[]>('/calendar', { params: { start, end } });
-    events.value = data;
+    if (token === fetchToken) events.value = data;
   }
 
   async function createEvent(
