@@ -505,6 +505,9 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
   await expect(page.getByRole('heading', { name: 'Administration' })).toBeVisible({
     timeout: 15_000,
   });
+  // El panel admin ahora tiene pestañas (Cuentas/Marca/Almacenamiento); el wizard de storage vive
+  // en la pestaña "Storage" (el default es "Accounts").
+  await page.getByRole('button', { name: 'Storage' }).click();
   // La config actual se cargó desde GET /admin/config/storage (default local).
   await expect(page.getByText('Local server', { exact: false })).toBeVisible();
 
