@@ -354,6 +354,16 @@ async function closeKeep(): Promise<void> {
 /** Descartar (papelera): borra el borrador del servidor y cierra, sin guardar (review B/D). */
 async function discard(): Promise<void> {
   clearTimeout(autosaveTimer);
+  // Si un autosave está EN VUELO (creando el draft) aún sin draftId, esperarlo para conocer el
+  // id y poder borrarlo — si no, el draft se crearía DESPUÉS del cierre y quedaría huérfano
+  // (HIGH residual de la re-review B).
+  if (saveInFlight) {
+    try {
+      await saveInFlight;
+    } catch {
+      /* ignore */
+    }
+  }
   if (draftId.value) {
     try {
       await draftStore.deleteDraft(draftId.value);
