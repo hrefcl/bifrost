@@ -3,6 +3,7 @@ import { ZodError } from 'zod';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import { loggerOptions } from '../config/logger.js';
+import { env } from '../config/env.js';
 import setupRoutes from '../routes/setup.js';
 
 export async function buildSetupApp() {
@@ -56,8 +57,11 @@ export async function buildSetupApp() {
     },
   });
 
+  // CORS acotado al origen del frontend (no `origin: true`/cualquiera): aunque /api/setup sólo está
+  // activo antes de configurar el sistema, reflejar cualquier origin permitía a una página hostil
+  // interactuar con el wizard si la víctima la visitaba durante esa ventana (review D). Espeja app.ts.
   await app.register(cors, {
-    origin: true,
+    origin: env.CORS_ORIGIN,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   });
