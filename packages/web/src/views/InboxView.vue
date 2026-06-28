@@ -141,9 +141,8 @@ const displayedEmails = computed(() => {
 // reactivar el modo búsqueda tras salir (review B+D).
 let searchToken = 0;
 // Token de cancelación de cargas de lista (carpeta/Pospuestos): una respuesta vieja no debe pisar
-// la lista actual. Necesario porque togglear filtros o navegar/buscar rápido dispara varios GET cuya
-// respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — operador 3AM).
-// Se declara aquí (antes de runSearch) porque entrar/salir de búsqueda también lo invalida.
+// la lista actual. Necesario porque togglear filtros o navegar rápido entre carpetas dispara varios
+// GET cuya respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — 3AM).
 let loadToken = 0;
 // IDs eliminados/movidos/pospuestos durante una búsqueda EN VUELO. searchToken evita que una
 // búsqueda vieja pise una nueva, pero NO que la respuesta de la búsqueda actual reinserte un
@@ -155,7 +154,6 @@ const removedIds = new Set<string>();
 const actionInFlight = new Set<string>();
 async function runSearch(q: string) {
   const token = ++searchToken;
-  loadToken++; // invalida una carga de carpeta en vuelo (no debe pisar emails.value al salir de búsqueda)
   removedIds.clear();
   searching.value = true;
   selected.value = null;
@@ -173,7 +171,6 @@ async function runSearch(q: string) {
 }
 function exitSearch() {
   searchToken++; // invalida cualquier búsqueda en vuelo
-  loadToken++; // y cualquier carga de carpeta en vuelo (no debe pisar la lista al volver)
   searchResults.value = null;
   searchActiveQuery.value = '';
 }
@@ -181,7 +178,6 @@ function exitSearch() {
 /** Saca un email de la lista visible (carpeta Y resultados de búsqueda) tras eliminar/mover/snooze. */
 function removeFromLists(id: string) {
   removedIds.add(id); // que una búsqueda en vuelo no lo reinserte al volver (review B).
-  loadToken++; // que una carga de carpeta en vuelo no reviva el email recién removido (review D).
   emails.value = emails.value.filter((e) => e.id !== id);
   if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
   if (selected.value?.id === id) selected.value = null;
