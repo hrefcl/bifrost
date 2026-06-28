@@ -113,22 +113,34 @@ const displayedEmails = computed(() =>
   inSearch.value ? (searchResults.value ?? []) : filteredEmails.value
 );
 
+// Token de cancelación: una búsqueda vieja no debe pisar la carpeta/búsqueda actual ni
+// reactivar el modo búsqueda tras salir (review B+D).
+let searchToken = 0;
 async function runSearch(q: string) {
+  const token = ++searchToken;
   searching.value = true;
   selected.value = null;
   searchActiveQuery.value = q;
   try {
     const { data } = await api.get<{ data: Email[] }>('/emails/search', { params: { q } });
-    searchResults.value = data.data;
+    if (token === searchToken) searchResults.value = data.data;
   } catch {
-    searchResults.value = [];
+    if (token === searchToken) searchResults.value = [];
   } finally {
-    searching.value = false;
+    if (token === searchToken) searching.value = false;
   }
 }
 function exitSearch() {
+  searchToken++; // invalida cualquier búsqueda en vuelo
   searchResults.value = null;
   searchActiveQuery.value = '';
+}
+
+/** Saca un email de la lista visible (carpeta Y resultados de búsqueda) tras eliminar/mover/snooze. */
+function removeFromLists(id: string) {
+  emails.value = emails.value.filter((e) => e.id !== id);
+  if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
+  if (selected.value?.id === id) selected.value = null;
 }
 // Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
 watch(
@@ -333,8 +345,7 @@ async function deleteEmail(email: Email | null, ev?: Event) {
   const id = email.id;
   try {
     await api.delete(`/emails/${id}`);
-    emails.value = emails.value.filter((e) => e.id !== id);
-    if (selected.value?.id === id) selected.value = null;
+    removeFromLists(id);
   } catch {
     error.value = t('errors.delete');
   }
@@ -347,8 +358,7 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
   const id = email.id;
   try {
     await api.post(`/emails/${id}/move`, { specialUse });
-    emails.value = emails.value.filter((e) => e.id !== id);
-    if (selected.value?.id === id) selected.value = null;
+    removeFromLists(id);
   } catch {
     error.value = t('errors.move');
   }
@@ -392,13 +402,18 @@ function openSnooze(email: Email | null) {
 }
 async function doSnooze(until: Date) {
   const email = snoozeTarget.value;
+  // Guard de fecha inválida (datetime-local vacío → Invalid Date → NaN) y pasada (review B+D).
+  if (!email || Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) {
+    if (email && (Number.isNaN(until.getTime()) || until.getTime() <= Date.now())) {
+      error.value = t('errors.snooze');
+    }
+    return;
+  }
   showSnooze.value = false;
   snoozeTarget.value = null;
-  if (!email || until.getTime() <= Date.now()) return;
   try {
     await api.post(`/emails/${email.id}/snooze`, { until: until.toISOString() });
-    emails.value = emails.value.filter((e) => e.id !== email.id);
-    if (selected.value?.id === email.id) selected.value = null;
+    removeFromLists(email.id);
   } catch {
     error.value = t('errors.snooze');
   }

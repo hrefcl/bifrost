@@ -83,27 +83,26 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987(filename)}`;
 }
 
-/** Escapa metacaracteres de regex: la query del usuario se usa como patrón (anti ReDoS/inyección). */
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 export default function emailRoutes(fastify: FastifyInstance) {
-  // Búsqueda global estilo Gmail: matchea en asunto/remitente/preview en TODAS las carpetas del
-  // usuario (owner-bound: sólo sus cuentas). Regex escapado + cap de 50 resultados.
+  // Búsqueda global estilo Gmail: usa el índice de TEXTO (email_text_search) sobre
+  // asunto/remitente/preview en TODAS las cuentas del usuario (owner-bound). $text escala con
+  // índice (a diferencia de un $regex sin ancla, que era un COLLSCAN O(n) — review B+D). Cap 50.
   const searchSchema = z.object({ q: z.string().trim().min(1).max(200) });
-  fastify.get('/search', async (request) => {
+  fastify.get('/search', async (request, reply) => {
     const parsed = searchSchema.safeParse(request.query);
-    if (!parsed.success) return { data: [] };
+    if (!parsed.success) {
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'q inválido (1-200 chars)' });
+    }
     const accounts = await Account.find({ userId: request.user.userId }).select('_id');
     const accountIds = accounts.map((a) => a._id);
     if (accountIds.length === 0) return { data: [] };
-    const rx = new RegExp(escapeRegex(parsed.data.q), 'i');
     const emails = await Email.find({
       accountId: { $in: accountIds },
-      $or: [{ subject: rx }, { 'from.address': rx }, { 'from.name': rx }, { preview: rx }],
+      $text: { $search: parsed.data.q },
     })
-      .sort({ date: -1 })
+      .sort({ score: { $meta: 'textScore' }, date: -1 })
       .limit(50);
     return { data: emails.map(serializeEmail) };
   });

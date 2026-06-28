@@ -93,8 +93,11 @@ EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
 // Pospuestos: buscar por usuario (cuenta) los que siguen en snooze.
 EmailSchema.index({ accountId: 1, snoozedUntil: 1 });
 EmailSchema.index(
-  { accountId: 1, subject: 'text', preview: 'text', 'from.address': 'text' },
-  { weights: { subject: 10, preview: 5, 'from.address': 3 }, name: 'email_text_search' }
+  { accountId: 1, subject: 'text', preview: 'text', 'from.name': 'text', 'from.address': 'text' },
+  {
+    weights: { subject: 10, 'from.name': 6, preview: 5, 'from.address': 3 },
+    name: 'email_text_search',
+  }
 );
 
 export const Email = mongoose.model<IEmail>('Email', EmailSchema);

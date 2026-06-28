@@ -183,10 +183,13 @@ export default function accountRoutes(fastify: FastifyInstance) {
 
     // Pospuestos (snooze): ocultar los que siguen en snooze (snoozedUntil futuro). Al pasar la
     // hora reaparecen solos (no hace falta scheduler: es una condición de query).
+    // `$not {$gt}` (en vez de un $or) incluye ausente/null/<=now en UNA condición: deja que el
+    // índice ESR {accountId,folderId,date,uid} sirva igualdad+sort y aplica esto como filtro
+    // residual sobre la carpeta ya acotada (el $or rompía el plan); además cubre null (review B+D).
     const filter = {
       accountId,
       folderId,
-      $or: [{ snoozedUntil: { $exists: false } }, { snoozedUntil: { $lte: new Date() } }],
+      snoozedUntil: { $not: { $gt: new Date() } },
     };
     const [data, total] = await Promise.all([
       Email.find(filter).sort({ date: -1, uid: -1 }).skip(skip).limit(limit),

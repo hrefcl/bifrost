@@ -15,6 +15,16 @@ export async function setupTestDb() {
   mongoServer = await MongoMemoryServer.create();
   process.env.MONGODB_URI = mongoServer.getUri();
   await mongoose.connect(process.env.MONGODB_URI);
+  // Construir índices de forma DETERMINISTA antes de cualquier test. `autoIndex` los
+  // crea en background y había un race: la primera query `$text` podía ejecutarse antes
+  // de que `email_text_search` existiera → 500 ("text index required"). createIndexes()
+  // espera a que estén listos (idempotente; resetState usa deleteMany y los conserva).
+  await Promise.all([
+    User.createIndexes(),
+    Account.createIndexes(),
+    Folder.createIndexes(),
+    Email.createIndexes(),
+  ]);
 }
 
 export async function teardownTestDb() {

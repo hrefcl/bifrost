@@ -357,28 +357,35 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect(empty.statusCode).toBe(400);
   });
 
-  it('GET /api/emails/search — matchea asunto (owner-bound, regex escapado)', async () => {
+  it('GET /api/emails/search — $text por asunto/remitente (owner-bound; q inválida 400)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'srch@test.com' });
     const folder = await seedFolder(account._id);
     await seedEmail(account._id, folder._id, { uid: 40, subject: 'Factura de junio' });
     await seedEmail(account._id, folder._id, { uid: 41, subject: 'Reunión de equipo' });
     const headers = authHeaders(app, user._id.toString());
+    const subjectsOf = (body: string) =>
+      (JSON.parse(body) as { data: { subject: string }[] }).data.map((e) => e.subject);
 
     const res = await app.inject({ method: 'GET', url: '/api/emails/search?q=factura', headers });
     expect(res.statusCode).toBe(200);
-    const got = (JSON.parse(res.body) as { data: { subject: string }[] }).data.map(
-      (e) => e.subject
-    );
-    expect(got).toContain('Factura de junio');
-    expect(got).not.toContain('Reunión de equipo');
+    expect(subjectsOf(res.body)).toContain('Factura de junio');
+    expect(subjectsOf(res.body)).not.toContain('Reunión de equipo');
 
-    // Regex ESCAPADO: '.*' se busca literal (no matchea todo).
+    // Por REMITENTE: 'sender@test' (seedEmail) → tokeniza 'sender' → matchea ambos.
+    const byFrom = await app.inject({ method: 'GET', url: '/api/emails/search?q=sender', headers });
+    expect(subjectsOf(byFrom.body).length).toBeGreaterThanOrEqual(2);
+
+    // $text sin tokens válidos ('.*') → 0 resultados (sin regex, sin ReDoS).
     const star = await app.inject({
       method: 'GET',
       url: `/api/emails/search?q=${encodeURIComponent('.*')}`,
       headers,
     });
     expect((JSON.parse(star.body) as { data: unknown[] }).data).toHaveLength(0);
+
+    // q vacía/ausente → 400.
+    const bad = await app.inject({ method: 'GET', url: '/api/emails/search', headers });
+    expect(bad.statusCode).toBe(400);
 
     // Owner-bound: otro usuario no ve estos emails.
     const { user: other } = await seedUserWithAccount({ email: 'srch-other@test.com' });
@@ -431,14 +438,43 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     const snoozed2 = await app.inject({ method: 'GET', url: '/api/emails/snoozed', headers });
     expect((JSON.parse(snoozed2.body) as { data: unknown[] }).data).toHaveLength(0);
 
-    // owner-bound: otro usuario no puede posponer este email.
+    // Re-snooze + UNSNOOZE: vuelve a la carpeta y sale de /snoozed.
+    await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/snooze`,
+      headers,
+      payload: { until },
+    });
+    const uns = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/unsnooze`,
+      headers,
+    });
+    expect(uns.statusCode).toBe(200);
+    const folder3 = await app.inject({ method: 'GET', url: folderUrl, headers });
+    expect(subjects(folder3.body)).toContain('Pendiente');
+
+    // owner-bound: otro usuario no puede posponer NI ver en /snoozed este email.
     const { user: other } = await seedUserWithAccount({ email: 'snz-other@test.com' });
+    const otherHeaders = authHeaders(app, other._id.toString());
+    await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/snooze`,
+      headers,
+      payload: { until },
+    }); // re-snooze como dueño
     const cross2 = await app.inject({
       method: 'POST',
       url: `/api/emails/${email._id.toString()}/snooze`,
-      headers: authHeaders(app, other._id.toString()),
+      headers: otherHeaders,
       payload: { until },
     });
     expect([403, 404]).toContain(cross2.statusCode);
+    const otherSnoozed = await app.inject({
+      method: 'GET',
+      url: '/api/emails/snoozed',
+      headers: otherHeaders,
+    });
+    expect((JSON.parse(otherSnoozed.body) as { data: unknown[] }).data).toHaveLength(0);
   });
 });
