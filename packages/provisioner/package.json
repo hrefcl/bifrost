@@ -1,0 +1,30 @@
+{
+  "name": "@webmail6/provisioner",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "bifrost-provision": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "start": "node dist/cli.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-ec2": "^3.726.0",
+    "@aws-sdk/client-route-53": "^3.726.0",
+    "@aws-sdk/client-sts": "^3.726.0",
+    "@inquirer/prompts": "^7.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "aws-sdk-client-mock": "^4.1.0",
+    "typescript": "^5.7.0",
+    "vitest": "^2.1.8"
+  }
+}
