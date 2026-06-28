@@ -16,13 +16,21 @@ import type {
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
-const paginationSchema = z.object({
-  page: z.coerce.number().int().min(1).default(1),
-  limit: z.coerce.number().int().min(1).max(100).default(20),
-  // Filtro de la lista (estilo Gmail). Server-side: filtra TODA la carpeta, no sólo la página
-  // cargada (un filtro client-side sobre 20 emails mostraría "0" aunque hubiera matches después).
-  filter: z.enum(['unread', 'starred', 'attachments']).optional(),
-});
+const listQuerySchema = z
+  .object({
+    limit: z.coerce.number().int().min(1).max(100).default(20),
+    // Filtro de la lista (estilo Gmail). Server-side: filtra TODA la carpeta, no sólo la página
+    // cargada (un filtro client-side sobre 20 emails mostraría "0" aunque hubiera matches después).
+    filter: z.enum(['unread', 'starred', 'attachments']).optional(),
+    // Paginación por CURSOR (keyset) sobre el orden (date desc, uid desc): "cargar más" pide lo
+    // anterior al último email cargado. Evita los huecos de skip/page ante mutaciones de la lista y
+    // no degrada con offset profundo (review B+D). Ambos van juntos o ninguno.
+    beforeDate: z.string().datetime().optional(),
+    beforeUid: z.coerce.number().int().optional(),
+  })
+  .refine((q) => (q.beforeDate === undefined) === (q.beforeUid === undefined), {
+    message: 'beforeDate y beforeUid deben venir juntos',
+  });
 
 function serializeAccount(account: import('../models/Account.js').IAccount): AccountDto {
   return {
@@ -204,31 +212,48 @@ export default function accountRoutes(fastify: FastifyInstance) {
     objectIdSchema.parse(accountId);
     objectIdSchema.parse(folderId);
     await requireOwnedFolder(request.user.userId, accountId, folderId);
-    const { page, limit, filter: listFilter } = paginationSchema.parse(request.query);
-    const skip = (page - 1) * limit;
+    const {
+      limit,
+      filter: listFilter,
+      beforeDate,
+      beforeUid,
+    } = listQuerySchema.parse(request.query);
 
     // Pospuestos (snooze): ocultar los que siguen en snooze (snoozedUntil futuro). Al pasar la
     // hora reaparecen solos (no hace falta scheduler: es una condición de query).
     // `$not {$gt}` (en vez de un $or) incluye ausente/null/<=now en UNA condición: deja que el
     // índice ESR {accountId,folderId,date,uid} sirva igualdad+sort y aplica esto como filtro
     // residual sobre la carpeta ya acotada (el $or rompía el plan); además cubre null (review B+D).
-    const filter: Record<string, unknown> = {
+    const base: Record<string, unknown> = {
       accountId,
       folderId,
       snoozedUntil: { $not: { $gt: new Date() } },
     };
-    // Filtro de la lista (server-side → filtra toda la carpeta, conteo `total` honesto).
-    if (listFilter === 'unread') filter['flags.seen'] = false;
-    else if (listFilter === 'starred') filter['flags.flagged'] = true;
-    else if (listFilter === 'attachments') filter.hasAttachments = true;
-    const [data, total] = await Promise.all([
-      Email.find(filter).sort({ date: -1, uid: -1 }).skip(skip).limit(limit),
-      Email.countDocuments(filter),
-    ]);
+    // Filtro de la lista (server-side → filtra TODA la carpeta, conteo `total` honesto).
+    if (listFilter === 'unread') base['flags.seen'] = false;
+    else if (listFilter === 'starred') base['flags.flagged'] = true;
+    else if (listFilter === 'attachments') base.hasAttachments = true;
+
+    // Cursor keyset: traer lo ESTRICTAMENTE anterior a (beforeDate, beforeUid) en el orden
+    // (date desc, uid desc). Usa el índice ESR {accountId,folderId,date,uid} sin skip → sin huecos
+    // ante mutaciones y sin degradar con offset profundo (review B+D).
+    const query: Record<string, unknown> = { ...base };
+    if (beforeDate !== undefined && beforeUid !== undefined) {
+      const d = new Date(beforeDate);
+      query.$or = [{ date: { $lt: d } }, { date: d, uid: { $lt: beforeUid } }];
+    }
+
+    // limit+1 para saber si hay más sin recorrer toda la carpeta por página.
+    const docs = await Email.find(query)
+      .sort({ date: -1, uid: -1 })
+      .limit(limit + 1);
+    const hasMore = docs.length > limit;
+    const pageDocs = hasMore ? docs.slice(0, limit) : docs;
+    const total = await Email.countDocuments(base);
 
     const response: Paginated<EmailDto> = {
-      data: data.map(serializeEmail),
-      pagination: { page, limit, total, hasMore: skip + data.length < total },
+      data: pageDocs.map(serializeEmail),
+      pagination: { limit, total, hasMore },
     };
     return response;
   });

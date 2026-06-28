@@ -407,13 +407,17 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect(bad.statusCode).toBe(400);
   });
 
-  it('GET folders/:id/emails — paginación page/limit/hasMore (contrato de "cargar más")', async () => {
+  it('GET folders/:id/emails — paginación por CURSOR/keyset (contrato de "cargar más")', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'page@test.com' });
     const inbox = await seedFolder(account._id);
     // 3 emails; uid mayor = más nuevo (orden date desc, uid desc → 52, 51, 50).
+    const dates = new Map<number, string>();
     for (let i = 0; i < 3; i++) {
-      const e = await seedEmail(account._id, inbox._id, { uid: 50 + i });
-      await Email.updateOne({ _id: e._id }, { date: new Date(Date.now() - (2 - i) * 60_000) });
+      const uid = 50 + i;
+      const e = await seedEmail(account._id, inbox._id, { uid });
+      const d = new Date(Date.now() - (2 - i) * 60_000);
+      await Email.updateOne({ _id: e._id }, { date: d });
+      dates.set(uid, d.toISOString());
     }
     const headers = authHeaders(app, user._id.toString());
     const base = `/api/accounts/${account._id.toString()}/folders/${inbox._id.toString()}/emails`;
@@ -421,22 +425,39 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
       const res = await app.inject({ method: 'GET', url: base + qs, headers });
       expect(res.statusCode).toBe(200);
       return JSON.parse(res.body) as {
-        data: { uid: number }[];
-        pagination: { page: number; total: number; hasMore: boolean };
+        data: { uid: number; date: string }[];
+        pagination: { total: number; hasMore: boolean };
       };
     };
 
-    const p1 = await page('?page=1&limit=2');
+    const p1 = await page('?limit=2');
     expect(p1.data.map((e) => e.uid)).toEqual([52, 51]); // 2 más nuevos
-    expect(p1.pagination).toMatchObject({ page: 1, total: 3, hasMore: true });
+    expect(p1.pagination).toMatchObject({ total: 3, hasMore: true });
 
-    const p2 = await page('?page=2&limit=2');
-    expect(p2.data.map((e) => e.uid)).toEqual([50]); // el restante
-    expect(p2.pagination).toMatchObject({ page: 2, total: 3, hasMore: false });
+    // "Cargar más": cursor = último email de p1 (uid 51).
+    const last = p1.data[p1.data.length - 1];
+    const cursor = `beforeDate=${encodeURIComponent(last.date)}&beforeUid=${String(last.uid)}`;
+    const p2 = await page(`?limit=2&${cursor}`);
+    expect(p2.data.map((e) => e.uid)).toEqual([50]); // el restante, estrictamente anterior
+    expect(p2.pagination).toMatchObject({ total: 3, hasMore: false });
 
-    // No hay solape entre páginas (cada email aparece una sola vez).
+    // Sin solape entre páginas.
     const all = [...p1.data, ...p2.data].map((e) => e.uid);
     expect(new Set(all).size).toBe(3);
+
+    // KEYSET sin huecos ante mutación: borrar uid 52 (página 1), luego "cargar más" con el MISMO
+    // cursor (uid 51) sigue trayendo uid 50 — el offset no se corre (a diferencia de skip/page).
+    await Email.deleteOne({ accountId: account._id, folderId: inbox._id, uid: 52 });
+    const p2b = await page(`?limit=2&${cursor}`);
+    expect(p2b.data.map((e) => e.uid)).toEqual([50]);
+
+    // beforeDate sin beforeUid → 400 (refine: van juntos).
+    const bad = await app.inject({
+      method: 'GET',
+      url: `${base}?beforeDate=${encodeURIComponent(dates.get(51) ?? '')}`,
+      headers,
+    });
+    expect(bad.statusCode).toBe(400);
   });
 
   it('PATCH /api/emails/:id/flags — persiste flagged (estrella) y seen; vacío → 400', async () => {

@@ -50,11 +50,12 @@ function matchesListFilter(e: Email): boolean {
 }
 
 // Paginación de la carpeta (estilo Gmail "cargar más"): el inbox NO debe quedarse en los 20
-// primeros. El backend devuelve {page,hasMore,total}; aquí se acumulan páginas con "Cargar más".
+// primeros. Paginación por CURSOR (keyset): "cargar más" pide lo anterior al último email cargado
+// (date,uid). Evita huecos por mutaciones y no degrada con offset profundo (review B+D).
 const PAGE_LIMIT = 20;
-const folderPage = ref(1);
 const hasMore = ref(false);
 const loadingMore = ref(false);
+let pageCursor: { date: string; uid: number } | null = null; // último email de la última página
 
 const selected = ref<Email | null>(null);
 const body = ref<EmailBody | null>(null);
@@ -326,14 +327,14 @@ async function selectFolder(folderId: string) {
   // selectLabel). Así un sync (que llama selectFolder) preserva el filtro, y el filtro se aplica
   // server-side en el fetch (review B+D: client-side sólo veía la página cargada).
   loading.value = true;
+  loadingMore.value = false; // una carga nueva cancela cualquier "cargar más" pegado (review B+D)
   error.value = ''; // limpia un error previo al iniciar la carga (review D)
-  folderPage.value = 1;
   hasMore.value = false;
+  pageCursor = null;
   const token = ++loadToken;
   const gen = removalGen; // generación de remociones al arrancar (para descartar revivals stale)
   try {
     const params = {
-      page: 1,
       limit: PAGE_LIMIT,
       ...(listFilter.value !== 'all' ? { filter: listFilter.value } : {}),
     };
@@ -345,6 +346,7 @@ async function selectFolder(folderId: string) {
     // Excluye los removidos DESPUÉS de arrancar este GET (snapshot stale → no revivir) — review B.
     emails.value = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen);
     hasMore.value = data.pagination.hasMore;
+    advanceCursor(data.data); // cursor = último email crudo de la página (para "cargar más")
   } catch {
     if (token === loadToken) error.value = t('errors.emails');
   } finally {
@@ -352,21 +354,36 @@ async function selectFolder(folderId: string) {
   }
 }
 
-/** "Cargar más": trae la siguiente página de la carpeta actual y la ACUMULA. No bumpea loadToken
- *  (continúa el contexto de carga actual); si se navega/cambia filtro mientras tanto, el token nuevo
- *  hace que esta respuesta se descarte. Dedup + gen-filter para no revivir ni duplicar (review B). */
+/** Cursor keyset = (date,uid) del ÚLTIMO email CRUDO de la página (no del filtrado), para que la
+ *  siguiente página continúe desde ahí aunque el gen-filter haya ocultado algunos. */
+function advanceCursor(rawPage: Email[]) {
+  if (rawPage.length === 0) return; // página vacía → conserva el cursor anterior
+  const last = rawPage[rawPage.length - 1];
+  pageCursor = { date: last.date, uid: last.uid };
+}
+
+/** "Cargar más": trae la página siguiente (keyset, anterior al cursor) y la ACUMULA. No bumpea
+ *  loadToken (continúa el contexto actual); si se navega/cambia filtro, el token nuevo descarta esta
+ *  respuesta. Dedup + gen-filter para no revivir ni duplicar (review B). */
 async function loadMore() {
   const folderId = selectedFolderId.value;
-  if (!folderId || loadingMore.value || !hasMore.value || virtualView.value || inSearch.value)
+  if (
+    !folderId ||
+    loadingMore.value ||
+    !hasMore.value ||
+    !pageCursor ||
+    virtualView.value ||
+    inSearch.value
+  )
     return;
-  const nextPage = folderPage.value + 1;
   loadingMore.value = true;
   const token = loadToken;
   const gen = removalGen;
   try {
     const params = {
-      page: nextPage,
       limit: PAGE_LIMIT,
+      beforeDate: pageCursor.date,
+      beforeUid: pageCursor.uid,
       ...(listFilter.value !== 'all' ? { filter: listFilter.value } : {}),
     };
     const { data } = await api.get<Paginated<Email>>(
@@ -377,8 +394,8 @@ async function loadMore() {
     const seen = new Set(emails.value.map((e) => e.id));
     const fresh = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen && !seen.has(e.id));
     emails.value = [...emails.value, ...fresh];
-    folderPage.value = nextPage;
     hasMore.value = data.pagination.hasMore;
+    advanceCursor(data.data);
   } catch {
     if (token === loadToken) error.value = t('errors.emails');
   } finally {
@@ -395,6 +412,8 @@ async function selectStandard(item: StdItem) {
   selectedKey.value = item.key;
   selected.value = null;
   listFilter.value = 'all'; // el filtro de lista no persiste entre carpetas
+  hasMore.value = false; // las vistas virtuales (Pospuestos/Destacados) no paginan
+  loadingMore.value = false;
   if (item.virtual) {
     virtualView.value = item.virtual;
     selectedFolderId.value = null;

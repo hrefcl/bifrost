@@ -186,11 +186,11 @@ describe('authz multi-tenant (F3.1)', () => {
     expect(res.statusCode).toBe(400);
   });
 
-  it('GET folders/:fid/emails con paginación inválida → 400 (no skip(NaN)/500)', async () => {
+  it('GET folders/:fid/emails con paginación inválida → 400 (limit no numérico, no 500)', async () => {
     const { a, folderA } = await fixtures();
     const res = await app.inject({
       method: 'GET',
-      url: `/api/accounts/${a.account._id.toString()}/folders/${folderA._id.toString()}/emails?page=nan&limit=20`,
+      url: `/api/accounts/${a.account._id.toString()}/folders/${folderA._id.toString()}/emails?limit=nan`,
       headers: authHeaders(app, a.user._id.toString()),
     });
     expect(res.statusCode).toBe(400);

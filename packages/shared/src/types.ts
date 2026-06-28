@@ -308,7 +308,8 @@ export interface RefreshResponse {
 export interface Paginated<T> {
   data: T[];
   pagination: {
-    page: number;
+    /** Sólo en paginación por offset; ausente en cursor/keyset. */
+    page?: number;
     limit: number;
     total: number;
     hasMore: boolean;
