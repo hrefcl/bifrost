@@ -52,7 +52,11 @@ function isActive(name: string) {
       </div>
 
       <div class="search-area">
-        <form class="search" :class="{ focused: searchFocused }" @submit.prevent>
+        <form
+          class="search"
+          :class="{ focused: searchFocused }"
+          @submit.prevent="ui.submitSearch()"
+        >
           <AppIcon name="search" :size="19" class="search-icon" />
           <input
             ref="searchInput"

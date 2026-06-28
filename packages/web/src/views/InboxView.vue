@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
@@ -76,14 +76,21 @@ function stdCount(item: StdItem): number {
 // Etiquetas = carpetas IMAP sin specialUse (las "labels" de Gmail).
 const labelFolders = computed(() => folders.value.filter((f) => !f.specialUse));
 
-const isInbox = computed(() => selectedKey.value === 'inbox');
+// ---- Búsqueda server-side global (estilo Gmail; Enter en la barra) ----
+const searchResults = ref<Email[] | null>(null);
+const searchActiveQuery = ref('');
+const searching = ref(false);
+const inSearch = computed(() => searchResults.value !== null);
+
+const isInbox = computed(() => selectedKey.value === 'inbox' && !inSearch.value);
 const currentTitle = computed(() => {
+  if (inSearch.value) return t('list.searchResultsFor', { q: searchActiveQuery.value });
   const std = STANDARD.find((s) => s.key === selectedKey.value);
   if (std) return t(STD_LABEL[std.key]);
   return labelFolders.value.find((f) => f.id === selectedKey.value)?.displayName ?? '';
 });
 
-// Búsqueda + vistas virtuales (Destacados = flagged; Pospuestos = vacío hasta backend de snooze).
+// Filtro en cliente de la carpeta actual (mientras se tipea) + vistas virtuales.
 const filteredEmails = computed(() => {
   if (virtualView.value === 'snoozed') return [];
   let list = emails.value;
@@ -98,9 +105,47 @@ const filteredEmails = computed(() => {
         (e.preview ?? '').toLowerCase().includes(q)
     );
   }
-  if (isInbox.value && category.value !== 'primary') return [];
+  if (selectedKey.value === 'inbox' && category.value !== 'primary') return [];
   return list;
 });
+
+// Lo que se muestra: resultados globales de búsqueda (si hay) o los de la carpeta.
+const displayedEmails = computed(() =>
+  inSearch.value ? (searchResults.value ?? []) : filteredEmails.value
+);
+
+async function runSearch(q: string) {
+  searching.value = true;
+  selected.value = null;
+  searchActiveQuery.value = q;
+  try {
+    const { data } = await api.get<{ data: Email[] }>('/emails/search', { params: { q } });
+    searchResults.value = data.data;
+  } catch {
+    searchResults.value = [];
+  } finally {
+    searching.value = false;
+  }
+}
+function exitSearch() {
+  searchResults.value = null;
+  searchActiveQuery.value = '';
+}
+// Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
+watch(
+  () => ui.searchSubmitNonce,
+  () => {
+    const q = ui.searchQuery.trim();
+    if (q) void runSearch(q);
+    else exitSearch();
+  }
+);
+watch(
+  () => ui.searchQuery,
+  (v) => {
+    if (!v.trim() && inSearch.value) exitSearch();
+  }
+);
 
 // ---- Almacenamiento (barra del sidebar; usedBytes REAL = bytes de adjuntos del usuario) ----
 const storage = ref<{ usedBytes: number; limitBytes: number } | null>(null);
@@ -185,6 +230,10 @@ async function selectFolder(folderId: string) {
 
 /** Selecciona un ítem estándar del sidebar: carpeta real o vista virtual (Destacados/Pospuestos). */
 async function selectStandard(item: StdItem) {
+  if (inSearch.value) {
+    ui.searchQuery = '';
+    exitSearch();
+  }
   selectedKey.value = item.key;
   selected.value = null;
   if (item.virtual) {
@@ -210,6 +259,10 @@ async function selectStandard(item: StdItem) {
 
 /** Selecciona una etiqueta (carpeta IMAP sin specialUse). */
 async function selectLabel(f: Folder) {
+  if (inSearch.value) {
+    ui.searchQuery = '';
+    exitSearch();
+  }
   selectedKey.value = f.id;
   virtualView.value = null;
   await selectFolder(f.id);
@@ -405,7 +458,7 @@ onBeforeUnmount(() => {
       <section class="list-pane" :class="{ narrow: selected }">
         <div class="list-head">
           <h2 class="list-title">{{ currentTitle }}</h2>
-          <span class="list-count">{{ t('common.conversations', filteredEmails.length) }}</span>
+          <span class="list-count">{{ t('common.conversations', displayedEmails.length) }}</span>
           <div class="list-actions">
             <button
               class="icon-btn"
@@ -441,13 +494,13 @@ onBeforeUnmount(() => {
 
         <div class="rows">
           <p v-if="error" class="msg error">{{ error }}</p>
-          <p v-else-if="loading" class="msg">{{ t('common.loading') }}</p>
-          <div v-else-if="filteredEmails.length === 0" class="empty">
+          <p v-else-if="loading || searching" class="msg">{{ t('common.loading') }}</p>
+          <div v-else-if="displayedEmails.length === 0" class="empty">
             <AppIcon name="inbox" :size="48" :stroke-width="1.3" />
             <div>{{ t('list.empty') }}</div>
           </div>
           <div
-            v-for="email in filteredEmails"
+            v-for="email in displayedEmails"
             v-else
             :key="email.id"
             class="row"

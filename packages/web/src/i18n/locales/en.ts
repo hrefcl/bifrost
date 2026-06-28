@@ -139,6 +139,7 @@ export default {
     sync: 'Sync',
     filter: 'Filter',
     empty: 'Nothing here',
+    searchResultsFor: 'Results for “{q}”',
     selectPrompt: 'Select a conversation',
     selectHint: 'Pick a message from the list to read it here.',
     categories: {

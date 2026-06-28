@@ -139,6 +139,7 @@ export default {
     sync: 'Sincronizar',
     filter: 'Filtrar',
     empty: 'No hay nada por aquí',
+    searchResultsFor: 'Resultados de «{q}»',
     selectPrompt: 'Selecciona una conversación',
     selectHint: 'Elige un mensaje de la lista para leerlo aquí.',
     categories: {

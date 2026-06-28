@@ -12,6 +12,8 @@ export const useUiStore = defineStore('ui', () => {
   const sidebarCollapsed = ref(false);
   // Nonce para pedir foco en la barra de búsqueda desde otro componente (atajo "/").
   const searchFocusNonce = ref(0);
+  // Nonce para disparar la búsqueda server-side (Enter en la barra). El Inbox lo observa.
+  const searchSubmitNonce = ref(0);
 
   function toggleSidebar(): void {
     sidebarCollapsed.value = !sidebarCollapsed.value;
@@ -19,6 +21,17 @@ export const useUiStore = defineStore('ui', () => {
   function focusSearch(): void {
     searchFocusNonce.value++;
   }
+  function submitSearch(): void {
+    searchSubmitNonce.value++;
+  }
 
-  return { searchQuery, sidebarCollapsed, searchFocusNonce, toggleSidebar, focusSearch };
+  return {
+    searchQuery,
+    sidebarCollapsed,
+    searchFocusNonce,
+    searchSubmitNonce,
+    toggleSidebar,
+    focusSearch,
+    submitSearch,
+  };
 });

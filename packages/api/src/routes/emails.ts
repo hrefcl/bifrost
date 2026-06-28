@@ -11,6 +11,7 @@ import {
 import { requireOwnedEmail, OwnershipError } from '../lib/authz.js';
 import { Folder } from '../models/Folder.js';
 import { Email } from '../models/Email.js';
+import { Account } from '../models/Account.js';
 import { redis } from '../config/redis.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
 import type { Email as EmailDto, EmailBody } from '@webmail6/shared';
@@ -81,7 +82,31 @@ function contentDisposition(filename: string): string {
   return `attachment; filename="${ascii}"; filename*=UTF-8''${rfc5987(filename)}`;
 }
 
+/** Escapa metacaracteres de regex: la query del usuario se usa como patrón (anti ReDoS/inyección). */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export default function emailRoutes(fastify: FastifyInstance) {
+  // Búsqueda global estilo Gmail: matchea en asunto/remitente/preview en TODAS las carpetas del
+  // usuario (owner-bound: sólo sus cuentas). Regex escapado + cap de 50 resultados.
+  const searchSchema = z.object({ q: z.string().trim().min(1).max(200) });
+  fastify.get('/search', async (request) => {
+    const parsed = searchSchema.safeParse(request.query);
+    if (!parsed.success) return { data: [] };
+    const accounts = await Account.find({ userId: request.user.userId }).select('_id');
+    const accountIds = accounts.map((a) => a._id);
+    if (accountIds.length === 0) return { data: [] };
+    const rx = new RegExp(escapeRegex(parsed.data.q), 'i');
+    const emails = await Email.find({
+      accountId: { $in: accountIds },
+      $or: [{ subject: rx }, { 'from.address': rx }, { 'from.name': rx }, { preview: rx }],
+    })
+      .sort({ date: -1 })
+      .limit(50);
+    return { data: emails.map(serializeEmail) };
+  });
+
   fastify.get('/:emailId', async (request) => {
     const { emailId } = request.params as { emailId: string };
     objectIdSchema.parse(emailId);

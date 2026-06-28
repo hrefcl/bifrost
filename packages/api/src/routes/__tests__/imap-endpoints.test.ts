@@ -356,4 +356,37 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     const empty = await app.inject({ method: 'PATCH', url, headers, payload: {} });
     expect(empty.statusCode).toBe(400);
   });
+
+  it('GET /api/emails/search — matchea asunto (owner-bound, regex escapado)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'srch@test.com' });
+    const folder = await seedFolder(account._id);
+    await seedEmail(account._id, folder._id, { uid: 40, subject: 'Factura de junio' });
+    await seedEmail(account._id, folder._id, { uid: 41, subject: 'Reunión de equipo' });
+    const headers = authHeaders(app, user._id.toString());
+
+    const res = await app.inject({ method: 'GET', url: '/api/emails/search?q=factura', headers });
+    expect(res.statusCode).toBe(200);
+    const got = (JSON.parse(res.body) as { data: { subject: string }[] }).data.map(
+      (e) => e.subject
+    );
+    expect(got).toContain('Factura de junio');
+    expect(got).not.toContain('Reunión de equipo');
+
+    // Regex ESCAPADO: '.*' se busca literal (no matchea todo).
+    const star = await app.inject({
+      method: 'GET',
+      url: `/api/emails/search?q=${encodeURIComponent('.*')}`,
+      headers,
+    });
+    expect((JSON.parse(star.body) as { data: unknown[] }).data).toHaveLength(0);
+
+    // Owner-bound: otro usuario no ve estos emails.
+    const { user: other } = await seedUserWithAccount({ email: 'srch-other@test.com' });
+    const cross = await app.inject({
+      method: 'GET',
+      url: '/api/emails/search?q=factura',
+      headers: authHeaders(app, other._id.toString()),
+    });
+    expect((JSON.parse(cross.body) as { data: unknown[] }).data).toHaveLength(0);
+  });
 });

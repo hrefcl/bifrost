@@ -399,6 +399,25 @@ test('archivar: mover un email a Archivo lo saca de Recibidos (POST /move real)'
   await expect(page.getByText('Your June invoice')).toHaveCount(0);
 });
 
+test('búsqueda: Enter en la barra hace búsqueda server-side global', async ({ page }) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+
+  // Buscar 'Welcome' (está en INBOX) — Enter dispara GET /emails/search.
+  const searchResp = page.waitForResponse(
+    (r) => r.url().includes('/api/emails/search') && r.status() === 200
+  );
+  await page.fill('input[placeholder="Search mail"]', 'Welcome');
+  await page.locator('input[placeholder="Search mail"]').press('Enter');
+  await searchResp;
+
+  // La cabecera pasa a "Results for ..." y el email aparece en los resultados.
+  await expect(page.getByRole('heading', { name: /Results for/ })).toBeVisible({ timeout: 15_000 });
+  await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible();
+});
+
 // Tests de administración al FINAL: no dependen del sync de buzón, así que se ejecutan tras
 // los flujos sync-sensibles para no alterar su timing (el server E2E es compartido).
 test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local', async ({
