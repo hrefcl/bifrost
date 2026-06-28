@@ -493,6 +493,13 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
       payload: { until },
     });
     expect([403, 404]).toContain(cross2.statusCode);
+    // owner-bound también en unsnooze: otro usuario no puede des-posponer mi email.
+    const crossUns = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/unsnooze`,
+      headers: otherHeaders,
+    });
+    expect([403, 404]).toContain(crossUns.statusCode);
     const otherSnoozed = await app.inject({
       method: 'GET',
       url: '/api/emails/snoozed',

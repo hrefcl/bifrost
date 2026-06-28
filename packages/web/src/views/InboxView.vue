@@ -121,6 +121,9 @@ let searchToken = 0;
 // email que se quitó mientras estaba pendiente (race real de UI — review B). Filtramos la
 // respuesta contra este set para que nunca reviva un elemento ya removido.
 const removedIds = new Set<string>();
+// Acciones mutadoras en vuelo por email-id: evita que un doble-click dispare la acción dos veces
+// (p.ej. dos POST /unsnooze que sumarían +2 al badge, o dos delete/move). Review B+D.
+const actionInFlight = new Set<string>();
 async function runSearch(q: string) {
   const token = ++searchToken;
   removedIds.clear();
@@ -384,6 +387,8 @@ async function deleteEmail(email: Email | null, ev?: Event) {
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
+  if (actionInFlight.has(id)) return;
+  actionInFlight.add(id);
   const wasInBadge = contributesToBadge(email);
   const fid = email.folderId;
   try {
@@ -392,6 +397,8 @@ async function deleteEmail(email: Email | null, ev?: Event) {
     if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído borrado deja de contar.
   } catch {
     error.value = t('errors.delete');
+  } finally {
+    actionInFlight.delete(id);
   }
 }
 
@@ -400,6 +407,8 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
+  if (actionInFlight.has(id)) return;
+  actionInFlight.add(id);
   const wasInBadge = contributesToBadge(email);
   const fid = email.folderId;
   try {
@@ -408,6 +417,8 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
     if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído movido sale de su carpeta origen.
   } catch {
     error.value = t('errors.move');
+  } finally {
+    actionInFlight.delete(id);
   }
 }
 function archive(email: Email | null, ev?: Event) {
@@ -458,15 +469,20 @@ async function doSnooze(until: Date) {
   }
   showSnooze.value = false;
   snoozeTarget.value = null;
+  const id = email.id;
+  if (actionInFlight.has(id)) return; // anti doble-submit.
+  actionInFlight.add(id);
   // Sólo baja el badge si el email contribuía al conteo visible (no-leído y NO ya pospuesto):
   // re-posponer uno ya pospuesto no debe restar de nuevo (review B).
   const wasInBadge = contributesToBadge(email);
   try {
-    await api.post(`/emails/${email.id}/snooze`, { until: until.toISOString() });
-    removeFromLists(email.id);
+    await api.post(`/emails/${id}/snooze`, { until: until.toISOString() });
+    removeFromLists(id);
     if (wasInBadge) adjustFolderUnread(email.folderId, -1);
   } catch {
     error.value = t('errors.snooze');
+  } finally {
+    actionInFlight.delete(id);
   }
 }
 /** Recuperar (unsnooze, estilo Gmail): saca el email de Pospuestos y lo devuelve a su carpeta YA. */
@@ -474,15 +490,20 @@ async function doUnsnooze(email: Email | null, ev?: Event) {
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
-  // Al volver a la carpeta, un no-leído vuelve a contar en el badge (estaba excluido por snooze).
-  const wasUnread = !email.flags.seen;
+  if (actionInFlight.has(id)) return; // anti doble-click (no inflar el badge).
+  actionInFlight.add(id);
+  // Sólo suma al badge si el email REALMENTE estaba excluido por snooze (no-leído Y pospuesto-ahora):
+  // si el snooze ya venció en el cliente, el backend ya lo contaba → no sumar de nuevo (review B+D).
+  const wasExcludedFromBadge = !email.flags.seen && isSnoozedNow(email);
   const fid = email.folderId;
   try {
     await api.post(`/emails/${id}/unsnooze`);
     removeFromLists(id); // sale de la lista de Pospuestos
-    if (wasUnread) adjustFolderUnread(fid, 1);
+    if (wasExcludedFromBadge) adjustFolderUnread(fid, 1);
   } catch {
     error.value = t('errors.unsnooze');
+  } finally {
+    actionInFlight.delete(id);
   }
 }
 
@@ -665,12 +686,12 @@ onBeforeUnmount(() => {
             <AppIcon v-if="email.hasAttachments" name="paperclip" :size="15" class="row-clip" />
             <div class="row-end">
               <button
-                v-if="virtualView === 'snoozed'"
+                v-if="isSnoozedNow(email)"
                 class="icon-btn row-hover"
                 :title="t('thread.unsnooze')"
                 @click="doUnsnooze(email, $event)"
               >
-                <AppIcon name="clock" :size="17" />
+                <AppIcon name="clock" :size="17" :fill="'var(--accent)'" />
               </button>
               <button
                 class="icon-btn row-hover"
