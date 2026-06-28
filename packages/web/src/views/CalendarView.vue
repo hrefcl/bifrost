@@ -297,6 +297,7 @@ onMounted(async () => {
         <input
           v-model="createForm.summary"
           type="text"
+          maxlength="1024"
           :placeholder="t('calendar.eventTitle')"
           class="field"
         />
