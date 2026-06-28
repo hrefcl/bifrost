@@ -34,7 +34,14 @@ export function buildStackTemplate(): Record<string, unknown> {
     Parameters: {
       DomainName: { Type: 'String', Description: 'Dominio de correo (ej. empresa.com)' },
       InstanceType: { Type: 'String', Default: 't3.large' },
-      ImageId: { Type: 'AWS::EC2::Image::Id', Description: 'AMI Ubuntu (resuelto por SSM)' },
+      // CloudFormation resuelve el AMI Ubuntu más reciente EN EL DEPLOY desde el parámetro público de
+      // Canonical (por región). Así el modo SIN-CLAVES no necesita resolver el AMI (no hay llamada AWS)
+      // y siempre se usa la imagen parcheada al día. El CLI no necesita pasar ImageId.
+      ImageId: {
+        Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>',
+        Default:
+          '/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id',
+      },
       KeyName: { Type: 'AWS::EC2::KeyPair::KeyName' },
       EbsSizeGiB: { Type: 'Number', Default: 40, MinValue: 20 },
       // Vacío = crear VPC nueva; con valor = usar la VPC/subnet existentes elegidas.

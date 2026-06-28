@@ -78,11 +78,15 @@ export async function getStackStatus(
   }
 }
 
-/** Outputs del stack (PublicIp, InstanceId, VpcId) cuando terminó. */
+/**
+ * Outputs del stack (PublicIp, InstanceId, VpcId) cuando terminó. El tipo de acceso es
+ * `string | undefined` a propósito: una key puede no estar presente (output condicional, stack a
+ * medias) y el caller debe contemplarlo.
+ */
 export async function getStackOutputs(
   cfn: CloudFormationClient,
   stackName: string
-): Promise<Record<string, string>> {
+): Promise<Record<string, string | undefined>> {
   const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
   const out: Record<string, string> = {};
   for (const o of res.Stacks?.[0]?.Outputs ?? []) {
