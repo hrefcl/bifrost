@@ -8,10 +8,13 @@ import {
   DescribeSecurityGroupsCommand,
   CreateSecurityGroupCommand,
   AuthorizeSecurityGroupIngressCommand,
+  AllocateAddressCommand,
+  RunInstancesCommand,
+  AssociateAddressCommand,
 } from '@aws-sdk/client-ec2';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
-import { provisionComputeIdentity } from '../steps/provision-compute.js';
-import { emptyState } from '../state.js';
+import { provisionComputeIdentity, provisionInstance } from '../steps/provision-compute.js';
+import { emptyState, addResource } from '../state.js';
 
 const ec2 = mockClient(EC2Client);
 const ssm = mockClient(SSMClient);
@@ -77,5 +80,72 @@ describe('provisionComputeIdentity', () => {
     expect(ec2.commandCalls(ImportKeyPairCommand)).toHaveLength(1);
     expect(ec2.commandCalls(CreateKeyPairCommand)).toHaveLength(0);
     expect(r.privateKeyPem).toBeNull();
+  });
+});
+
+const instInput = {
+  domain: 'acme.com',
+  instanceType: 't3.large',
+  amiId: 'ami-123',
+  keyName: 'bifrost',
+  securityGroupId: 'sg-1',
+  ebsGiB: 40,
+  userData: '#!/bin/bash\necho hi',
+};
+
+describe('provisionInstance', () => {
+  it('fresh: asigna EIP, lanza instancia (user-data base64, gp3 cifrado), asocia y registra', async () => {
+    ec2.on(AllocateAddressCommand).resolves({ AllocationId: 'eipalloc-1', PublicIp: '1.2.3.4' });
+    ec2.on(RunInstancesCommand).resolves({ Instances: [{ InstanceId: 'i-abc' }] });
+    ec2.on(AssociateAddressCommand).resolves({});
+
+    const r = await provisionInstance(
+      clients().ec2,
+      instInput,
+      emptyState('us-east-1', 'acme.com')
+    );
+
+    expect(r.instanceId).toBe('i-abc');
+    expect(r.allocationId).toBe('eipalloc-1');
+    expect(r.publicIp).toBe('1.2.3.4');
+    expect(r.state.resources.map((x) => x.kind)).toEqual(['elastic-ip', 'ec2-instance']);
+    // user-data va en base64.
+    const runCall = ec2.commandCalls(RunInstancesCommand)[0]?.args[0].input;
+    const decoded = Buffer.from(String(runCall?.UserData), 'base64').toString('utf8');
+    expect(decoded).toContain('#!/bin/bash');
+    expect(runCall?.BlockDeviceMappings?.[0]?.Ebs?.VolumeType).toBe('gp3');
+    expect(runCall?.BlockDeviceMappings?.[0]?.Ebs?.Encrypted).toBe(true);
+    expect(ec2.commandCalls(AssociateAddressCommand)).toHaveLength(1);
+  });
+
+  it('idempotente: instancia + EIP ya en el state → NO gasta (cero allocate/run)', async () => {
+    let s = emptyState('us-east-1', 'acme.com');
+    s = addResource(s, { kind: 'elastic-ip', id: 'eipalloc-1', meta: { publicIp: '1.2.3.4' } });
+    s = addResource(s, { kind: 'ec2-instance', id: 'i-existing' });
+
+    const r = await provisionInstance(clients().ec2, instInput, s);
+
+    expect(r.instanceId).toBe('i-existing');
+    expect(r.publicIp).toBe('1.2.3.4');
+    expect(ec2.commandCalls(AllocateAddressCommand)).toHaveLength(0);
+    expect(ec2.commandCalls(RunInstancesCommand)).toHaveLength(0);
+  });
+
+  it('resumible: EIP asignada pero sin instancia → reusa EIP (no re-asigna) y lanza la instancia', async () => {
+    let s = emptyState('us-east-1', 'acme.com');
+    s = addResource(s, { kind: 'elastic-ip', id: 'eipalloc-9', meta: { publicIp: '9.9.9.9' } });
+    ec2.on(RunInstancesCommand).resolves({ Instances: [{ InstanceId: 'i-new' }] });
+    ec2.on(AssociateAddressCommand).resolves({});
+
+    const r = await provisionInstance(clients().ec2, instInput, s);
+
+    expect(ec2.commandCalls(AllocateAddressCommand)).toHaveLength(0); // reusa la EIP
+    expect(r.allocationId).toBe('eipalloc-9');
+    expect(r.instanceId).toBe('i-new');
+    // asocia la EIP reusada a la instancia nueva.
+    expect(ec2.commandCalls(AssociateAddressCommand)[0]?.args[0].input).toMatchObject({
+      AllocationId: 'eipalloc-9',
+      InstanceId: 'i-new',
+    });
   });
 });

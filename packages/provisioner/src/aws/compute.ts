@@ -6,6 +6,10 @@ import {
   DescribeSecurityGroupsCommand,
   CreateSecurityGroupCommand,
   AuthorizeSecurityGroupIngressCommand,
+  AllocateAddressCommand,
+  AssociateAddressCommand,
+  RunInstancesCommand,
+  type RunInstancesCommandInput,
 } from '@aws-sdk/client-ec2';
 import { tagSpec } from '../tags.js';
 
@@ -93,4 +97,76 @@ export async function ensureSecurityGroup(
     })
   );
   return groupId;
+}
+
+export interface ElasticIp {
+  allocationId: string;
+  publicIp: string;
+}
+
+/** Asigna una Elastic IP (IP pública estable para MX/PTR). */
+export async function allocateElasticIp(ec2: EC2Client, domain: string): Promise<ElasticIp> {
+  const res = await ec2.send(
+    new AllocateAddressCommand({
+      Domain: 'vpc',
+      TagSpecifications: [tagSpec('elastic-ip', domain)],
+    })
+  );
+  if (!res.AllocationId || !res.PublicIp)
+    throw new Error('AllocateAddress devolvió datos incompletos');
+  return { allocationId: res.AllocationId, publicIp: res.PublicIp };
+}
+
+export interface RunInstanceOpts {
+  amiId: string;
+  instanceType: string;
+  keyName: string;
+  securityGroupId: string;
+  ebsGiB: number;
+  /** Script cloud-init (texto plano; se codifica base64 acá). */
+  userData: string;
+  domain: string;
+}
+
+/**
+ * Lanza UNA instancia EC2 con el AMI/tipo dados, EBS gp3 CIFRADO (clave EBS por defecto si no se pasa
+ * CMK) y el user-data (cloud-init) en base64. Devuelve el instanceId.
+ */
+export async function runInstance(ec2: EC2Client, opts: RunInstanceOpts): Promise<string> {
+  const input: RunInstancesCommandInput = {
+    ImageId: opts.amiId,
+    InstanceType: opts.instanceType as RunInstancesCommandInput['InstanceType'],
+    KeyName: opts.keyName,
+    SecurityGroupIds: [opts.securityGroupId],
+    MinCount: 1,
+    MaxCount: 1,
+    BlockDeviceMappings: [
+      {
+        DeviceName: '/dev/sda1', // raíz en las AMIs de Ubuntu
+        Ebs: {
+          VolumeSize: opts.ebsGiB,
+          VolumeType: 'gp3',
+          DeleteOnTermination: true,
+          Encrypted: true,
+        },
+      },
+    ],
+    UserData: Buffer.from(opts.userData, 'utf8').toString('base64'),
+    TagSpecifications: [tagSpec('instance', opts.domain)],
+  };
+  const res = await ec2.send(new RunInstancesCommand(input));
+  const id = res.Instances?.[0]?.InstanceId;
+  if (!id) throw new Error('RunInstances no devolvió InstanceId');
+  return id;
+}
+
+/** Asocia la Elastic IP a la instancia (IP pública fija). */
+export async function associateAddress(
+  ec2: EC2Client,
+  allocationId: string,
+  instanceId: string
+): Promise<void> {
+  await ec2.send(
+    new AssociateAddressCommand({ AllocationId: allocationId, InstanceId: instanceId })
+  );
 }

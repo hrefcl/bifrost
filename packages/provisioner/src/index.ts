@@ -35,7 +35,10 @@ export { buildUserData, type UserDataInput } from './mailserver/user-data.js';
 export { projectTags, tagSpec, PROJECT, MANAGED_BY } from './tags.js';
 export {
   provisionComputeIdentity,
+  provisionInstance,
   type ComputeClients,
   type ComputeInput,
   type ComputeResult,
+  type InstanceInput,
+  type InstanceResult,
 } from './steps/provision-compute.js';
