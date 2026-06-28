@@ -112,8 +112,15 @@ export default function emailRoutes(fastify: FastifyInstance) {
           .limit(50)
       )
     );
-    // Fusión global por relevancia (textScore desc, luego fecha desc) y cap 50. El textScore es
-    // comparable entre cuentas (mismo término/pesos del índice), así que ordenar el conjunto basta.
+    // Fusión global por relevancia (textScore desc, luego fecha desc) y cap 50.
+    //
+    // Sobre la comparabilidad del textScore entre cuentas (objeción D): el textScore de MongoDB es
+    // Σ(frecuencia_del_término × peso_del_campo) del DOCUMENTO; NO aplica IDF ni normalización a
+    // nivel de colección/resultado. Como aquí TODAS las sub-queries usan el MISMO término y los
+    // MISMOS pesos del índice, el score de un documento depende sólo del documento y es directamente
+    // comparable entre cuentas (la advertencia de la doc aplica a queries/términos DISTINTOS).
+    // Además el cap es correcto globalmente: un documento del top-50 global está necesariamente en
+    // el top-50 de su propia cuenta, así que pedir 50 por cuenta y recortar a 50 no pierde resultados.
     const merged = perAccount
       .flat()
       .sort((a, b) => {

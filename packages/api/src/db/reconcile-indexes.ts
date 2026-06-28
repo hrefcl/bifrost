@@ -28,16 +28,31 @@ export async function reconcileEmailTextIndex(): Promise<void> {
   const existing = indexes.find((i) => i.name === EMAIL_TEXT_INDEX.name);
   if (!existing) return; // fresh: no hay índice → autoIndex/createIndexes lo crea con la spec actual.
 
-  // ¿Coinciden los pesos con la spec canónica? Mongo expone los pesos del índice de texto en
-  // `weights`. Si difieren (p.ej. falta `from.name`), el índice está desactualizado.
+  // El índice está actualizado sólo si coinciden TANTO los pesos de los campos de texto COMO el
+  // prefijo no-texto (review B: comparar sólo `weights` dejaría pasar una deriva con mismos pesos
+  // pero distinto prefijo). Mongo expone los campos de texto en `weights` y el prefijo escalar en
+  // `key` (como `_fts: 'text', _ftsx: 1` + los campos de igualdad, p.ej. `accountId: 1`).
   const currentWeights = (existing.weights ?? {}) as Record<string, number>;
   const desiredWeights = EMAIL_TEXT_INDEX.weights as Record<string, number>;
-  const sameKeys =
+  const sameWeights =
     Object.keys(desiredWeights).length === Object.keys(currentWeights).length &&
     Object.entries(desiredWeights).every(([k, v]) => currentWeights[k] === v);
-  if (sameKeys) return; // ya está actualizado.
+
+  // Prefijo escalar = entradas numéricas de `key` (excluye el marcador interno `_fts`/`_ftsx`).
+  const scalarPrefix = (key: Record<string, unknown>) =>
+    Object.entries(key)
+      .filter(([k, v]) => typeof v === 'number' && k !== '_ftsx')
+      .map(([k, v]) => `${k}:${String(v)}`)
+      .sort()
+      .join(',');
+  const samePrefix = scalarPrefix(existing.key) === scalarPrefix(EMAIL_TEXT_INDEX.key);
+
+  if (sameWeights && samePrefix) return; // ya está actualizado.
 
   await coll.dropIndex(EMAIL_TEXT_INDEX.name);
+  // No se pasa `background: true`: la opción está deprecada e IGNORADA desde MongoDB 4.2 — todas
+  // las construcciones de índice usan ya el builder híbrido no-bloqueante (no toma el lock de
+  // escritura sobre la colección durante el build). Pasarla no cambiaría nada.
   await coll.createIndex(EMAIL_TEXT_INDEX.key, {
     name: EMAIL_TEXT_INDEX.name,
     weights: EMAIL_TEXT_INDEX.weights,
