@@ -187,4 +187,62 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
     expect(partialBad.statusCode).toBe(400);
     await app.close();
   });
+
+  // Campos description/location del modal: el backend ya los soportaba (schema + serializer); este
+  // test fija el round-trip crear → editar → limpiar, owner-bound implícito por userId.
+  it('persiste description y location en create y edit; permite limpiarlos', async () => {
+    const app = await buildTestApp();
+    const { user, account } = await seedUserWithAccount({ email: 'descloc@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/calendar',
+      headers,
+      payload: {
+        accountId: account._id.toString(),
+        calendarId: 'default',
+        calendarName: 'Personal',
+        uid: 'uid-descloc',
+        summary: 'Almuerzo',
+        description: 'Repasar el roadmap del Q3',
+        location: 'Café Central, Av. Siempreviva 742',
+        startDate: '2026-06-13T12:00:00.000Z',
+        endDate: '2026-06-13T13:00:00.000Z',
+      },
+    });
+    expect(create.statusCode).toBe(200);
+    const created = JSON.parse(create.body) as {
+      id: string;
+      description?: string;
+      location?: string;
+    };
+    expect(created.description).toBe('Repasar el roadmap del Q3');
+    expect(created.location).toBe('Café Central, Av. Siempreviva 742');
+
+    // Editar ambos.
+    const edited = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${created.id}`,
+      headers,
+      payload: { description: 'Cambió a planning anual', location: 'Sala 3' },
+    });
+    expect(edited.statusCode).toBe(200);
+    const after = JSON.parse(edited.body) as { description?: string; location?: string };
+    expect(after.description).toBe('Cambió a planning anual');
+    expect(after.location).toBe('Sala 3');
+
+    // Limpiar (string vacío) → quedan vacíos.
+    const cleared = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${created.id}`,
+      headers,
+      payload: { description: '', location: '' },
+    });
+    expect(cleared.statusCode).toBe(200);
+    const blank = JSON.parse(cleared.body) as { description?: string; location?: string };
+    expect(blank.description ?? '').toBe('');
+    expect(blank.location ?? '').toBe('');
+    await app.close();
+  });
 });

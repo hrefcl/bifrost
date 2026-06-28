@@ -32,7 +32,14 @@ const currentView = ref<'timeGridDay' | 'timeGridWeek' | 'dayGridMonth'>('timeGr
 // Modal de creación/edición (Crear, arrastrar para seleccionar un rango, o editar un evento).
 const showCreate = ref(false);
 const editingId = ref<string | null>(null); // null = crear; id = editar ese evento.
-const createForm = ref({ summary: '', startDate: '', endDate: '', allDay: false });
+const createForm = ref({
+  summary: '',
+  description: '',
+  location: '',
+  startDate: '',
+  endDate: '',
+  allDay: false,
+});
 const createError = ref('');
 
 // Modal de detalle (click en un evento).
@@ -77,6 +84,8 @@ function onSelect(arg: DateSelectArg): void {
   editingId.value = null;
   createForm.value = {
     summary: '',
+    description: '',
+    location: '',
     startDate: toLocalInput(arg.start),
     endDate: toLocalInput(arg.end),
     allDay: arg.allDay,
@@ -95,6 +104,8 @@ function openCreate(): void {
   const end = new Date(start.getTime() + 60 * 60 * 1000);
   createForm.value = {
     summary: '',
+    description: '',
+    location: '',
     startDate: toLocalInput(start),
     endDate: toLocalInput(end),
     allDay: false,
@@ -108,6 +119,8 @@ function openEdit(ev: CalendarEvent): void {
   editingId.value = ev.id;
   createForm.value = {
     summary: ev.summary,
+    description: ev.description ?? '',
+    location: ev.location ?? '',
     startDate: toLocalInput(new Date(ev.startDate)),
     endDate: toLocalInput(new Date(ev.endDate)),
     allDay: ev.allDay,
@@ -131,9 +144,12 @@ async function submitCreate(): Promise<void> {
   }
   try {
     if (editingId.value) {
-      // Editar: PATCH parcial (mismo endpoint owner-bound que usa el drag/resize).
+      // Editar: PATCH parcial (mismo endpoint owner-bound que usa el drag/resize). description y
+      // location se envían trim (''=limpiar).
       await store.updateEvent(editingId.value, {
         summary: createForm.value.summary,
+        description: createForm.value.description.trim(),
+        location: createForm.value.location.trim(),
         startDate: start.toISOString(),
         endDate: end.toISOString(),
         allDay: createForm.value.allDay,
@@ -145,6 +161,8 @@ async function submitCreate(): Promise<void> {
         calendarName: 'Personal',
         uid: `local-${crypto.randomUUID()}`,
         summary: createForm.value.summary,
+        description: createForm.value.description.trim(),
+        location: createForm.value.location.trim(),
         startDate: start.toISOString(),
         startTimezone: 'UTC',
         endDate: end.toISOString(),
@@ -295,6 +313,18 @@ onMounted(async () => {
         <label class="check"
           ><input v-model="createForm.allDay" type="checkbox" /> {{ t('calendar.allDay') }}</label
         >
+        <input
+          v-model="createForm.location"
+          type="text"
+          :placeholder="t('calendar.location')"
+          class="field"
+        />
+        <textarea
+          v-model="createForm.description"
+          :placeholder="t('calendar.description')"
+          class="field"
+          rows="3"
+        ></textarea>
         <p v-if="createError" class="err">{{ createError }}</p>
         <div class="modal-foot">
           <button class="create-btn" @click="submitCreate">{{ t('calendar.save') }}</button>
@@ -319,7 +349,11 @@ onMounted(async () => {
           <AppIcon name="clock" :size="15" />{{ fmtDetail(detail.startDate) }} –
           {{ fmtDetail(detail.endDate) }}
         </div>
+        <div v-if="detail.location" class="detail-row">
+          <AppIcon name="mapPin" :size="15" />{{ detail.location }}
+        </div>
         <div class="detail-row"><AppIcon name="tag" :size="15" />{{ detail.calendarName }}</div>
+        <p v-if="detail.description" class="detail-desc">{{ detail.description }}</p>
         <div class="modal-foot">
           <button class="create-btn" @click="openEdit(detail)">{{ t('calendar.edit') }}</button>
           <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
@@ -560,5 +594,15 @@ onMounted(async () => {
   font-size: 13.5px;
   color: var(--text-2);
   margin-bottom: 8px;
+}
+.detail-desc {
+  font-size: 13.5px;
+  color: var(--text-1);
+  white-space: pre-wrap;
+  margin: 4px 0 12px;
+}
+textarea.field {
+  resize: vertical;
+  min-height: 64px;
 }
 </style>

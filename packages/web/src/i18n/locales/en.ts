@@ -191,6 +191,8 @@ export default {
     today: 'Today',
     view: { timeGridDay: 'Day', timeGridWeek: 'Week', dayGridMonth: 'Month' },
     eventTitle: 'Event title',
+    location: 'Location',
+    description: 'Description',
     account: 'Account',
     start: 'Start',
     end: 'End',
