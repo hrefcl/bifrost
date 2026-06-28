@@ -3,7 +3,7 @@ import { input, confirm, number } from '@inquirer/prompts';
 import { makeClients } from './aws/clients.js';
 import { runPreflight } from './steps/preflight.js';
 import { ALLINONE_CATALOG } from './catalog/instance-types.js';
-import { estimateMonthlyCost } from './cost.js';
+import { buildPlan } from './plan.js';
 
 /**
  * F-E1 — Preflight interactivo (read-only). Reúne región/dominio/S3, valida contra AWS sin crear
@@ -61,17 +61,29 @@ async function main(): Promise<void> {
     );
   }
 
-  // Costo estimado: la métrica que prueba la tesis de la misión ($/buzón << $5–10 comerciales).
-  // Ilustra la palanca: CON S3 el bulk va barato a S3; SIN S3 el bulk infla el EBS (más caro).
-  const cost = estimateMonthlyCost({
+  // Plan (dry-run) + costo, vía buildPlan (unifica pasos y costo). En F-E1 NO se crea nada.
+  const plan = buildPlan({
+    region,
+    domain,
+    mailHostname: r.domain.valid ? r.domain.mailHostname : `mail.${domain}`,
+    useS3,
+    bucketName,
+    instanceType: rec.type,
     instanceMonthlyUsd: rec.approxMonthlyUsd,
+    // Ilustra la palanca: CON S3 el bulk va barato a S3; SIN S3 infla el EBS (más caro).
     ebsGiB: useS3 ? 40 : 40 + bulkGiB,
-    s3GiB: useS3 ? bulkGiB : 0,
-    dataTransferOutGiB: 50,
+    bulkGiB,
     mailboxes,
     createHostedZone: !r.domain.hostedZoneExists && r.domain.parentZone === null,
-    useKms: useS3,
+    encryptEbs: true,
   });
+  const cost = plan.cost;
+
+  console.log('\nPlan — recursos que se CREARÍAN (nada se crea en F-E1; "$" = factura):');
+  for (const s of plan.steps) {
+    console.log(`  ${s.billable ? '$' : ' '} ${s.title} — ${s.detail}`);
+  }
+
   const commercial = mailboxes * 7;
   console.log(`\nCosto estimado (aprox, us-east-1, ${String(mailboxes)} buzones):`);
   console.log(

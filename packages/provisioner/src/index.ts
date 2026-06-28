@@ -15,3 +15,19 @@ export {
 } from './catalog/instance-types.js';
 export { type AwsIdentity } from './aws/sts.js';
 export { estimateMonthlyCost, PRICING, type CostInput, type CostBreakdown } from './cost.js';
+export {
+  emptyState,
+  addResource,
+  removeResource,
+  hasResource,
+  serializeState,
+  parseState,
+  saveState,
+  loadState,
+  RESOURCE_ORDER,
+  type ProvisionState,
+  type ResourceRef,
+  type ResourceKind,
+} from './state.js';
+export { buildPlan, type PlanInput, type PlanStep, type ProvisionPlan } from './plan.js';
+export { teardownOrder, TEARDOWN_NOTES } from './teardown.js';
