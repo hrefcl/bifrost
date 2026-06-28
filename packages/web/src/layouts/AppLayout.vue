@@ -4,7 +4,7 @@ import { useRouter, useRoute } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
 import { useSettingsStore } from '@/stores/settings';
-import { useUiStore } from '@/stores/ui';
+import { useUiStore, type ListFilter } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
 import { SUPPORTED_LOCALES, LOCALE_NAMES, setLocale, type Locale } from '@/i18n';
 import AppLogo from '@/components/AppLogo.vue';
@@ -23,6 +23,22 @@ const { t, locale } = useI18n();
 const searchFocused = ref(false);
 const menuOpen = ref(false);
 const searchInput = ref<HTMLInputElement | null>(null);
+
+// Embudo de filtro del TopBar: aplica el filtro rápido de la lista (compartido con el Inbox vía
+// el store ui). Antes el botón no hacía nada.
+const filterMenuOpen = ref(false);
+const TOPNAV_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
+  { key: 'all', label: 'list.filterAll', icon: 'mail' },
+  { key: 'unread', label: 'list.filterUnread', icon: 'dot' },
+  { key: 'starred', label: 'list.filterStarred', icon: 'star' },
+  { key: 'attachments', label: 'list.filterAttachments', icon: 'paperclip' },
+];
+function pickFilter(f: ListFilter) {
+  ui.setListFilter(f);
+  filterMenuOpen.value = false;
+  // Si no estamos en el inbox, ir allí para que el filtro sea visible.
+  if (route.name !== 'inbox') void router.push({ name: 'inbox' });
+}
 
 // Atajo "/" (desde el Inbox): enfocar la barra de búsqueda.
 watch(
@@ -87,9 +103,32 @@ async function onLogout() {
           >
             <AppIcon name="x" :size="17" />
           </button>
-          <button type="button" class="icon-btn sm" :title="t('nav.advancedSearch')">
-            <AppIcon name="filter" :size="17" />
-          </button>
+          <div class="filter-wrap">
+            <button
+              type="button"
+              class="icon-btn sm"
+              :class="{ on: ui.listFilter !== 'all' }"
+              :title="t('nav.advancedSearch')"
+              @click.stop="filterMenuOpen = !filterMenuOpen"
+            >
+              <AppIcon name="filter" :size="17" />
+            </button>
+            <div v-if="filterMenuOpen" class="filter-backdrop" @click="filterMenuOpen = false" />
+            <div v-if="filterMenuOpen" class="filter-menu" @click.stop>
+              <button
+                v-for="f in TOPNAV_FILTERS"
+                :key="f.key"
+                type="button"
+                class="filter-item"
+                :class="{ sel: ui.listFilter === f.key }"
+                @click="pickFilter(f.key)"
+              >
+                <AppIcon :name="f.icon" :size="16" />
+                <span>{{ t(f.label) }}</span>
+                <AppIcon v-if="ui.listFilter === f.key" name="check" :size="15" class="fi-check" />
+              </button>
+            </div>
+          </div>
         </form>
       </div>
 
@@ -248,6 +287,57 @@ async function onLogout() {
   background: var(--hover);
 }
 .icon-btn.active {
+  color: var(--accent);
+}
+.icon-btn.on {
+  color: var(--accent);
+}
+.filter-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.filter-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+.filter-menu {
+  position: absolute;
+  top: 115%;
+  right: 0;
+  z-index: 60;
+  min-width: 190px;
+  padding: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+}
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: var(--text-1);
+  text-align: left;
+}
+.filter-item:hover {
+  background: var(--hover);
+}
+.filter-item.sel {
+  color: var(--accent);
+  font-weight: 600;
+}
+.fi-check {
+  margin-left: auto;
   color: var(--accent);
 }
 .avatar-menu {

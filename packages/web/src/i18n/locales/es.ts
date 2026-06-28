@@ -145,6 +145,8 @@ export default {
   },
   list: {
     sync: 'Sincronizar',
+    refresh: 'Actualizar',
+    markAllRead: 'Marcar todas como leídas',
     filter: 'Filtrar',
     filterAll: 'Todos',
     filterUnread: 'No leídos',
@@ -168,6 +170,7 @@ export default {
     unsnooze: 'Recuperar',
     moveTo: 'Mover a',
     print: 'Imprimir',
+    markUnread: 'Marcar como no leído',
     reply: 'Responder',
     replyAll: 'Responder a todos',
     forward: 'Reenviar',

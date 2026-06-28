@@ -33,7 +33,8 @@ const category = ref<'primary' | 'updates' | 'promotions'>('primary');
 
 // Filtro de la lista visible (estilo Gmail): todos / no leídos / destacados / con adjuntos.
 type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
-const listFilter = ref<ListFilter>('all');
+// El filtro vive en el store ui (compartido con el embudo del TopBar). Acá lo leemos reactivo.
+const listFilter = computed(() => ui.listFilter);
 const LIST_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
   { key: 'all', label: 'list.filterAll', icon: 'mail' },
   { key: 'unread', label: 'list.filterUnread', icon: 'dot' },
@@ -411,7 +412,7 @@ async function selectStandard(item: StdItem) {
   }
   selectedKey.value = item.key;
   selected.value = null;
-  listFilter.value = 'all'; // el filtro de lista no persiste entre carpetas
+  resetListFilter(); // el filtro de lista no persiste entre carpetas
   hasMore.value = false; // las vistas virtuales (Pospuestos/Destacados) no paginan
   loadingMore.value = false;
   if (item.virtual) {
@@ -462,7 +463,7 @@ async function selectLabel(f: Folder) {
   }
   selectedKey.value = f.id;
   virtualView.value = null;
-  listFilter.value = 'all'; // el filtro no persiste al cambiar de carpeta (reset antes del fetch)
+  resetListFilter(); // el filtro no persiste al cambiar de carpeta (reset antes del fetch)
   await selectFolder(f.id);
 }
 
@@ -584,13 +585,20 @@ function archive(email: Email | null, ev?: Event) {
 // no-destructivamente (el modelo IMAP-carpeta no soporta multi-etiqueta).
 const showLabelMenu = ref(false);
 const moveTargets = computed(() => {
+  // Destinos = TODAS las carpetas salvo la actual (antes sólo inbox/sin-specialUse → el botón
+  // quedaba casi siempre vacío/deshabilitado). Inbox y carpetas normales primero, especiales
+  // (Archivo/Spam/Papelera/Enviados) después, para un orden estilo Gmail "Mover a".
   const currentId = selected.value?.folderId;
-  return folders.value.filter(
-    (f) => (f.specialUse === 'inbox' || !f.specialUse) && f.id !== currentId
-  );
+  const order = (f: { specialUse?: string | null }) =>
+    f.specialUse === 'inbox' ? 0 : !f.specialUse ? 1 : 2;
+  return folders.value
+    .filter((f) => f.id !== currentId)
+    .slice()
+    .sort((a, b) => order(a) - order(b));
 });
 function toggleLabelMenu() {
   showFilterMenu.value = false; // sólo un popover abierto a la vez (review B/D)
+  showThreadMore.value = false;
   if (moveTargets.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
 }
 
@@ -598,21 +606,80 @@ function toggleLabelMenu() {
 const showFilterMenu = ref(false);
 function toggleFilterMenu() {
   showLabelMenu.value = false; // sólo un popover abierto a la vez
+  showListMore.value = false;
   showFilterMenu.value = !showFilterMenu.value;
 }
-function setListFilter(v: ListFilter) {
-  if (v === listFilter.value) {
-    showFilterMenu.value = false;
-    return;
-  }
-  listFilter.value = v;
+
+// ---- Kebab (más opciones) de la LISTA: marcar todas como leídas / actualizar ----
+const showListMore = ref(false);
+function toggleListMore() {
+  showLabelMenu.value = false;
   showFilterMenu.value = false;
-  // En carpeta real, re-consultar server-side (filtra TODA la carpeta, no sólo la página cargada).
-  // En vistas virtuales (Pospuestos/Destacados) y búsqueda, el filtro se aplica client-side sobre
-  // la lista ya cargada (acotada).
-  if (selectedFolderId.value && !virtualView.value && !inSearch.value) {
-    void selectFolder(selectedFolderId.value);
+  showListMore.value = !showListMore.value;
+}
+const hasUnreadVisible = computed(() => displayedEmails.value.some((e) => !e.flags.seen));
+async function markAllVisibleRead() {
+  showListMore.value = false;
+  const targets = displayedEmails.value.filter((e) => !e.flags.seen);
+  if (targets.length === 0) return;
+  for (const e of targets) e.flags.seen = true; // optimista (filas instantáneas)
+  scheduleBadgeRefresh();
+  await Promise.all(
+    targets.map((e) =>
+      api.patch(`/emails/${e.id}/flags`, { seen: true }).catch(() => {
+        e.flags.seen = false; // rollback puntual del que falló
+      })
+    )
+  );
+  scheduleBadgeRefresh();
+}
+
+// ---- Kebab (más opciones) del READING PANE: acciones del mensaje abierto ----
+const showThreadMore = ref(false);
+function toggleThreadMore() {
+  showLabelMenu.value = false;
+  showThreadMore.value = !showThreadMore.value;
+}
+/** Marca el mensaje abierto como NO leído y vuelve a la lista (estilo Gmail). */
+async function markSelectedUnread() {
+  showThreadMore.value = false;
+  const email = selected.value;
+  if (!email) return;
+  email.flags.seen = false; // optimista
+  scheduleBadgeRefresh();
+  selected.value = null;
+  try {
+    await api.patch(`/emails/${email.id}/flags`, { seen: false });
+  } catch {
+    email.flags.seen = true; // rollback
+    scheduleBadgeRefresh();
   }
+}
+function setListFilter(v: ListFilter) {
+  showFilterMenu.value = false;
+  ui.setListFilter(v); // dispara el watch de abajo (re-query o filtro client-side)
+}
+// Reacciona al cambio de filtro venga del botón del Inbox o del embudo del TopBar (mismo store).
+// En carpeta real re-consulta server-side (filtra TODA la carpeta, no sólo la página cargada); en
+// vistas virtuales (Pospuestos/Destacados) y búsqueda, matchesListFilter ya filtra client-side.
+// flush:'sync' + flag: los resets programáticos a 'all' (al cambiar de carpeta) NO deben disparar
+// un fetch contra la carpeta vieja — esos casos llaman selectFolder explícitamente acto seguido.
+let suppressFilterRequery = false;
+watch(
+  () => ui.listFilter,
+  () => {
+    if (suppressFilterRequery) return;
+    if (selectedFolderId.value && !virtualView.value && !inSearch.value) {
+      void selectFolder(selectedFolderId.value);
+    }
+  },
+  { flush: 'sync' }
+);
+/** Resetea el filtro a 'all' SIN disparar el watch (el caller hace su propio fetch). */
+function resetListFilter() {
+  suppressFilterRequery = true;
+  ui.setListFilter('all');
+  suppressFilterRequery = false;
 }
 /** Mueve el email a la carpeta/etiqueta elegida (owner-bound en el backend, por folderId). */
 function applyLabel(email: Email | null, folderId: string) {
@@ -757,9 +824,14 @@ function printEmail() {
 
 // ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
 function onKey(e: KeyboardEvent) {
-  if (e.key === 'Escape' && (showLabelMenu.value || showFilterMenu.value)) {
-    showLabelMenu.value = false; // Escape cierra los menús (Mover a / Filtro) — review D
+  if (
+    e.key === 'Escape' &&
+    (showLabelMenu.value || showFilterMenu.value || showListMore.value || showThreadMore.value)
+  ) {
+    showLabelMenu.value = false; // Escape cierra los menús (Mover a / Filtro / kebabs) — review D
     showFilterMenu.value = false;
+    showListMore.value = false;
+    showThreadMore.value = false;
     return;
   }
   const el = e.target as HTMLElement | null;
@@ -781,6 +853,8 @@ function onKey(e: KeyboardEvent) {
 function closeMenus() {
   showLabelMenu.value = false;
   showFilterMenu.value = false;
+  showListMore.value = false;
+  showThreadMore.value = false;
 }
 onMounted(() => {
   void loadAccountsAndFolders();
@@ -881,7 +955,7 @@ onBeforeUnmount(() => {
               >
                 <AppIcon name="filter" :size="18" />
               </button>
-              <div v-if="showFilterMenu" class="label-menu" @click.stop>
+              <div v-if="showFilterMenu" class="label-menu right" @click.stop>
                 <button
                   v-for="f in LIST_FILTERS"
                   :key="f.key"
@@ -894,9 +968,29 @@ onBeforeUnmount(() => {
                 </button>
               </div>
             </div>
-            <button class="icon-btn" :title="t('common.more')">
-              <AppIcon name="more" :size="18" />
-            </button>
+            <div class="label-wrap">
+              <button class="icon-btn" :title="t('common.more')" @click.stop="toggleListMore">
+                <AppIcon name="more" :size="18" />
+              </button>
+              <div v-if="showListMore" class="label-menu right" @click.stop>
+                <button
+                  class="label-menu-item"
+                  :disabled="!hasUnreadVisible"
+                  @click="markAllVisibleRead"
+                >
+                  <AppIcon name="mail" :size="15" />{{ t('list.markAllRead') }}
+                </button>
+                <button
+                  class="label-menu-item"
+                  @click="
+                    showListMore = false;
+                    selectedFolderId && selectFolder(selectedFolderId);
+                  "
+                >
+                  <AppIcon name="refresh" :size="15" />{{ t('list.refresh') }}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -1042,9 +1136,53 @@ onBeforeUnmount(() => {
           >
             <AppIcon name="printer" :size="20" />
           </button>
-          <button class="icon-btn" :title="t('common.more')">
-            <AppIcon name="more" :size="20" />
-          </button>
+          <div class="label-wrap">
+            <button class="icon-btn" :title="t('common.more')" @click.stop="toggleThreadMore">
+              <AppIcon name="more" :size="20" />
+            </button>
+            <div v-if="showThreadMore" class="label-menu right" @click.stop>
+              <button
+                class="label-menu-item"
+                @click="
+                  showThreadMore = false;
+                  reply();
+                "
+              >
+                <AppIcon name="reply" :size="15" />{{ t('thread.reply') }}
+              </button>
+              <button
+                class="label-menu-item"
+                @click="
+                  showThreadMore = false;
+                  forward();
+                "
+              >
+                <AppIcon name="forward" :size="15" />{{ t('thread.forward') }}
+              </button>
+              <button class="label-menu-item" @click="markSelectedUnread">
+                <AppIcon name="mail" :size="15" />{{ t('thread.markUnread') }}
+              </button>
+              <button
+                class="label-menu-item"
+                :disabled="!body || bodyLoading"
+                @click="
+                  showThreadMore = false;
+                  printEmail();
+                "
+              >
+                <AppIcon name="printer" :size="15" />{{ t('thread.print') }}
+              </button>
+              <button
+                class="label-menu-item danger"
+                @click="
+                  showThreadMore = false;
+                  deleteEmail(selected);
+                "
+              >
+                <AppIcon name="trash" :size="15" />{{ t('thread.delete') }}
+              </button>
+            </div>
+          </div>
         </div>
 
         <div class="thread-body">
@@ -1152,10 +1290,12 @@ onBeforeUnmount(() => {
         </button>
         <div class="snooze-custom">
           <span class="snooze-custom-lbl">{{ t('snooze.custom') }}</span>
-          <input v-model="customSnooze" type="datetime-local" class="snooze-input" />
-          <button class="snooze-go" @click="doSnooze(new Date(customSnooze))">
-            {{ t('snooze.action') }}
-          </button>
+          <div class="snooze-row">
+            <input v-model="customSnooze" type="datetime-local" class="snooze-input" />
+            <button class="snooze-go" @click="doSnooze(new Date(customSnooze))">
+              {{ t('snooze.action') }}
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1532,6 +1672,11 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.16);
 }
+/* Anclado a la derecha del botón: para menús cerca del borde derecho que si no se desbordan. */
+.label-menu.right {
+  left: auto;
+  right: 0;
+}
 .label-menu-head {
   font-size: 11px;
   text-transform: uppercase;
@@ -1560,6 +1705,13 @@ onBeforeUnmount(() => {
 .label-menu-item.sel {
   color: var(--accent);
   font-weight: 600;
+}
+.label-menu-item.danger {
+  color: var(--danger);
+}
+.label-menu-item:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .fm-check {
   margin-left: auto;
@@ -1806,9 +1958,10 @@ onBeforeUnmount(() => {
 .snooze-preset:hover {
   background: var(--hover);
 }
+/* Label arriba, fila input+botón abajo (antes los 3 en una fila apretada → descuadrado). */
 .snooze-custom {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 8px;
   margin-top: 10px;
   padding-top: 12px;
@@ -1819,8 +1972,15 @@ onBeforeUnmount(() => {
   font-weight: 600;
   color: var(--text-2);
 }
+.snooze-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .snooze-input {
   flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 8px 10px;
   font: inherit;
   font-size: 13px;
@@ -1834,6 +1994,8 @@ onBeforeUnmount(() => {
   border-color: var(--accent);
 }
 .snooze-go {
+  flex-shrink: 0;
+  white-space: nowrap;
   padding: 8px 14px;
   font: inherit;
   font-size: 13px;
