@@ -336,9 +336,12 @@ async function openEmail(email: Email) {
     if (token !== openToken) return;
     body.value = bodyRes.data;
     attachments.value = bodyRes.data.attachments ?? [];
-    if (!email.flags.seen) {
+    if (!email.flags.seen && !removedIds.has(email.id)) {
       // badge vivo: abrir un no-leído lo baja ya — pero sólo si contribuía (no si estaba pospuesto,
       // ya excluido por el backend). Optimista con rollback si el PATCH falla (review B).
+      // Guard removedIds: si una acción concurrente (snooze/unsnooze/delete/move) ya removió este
+      // email durante el fetch del body, NO lo marcamos leído ni tocamos el badge — esa acción ya
+      // ajustó el conteo; marcarlo aquí causaría una carrera de doble-ajuste del badge (review B).
       const wasInBadge = contributesToBadge(email);
       const fid = email.folderId;
       email.flags.seen = true;
@@ -357,12 +360,17 @@ async function openEmail(email: Email) {
 
 async function toggleStar(email: Email, ev?: Event) {
   ev?.stopPropagation();
+  const id = email.id;
+  if (actionInFlight.has(id)) return; // anti doble-click: evita dos PATCH con valores opuestos.
+  actionInFlight.add(id);
   const next = !email.flags.flagged;
   email.flags.flagged = next;
   try {
-    await api.patch(`/emails/${email.id}/flags`, { flagged: next });
+    await api.patch(`/emails/${id}/flags`, { flagged: next });
   } catch {
     email.flags.flagged = !next; // rollback
+  } finally {
+    actionInFlight.delete(id);
   }
 }
 
