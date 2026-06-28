@@ -156,6 +156,34 @@ describe('GET /api/accounts/:id/folders — badge de no-leídos autoritativo (co
     ); // sólo el mío
   });
 
+  // delete y move terminan ambos en `Email.deleteOne` sobre la carpeta ORIGEN (DELETE → Papelera;
+  // POST /move → carpeta destino), tras la operación IMAP. Como el badge cuenta documentos Email,
+  // basta con simular ese efecto a nivel doc (sin acoplar este test al mock de IMAP) para probar que
+  // el conteo refleja ambas acciones — regresión B (el contador no quedaba inflado tras delete/move).
+  it('borrar un no-leído baja el badge de su carpeta (el doc deja de contar) — regresión B', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'badge-del@test.com' });
+    const inbox = await seedFolder(account._id);
+    const e1 = await seedEmail(account._id, inbox._id, { uid: 1 });
+    await seedEmail(account._id, inbox._id, { uid: 2 });
+    const uid = user._id.toString();
+    expect(await badgeOf(uid, account._id.toString(), inbox._id.toString())).toBe(2);
+
+    await Email.deleteOne({ _id: e1._id }); // efecto de DELETE /emails/:id sobre la carpeta origen
+    expect(await badgeOf(uid, account._id.toString(), inbox._id.toString())).toBe(1);
+  });
+
+  it('mover un no-leído baja el badge de la carpeta ORIGEN — regresión B', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'badge-move@test.com' });
+    const inbox = await seedFolder(account._id);
+    const e1 = await seedEmail(account._id, inbox._id, { uid: 1 });
+    await seedEmail(account._id, inbox._id, { uid: 2 });
+    const uid = user._id.toString();
+    expect(await badgeOf(uid, account._id.toString(), inbox._id.toString())).toBe(2);
+
+    await Email.deleteOne({ _id: e1._id }); // efecto de POST /move sobre la carpeta origen
+    expect(await badgeOf(uid, account._id.toString(), inbox._id.toString())).toBe(1);
+  });
+
   it('carpeta sin no-leídos visibles → badge 0', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'badge-zero@test.com' });
     const inbox = await seedFolder(account._id);
