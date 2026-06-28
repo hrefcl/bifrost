@@ -4,9 +4,13 @@
  * lo parametriza con el dominio, GENERA los secretos EN EL BOX (no en el user-data, que es visible
  * por `DescribeInstanceAttribute`) y levanta todo con `docker compose up -d`.
  *
- * Seguridad: el user-data NO embebe secretos. Las credenciales de la app se generan en el host con
- * `openssl`. Para S3 NO se ponen access keys: se asume un **IAM instance profile** con acceso al
- * bucket (se crea en una fase de IAM); acá sólo se setean bucket/region. PURO → testeable.
+ * Seguridad: el user-data NO embebe secretos (se generan en el host con `openssl`).
+ *
+ * STORAGE: el box arranca con storage LOCAL (en el EBS) — funciona de verdad out-of-the-box. El S3
+ * cifrado (la palanca de bajo costo, decisión A→C del doc §8) NO se auto-configura todavía: hoy
+ * `S3Storage` exige claves estáticas y NO soporta IAM instance role, y nada lee env de storage al
+ * boot. Cablear S3-turnkey (rol IAM + soporte instance-role en S3Storage + bootstrap por env) es una
+ * fase aparte registrada en el doc; hasta entonces NO se promete S3 acá. PURO → testeable.
  */
 export interface UserDataInput {
   domain: string;
@@ -15,9 +19,8 @@ export interface UserDataInput {
   adminEmail: string;
   /** Repo a clonar (parametrizable para forks). */
   repoUrl?: string;
-  useS3: boolean;
-  s3Bucket?: string;
-  s3Region?: string;
+  /** Intención de usar S3 (sólo deja una NOTA; el wiring real es una fase posterior). */
+  useS3?: boolean;
 }
 
 /** Escapa comillas dobles para interpolar de forma segura dentro de `"..."` en bash. */
@@ -27,17 +30,15 @@ function sh(value: string): string {
 
 export function buildUserData(input: UserDataInput): string {
   const repo = input.repoUrl ?? 'https://github.com/hrefcl/bifrost.git';
-  const s3Block = input.useS3
-    ? `
-# --- Storage S3 (credenciales por IAM instance role, NO por claves en disco) ---
-cat >> .env <<ENV
-STORAGE_PROVIDER=s3
-S3_BUCKET="${sh(input.s3Bucket ?? '')}"
-S3_REGION="${sh(input.s3Region ?? '')}"
-ENV`
-    : `
-# --- Storage local (en el EBS de la instancia) ---
-echo "STORAGE_PROVIDER=local" >> .env`;
+  const storageBlock = `
+# --- Storage: LOCAL por defecto (correo/adjuntos en el EBS de la instancia) — funciona ya.
+echo "STORAGE_PROVIDER=local" >> .env${
+    input.useS3
+      ? `
+# NOTA: S3 cifrado (bajo costo) se configurará DESPUÉS (admin o fase CLI que crea bucket + rol IAM y
+# cablea el storage). Aún NO se auto-configura en el boot — ver docs/cli-provisioning-aws.md.`
+      : ''
+  }`;
 
   return `#!/bin/bash
 set -euxo pipefail
@@ -64,7 +65,7 @@ openssl rand -hex 64  > secrets/encryption_key   # 64 hex = 32 bytes para AES-25
 openssl rand -hex 24  > secrets/mongo_password
 openssl rand -hex 24  > secrets/redis_password
 touch .env
-${s3Block}
+${storageBlock}
 
 # 5) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web)
 docker compose up -d

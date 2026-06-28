@@ -19,24 +19,19 @@ describe('buildUserData (cloud-init)', () => {
   });
 
   it('genera los secretos EN EL HOST (no embebidos) y no pone claves AWS', () => {
-    const s = buildUserData({ ...base, useS3: true, s3Bucket: 'acme-data', s3Region: 'us-east-1' });
+    const s = buildUserData({ ...base, useS3: true });
     expect(s).toContain('openssl rand'); // secretos generados en el box
     expect(s).toContain('encryption_key');
-    // NUNCA debe haber access keys de AWS embebidas (se usa IAM instance role).
+    // NUNCA debe haber access keys de AWS embebidas.
     expect(s).not.toMatch(/AKIA[0-9A-Z]{16}/);
     expect(s).not.toContain('AWS_SECRET_ACCESS_KEY');
   });
 
-  it('con S3: setea bucket/region; sin S3: storage local', () => {
-    const withS3 = buildUserData({
-      ...base,
-      useS3: true,
-      s3Bucket: 'acme-data',
-      s3Region: 'eu-west-1',
-    });
-    expect(withS3).toContain('STORAGE_PROVIDER=s3');
-    expect(withS3).toContain('acme-data');
-    expect(withS3).toContain('eu-west-1');
+  it('storage SIEMPRE local (funciona ya); S3 NO se auto-configura en el boot (honesto)', () => {
+    const withS3 = buildUserData({ ...base, useS3: true });
+    expect(withS3).toContain('STORAGE_PROVIDER=local'); // arranca funcional en EBS
+    expect(withS3).not.toContain('STORAGE_PROVIDER=s3'); // S3 NO se cablea en el boot
+    expect(withS3.toLowerCase()).toContain('s3'); // sólo deja la nota de fase posterior
     const local = buildUserData({ ...base, useS3: false });
     expect(local).toContain('STORAGE_PROVIDER=local');
   });

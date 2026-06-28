@@ -100,6 +100,17 @@ El CLI, si activás S3:
 IAM extra requerido para esto: `kms:CreateKey/CreateAlias/Encrypt/Decrypt/GenerateDataKey`,
 `s3:CreateBucket/PutBucketPolicy/PutBucketVersioning/PutEncryptionConfiguration/PutPublicAccessBlock`.
 
+> ⚠️ **GAP REAL (auto-auditoría) — el wiring APP-SIDE de S3 NO existe todavía.** Crear el bucket no
+> alcanza para que el correo viva en S3. Hoy: (a) **`services/storage/s3.ts` exige accessKeyId/
+> secretAccessKey ESTÁTICAS** (aws4fetch) — **NO soporta IAM instance role**; (b) **nada lee env de
+> storage al boot** (sólo se configura por el admin API). Por eso el box arranca con **storage LOCAL**
+> (funciona en EBS) y el `user-data` NO promete S3. Para que S3-turnkey funcione de verdad hace falta
+> una fase con TRES piezas: (1) crear un **rol/instance-profile IAM** con acceso al bucket+CMK y
+> adjuntarlo al EC2; (2) **soporte de instance role en S3Storage** (resolver creds temporales por la
+> cadena del SDK / IMDS y refrescarlas, alimentando aws4fetch con sessionToken); (3) **bootstrap de
+> storage por env al boot** del API (sembrar `SystemConfig` en modo s3-instance-role si no hay config).
+> Hasta entonces, S3 es la pasada de optimización (C) sin auto-config — NO se promete como hecho.
+
 Puertos del Security Group: 22 (SSH, idealmente restringido a la IP del admin), 25, 465, 587,
 143, 993, 80, 443.
 
