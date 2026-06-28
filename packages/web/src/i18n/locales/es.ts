@@ -160,6 +160,7 @@ export default {
     archive: 'Archivar',
     delete: 'Eliminar',
     snooze: 'Posponer',
+    unsnooze: 'Recuperar',
     tag: 'Etiquetar',
     print: 'Imprimir',
     reply: 'Responder',
@@ -243,6 +244,7 @@ export default {
     delete: 'No se pudo eliminar el correo',
     move: 'No se pudo mover el correo',
     snooze: 'No se pudo posponer el correo',
+    unsnooze: 'No se pudo recuperar el correo',
   },
   settings: {
     title: 'Ajustes',

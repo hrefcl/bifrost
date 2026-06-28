@@ -160,6 +160,7 @@ export default {
     archive: 'Archive',
     delete: 'Delete',
     snooze: 'Snooze',
+    unsnooze: 'Unsnooze',
     tag: 'Label',
     print: 'Print',
     reply: 'Reply',
@@ -243,6 +244,7 @@ export default {
     delete: 'Failed to delete email',
     move: 'Failed to move email',
     snooze: 'Failed to snooze email',
+    unsnooze: 'Failed to unsnooze email',
   },
   settings: {
     title: 'Settings',

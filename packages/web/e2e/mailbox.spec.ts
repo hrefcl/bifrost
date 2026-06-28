@@ -418,7 +418,9 @@ test('búsqueda: Enter en la barra hace búsqueda server-side global', async ({ 
   await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible();
 });
 
-test('snooze: posponer saca el email de Recibidos y aparece en Pospuestos', async ({ page }) => {
+test('snooze + unsnooze: posponer saca de Recibidos → Pospuestos → recuperar lo devuelve', async ({
+  page,
+}) => {
   const session = await loginViaUi(page);
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
   await syncMailbox(page, session);
@@ -451,6 +453,20 @@ test('snooze: posponer saca el email de Recibidos y aparece en Pospuestos', asyn
   await page.getByRole('button', { name: 'Snoozed' }).click();
   await snoozedList;
   await expect(page.getByText('Welcome to Webmail 6.0')).toBeVisible({ timeout: 15_000 });
+
+  // Recuperar (unsnooze): abrir el email pospuesto → la barra muestra "Unsnooze" → POST /unsnooze.
+  await page.getByText('Welcome to Webmail 6.0').click();
+  const unsnoozed = page.waitForResponse(
+    (r) =>
+      /\/api\/emails\/.+\/unsnooze$/.test(r.url()) &&
+      r.request().method() === 'POST' &&
+      r.status() === 200
+  );
+  await page.locator('.thread-head').getByRole('button', { name: 'Unsnooze' }).click();
+  expect((await unsnoozed).status()).toBe(200);
+
+  // Sale de la lista de Pospuestos.
+  await expect(page.getByText('Welcome to Webmail 6.0')).toHaveCount(0);
 });
 
 // Tests de administración al FINAL: no dependen del sync de buzón, así que se ejecutan tras

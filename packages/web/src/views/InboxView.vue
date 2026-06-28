@@ -168,11 +168,13 @@ function adjustFolderUnread(folderId: string, delta: number) {
  * (snoozedUntil futuro) — el backend ya excluye del badge los pospuestos. Sin este guard, abrir o
  * re-posponer un no-leído YA pospuesto (desde Pospuestos/búsqueda) restaría de más (review B).
  */
-function contributesToBadge(email: Email): boolean {
-  if (email.flags.seen) return false;
-  const snoozed = email.snoozedUntil ? new Date(email.snoozedUntil).getTime() > Date.now() : false;
-  return !snoozed;
+function isSnoozedNow(email: Email): boolean {
+  return email.snoozedUntil ? new Date(email.snoozedUntil).getTime() > Date.now() : false;
 }
+function contributesToBadge(email: Email): boolean {
+  return !email.flags.seen && !isSnoozedNow(email);
+}
+const selectedSnoozed = computed(() => (selected.value ? isSnoozedNow(selected.value) : false));
 // Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
 watch(
   () => ui.searchSubmitNonce,
@@ -467,6 +469,22 @@ async function doSnooze(until: Date) {
     error.value = t('errors.snooze');
   }
 }
+/** Recuperar (unsnooze, estilo Gmail): saca el email de Pospuestos y lo devuelve a su carpeta YA. */
+async function doUnsnooze(email: Email | null, ev?: Event) {
+  ev?.stopPropagation();
+  if (!email) return;
+  const id = email.id;
+  // Al volver a la carpeta, un no-leído vuelve a contar en el badge (estaba excluido por snooze).
+  const wasUnread = !email.flags.seen;
+  const fid = email.folderId;
+  try {
+    await api.post(`/emails/${id}/unsnooze`);
+    removeFromLists(id); // sale de la lista de Pospuestos
+    if (wasUnread) adjustFolderUnread(fid, 1);
+  } catch {
+    error.value = t('errors.unsnooze');
+  }
+}
 
 function compose() {
   composer.openComposer();
@@ -647,6 +665,14 @@ onBeforeUnmount(() => {
             <AppIcon v-if="email.hasAttachments" name="paperclip" :size="15" class="row-clip" />
             <div class="row-end">
               <button
+                v-if="virtualView === 'snoozed'"
+                class="icon-btn row-hover"
+                :title="t('thread.unsnooze')"
+                @click="doUnsnooze(email, $event)"
+              >
+                <AppIcon name="clock" :size="17" />
+              </button>
+              <button
                 class="icon-btn row-hover"
                 :title="t('thread.archive')"
                 @click="archive(email, $event)"
@@ -678,7 +704,15 @@ onBeforeUnmount(() => {
           <button class="icon-btn" :title="t('thread.delete')" @click="deleteEmail(selected)">
             <AppIcon name="trash" :size="20" />
           </button>
-          <button class="icon-btn" :title="t('thread.snooze')" @click="openSnooze(selected)">
+          <button
+            v-if="selectedSnoozed"
+            class="icon-btn"
+            :title="t('thread.unsnooze')"
+            @click="doUnsnooze(selected)"
+          >
+            <AppIcon name="clock" :size="20" :fill="'var(--accent)'" />
+          </button>
+          <button v-else class="icon-btn" :title="t('thread.snooze')" @click="openSnooze(selected)">
             <AppIcon name="clock" :size="20" />
           </button>
           <button class="icon-btn" :title="t('thread.tag')">
