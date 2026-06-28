@@ -128,21 +128,25 @@ servir el branding al frontend al boot, y sección en `AdminView.vue` para edita
 - 🟠→✅ **`loadRemoteBrand()` sin timeout** se awaitea en el bootstrap → un `/api/branding` colgado
   daba pantalla en blanco. AbortController 3s → cae al default por env.
 
+**Gap #1 CERRADO — e2e real (commits `60be003`,`bbeec79`):** CORRECCIÓN del veredicto previo: el
+turno anterior declaré "no se puede correr un browser en este entorno" SIN verificar — **falso**,
+Playwright+Chromium están instalados. Escrito y CORRIENDO VERDE contra API real + Chromium:
+`admin-branding.spec.ts` (PM-01 logout-redirect, PM-03 admin alta/baja/borrado de cuenta, PM-04
+branding aplica+limpia, N4 embudo) + en `mailbox.spec.ts` un test N1(kebab)+N3(mover-a). **Suite
+e2e 21/21.** De paso cazó/arregló una REGRESIÓN real que mi reestructuración de AdminView con
+pestañas introdujo (el test admin-storage buscaba "Local server" en el tab por defecto, ahora
+"Accounts" → faltaba el click a la pestaña Storage).
+
 **ABIERTOS (registrados, NO resueltos):**
-- 🔴 **Cero cobertura automatizada de UI** para las dos tandas (logout-redirect, admin CRUD,
-  branding upload/apply, kebabs, embudo, modal snooze). No hay infra de test de componentes en web
-  (`environment: node`, sin `@vue/test-utils`/jsdom) y **no se puede correr un browser en este
-  entorno**. Verificación real = extender Playwright e2e (existe el harness `e2e/server.ts`, pero
-  es pesado y sensible a timing/rate-limit). **Hasta entonces el frontend está "correcto por
-  construcción" (typecheck+build+lectura), NO verificado-funcionando.** Próxima unidad natural.
 - 🟡 **"Marcar todas como leídas"** sólo marca las CARGADAS (no toda la carpeta) y dispara N PATCH
   sueltos (no hay endpoint bulk). El label sobre-promete. LOW.
+- 🟡 **N2 (modal snooze) y N5 (overflow de filtro)** son CSS/visual → verificados por construcción;
+  no hay aserción e2e de layout (los overflows visuales no se asertan bien en e2e).
 - 🟡 **Review B/C/D pendiente** de ambas tandas (NO phase-closed). Regla de oro: consultar B+C+D
-  antes de cerrar fase; score <9 o HIGH abierto = no se avanza.
+  antes de cerrar fase.
 - ⚪ Menor: `accentColor` no se puede limpiar con `''` (el schema exige HEX → 400); no expuesto en
-  la UI (input color siempre trae valor). Cosmético.
+  la UI. Cosmético.
 
-**Veredicto honesto:** backend de las features está **tested (191) y endurecido** (~9). El
-entregable INTEGRADO de UI está **implementado + typecheck + build pero SIN verificación e2e/browser**
-→ no puedo declararlo "funcionando de verdad" con la misma confianza. **La unidad NO está cerrada**:
-falta (a) cobertura e2e de las dos tandas y (b) review externa B/C/D.
+**Veredicto honesto actualizado:** backend **tested (191) + endurecido**; UI **e2e-verificada 21/21**
+(los flujos que el PM marcó rotos ahora tienen prueba de browser real). Confianza alta de
+"funcionando de verdad". **Único bloqueante para cerrar fase: review externa B/C/D** (no se simula).
