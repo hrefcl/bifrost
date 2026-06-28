@@ -248,6 +248,7 @@ export default {
     move: 'No se pudo mover el correo',
     snooze: 'No se pudo posponer el correo',
     unsnooze: 'No se pudo recuperar el correo',
+    print: 'No se pudo abrir la impresión (¿popups bloqueados?)',
   },
   settings: {
     title: 'Ajustes',

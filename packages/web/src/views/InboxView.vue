@@ -8,6 +8,7 @@ import { api } from '@/lib/http';
 import { useUiStore } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
 import { colorFor } from '@/lib/people';
+import { buildEmailPrintHtml } from '@/lib/print-email';
 import type {
   Folder,
   Email,
@@ -533,6 +534,40 @@ function forward() {
 
 const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.address);
 
+/** Imprime el email abierto (estilo Gmail): abre una ventana con el mensaje y lanza el diálogo de
+ *  impresión. Cabeceras escapadas; el cuerpo usa el sanitizedHtml ya saneado por el backend. */
+function printEmail() {
+  const email = selected.value;
+  if (!email) return;
+  const html = buildEmailPrintHtml({
+    subject: email.subject || t('thread.noSubject'),
+    fromName: senderName(email),
+    fromAddress: email.from.address,
+    toLabel: t('thread.to', { name: t('thread.me') }),
+    dateText: fmtFull(email.date),
+    sanitizedHtml: body.value?.sanitizedHtml,
+    text: body.value?.text,
+  });
+  // iframe oculto con srcdoc (sin document.write deprecado, sin popup-blocker): se imprime su
+  // contentWindow al cargar y se descarta después.
+  try {
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
+    iframe.srcdoc = html;
+    iframe.onload = () => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      setTimeout(() => {
+        iframe.remove();
+      }, 1000);
+    };
+    document.body.appendChild(iframe);
+  } catch {
+    error.value = t('errors.print');
+  }
+}
+
 // ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
 function onKey(e: KeyboardEvent) {
   const el = e.target as HTMLElement | null;
@@ -753,7 +788,7 @@ onBeforeUnmount(() => {
             <AppIcon name="tag" :size="20" />
           </button>
           <div class="spacer" />
-          <button class="icon-btn" :title="t('thread.print')">
+          <button class="icon-btn" :title="t('thread.print')" @click="printEmail">
             <AppIcon name="printer" :size="20" />
           </button>
           <button class="icon-btn" :title="t('common.more')">

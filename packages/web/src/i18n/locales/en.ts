@@ -248,6 +248,7 @@ export default {
     move: 'Failed to move email',
     snooze: 'Failed to snooze email',
     unsnooze: 'Failed to unsnooze email',
+    print: 'Could not open print view (popups blocked?)',
   },
   settings: {
     title: 'Settings',
