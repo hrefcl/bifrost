@@ -399,6 +399,39 @@ test('archivar: mover un email a Archivo lo saca de Recibidos (POST /move real)'
   await expect(page.getByText('Your June invoice')).toHaveCount(0);
 });
 
+test('N1+N3: kebab del reading pane abre acciones y "Mover a" lista carpetas destino', async ({
+  page,
+}) => {
+  const session = await loginViaUi(page);
+  await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
+  await syncMailbox(page, session);
+  await page.reload();
+  await page.getByRole('button', { name: 'Inbox' }).click();
+  await page.getByText('Your June invoice').click();
+  await expect(page.getByRole('heading', { name: 'Your June invoice' })).toBeVisible({
+    timeout: 15_000,
+  });
+
+  // N3: "Move to" abre el menú con carpetas destino (Sent/Archive del fake IMAP).
+  await page.locator('.thread-head').getByRole('button', { name: 'Move to' }).click();
+  const moveMenu = page.locator('.thread-head .label-menu');
+  await expect(moveMenu).toBeVisible();
+  await expect(moveMenu.locator('.label-menu-item').first()).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(moveMenu).toBeHidden();
+
+  // N1: el kebab (More) abre acciones; "Mark as unread" dispara PATCH flags y cierra el panel.
+  await page.locator('.thread-head').getByRole('button', { name: 'More' }).click();
+  const moreMenu = page.locator('.thread-head .label-menu');
+  await expect(moreMenu).toBeVisible();
+  const flagResp = page.waitForResponse(
+    (r) => /\/api\/emails\/.+\/flags$/.test(r.url()) && r.request().method() === 'PATCH'
+  );
+  await moreMenu.getByText('Mark as unread').click();
+  await flagResp;
+  await expect(page.getByRole('heading', { name: 'Your June invoice' })).toHaveCount(0);
+});
+
 test('búsqueda: Enter en la barra hace búsqueda server-side global', async ({ page }) => {
   const session = await loginViaUi(page);
   await expect(page.getByRole('button', { name: 'Compose' })).toBeVisible({ timeout: 15_000 });
