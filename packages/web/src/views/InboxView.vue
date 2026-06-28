@@ -162,6 +162,17 @@ function adjustFolderUnread(folderId: string, delta: number) {
   const f = folders.value.find((x) => x.id === folderId);
   if (f) f.unseenMessages = Math.max(0, f.unseenMessages + delta);
 }
+
+/**
+ * ¿Este email cuenta HOY en el badge de no-leídos visible? Sólo si está no-leído Y NO está pospuesto
+ * (snoozedUntil futuro) — el backend ya excluye del badge los pospuestos. Sin este guard, abrir o
+ * re-posponer un no-leído YA pospuesto (desde Pospuestos/búsqueda) restaría de más (review B).
+ */
+function contributesToBadge(email: Email): boolean {
+  if (email.flags.seen) return false;
+  const snoozed = email.snoozedUntil ? new Date(email.snoozedUntil).getTime() > Date.now() : false;
+  return !snoozed;
+}
 // Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
 watch(
   () => ui.searchSubmitNonce,
@@ -321,9 +332,16 @@ async function openEmail(email: Email) {
     body.value = bodyRes.data;
     attachments.value = bodyRes.data.attachments ?? [];
     if (!email.flags.seen) {
-      void api.patch(`/emails/${email.id}/flags`, { seen: true });
+      // badge vivo: abrir un no-leído lo baja ya — pero sólo si contribuía (no si estaba pospuesto,
+      // ya excluido por el backend). Optimista con rollback si el PATCH falla (review B).
+      const wasInBadge = contributesToBadge(email);
+      const fid = email.folderId;
       email.flags.seen = true;
-      adjustFolderUnread(email.folderId, -1); // badge vivo: abrir un no-leído lo baja ya.
+      if (wasInBadge) adjustFolderUnread(fid, -1);
+      void api.patch(`/emails/${email.id}/flags`, { seen: true }).catch(() => {
+        email.flags.seen = false;
+        if (wasInBadge) adjustFolderUnread(fid, 1);
+      });
     }
   } catch {
     if (token === openToken) error.value = t('errors.body');
@@ -364,9 +382,12 @@ async function deleteEmail(email: Email | null, ev?: Event) {
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
+  const wasInBadge = contributesToBadge(email);
+  const fid = email.folderId;
   try {
     await api.delete(`/emails/${id}`);
     removeFromLists(id);
+    if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído borrado deja de contar.
   } catch {
     error.value = t('errors.delete');
   }
@@ -377,9 +398,12 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
   ev?.stopPropagation();
   if (!email) return;
   const id = email.id;
+  const wasInBadge = contributesToBadge(email);
+  const fid = email.folderId;
   try {
     await api.post(`/emails/${id}/move`, { specialUse });
     removeFromLists(id);
+    if (wasInBadge) adjustFolderUnread(fid, -1); // un no-leído movido sale de su carpeta origen.
   } catch {
     error.value = t('errors.move');
   }
@@ -432,12 +456,13 @@ async function doSnooze(until: Date) {
   }
   showSnooze.value = false;
   snoozeTarget.value = null;
-  const wasUnread = !email.flags.seen;
+  // Sólo baja el badge si el email contribuía al conteo visible (no-leído y NO ya pospuesto):
+  // re-posponer uno ya pospuesto no debe restar de nuevo (review B).
+  const wasInBadge = contributesToBadge(email);
   try {
     await api.post(`/emails/${email.id}/snooze`, { until: until.toISOString() });
     removeFromLists(email.id);
-    // El pospuesto queda oculto de su carpeta: si era no-leído, baja el badge ya (paridad Gmail).
-    if (wasUnread) adjustFolderUnread(email.folderId, -1);
+    if (wasInBadge) adjustFolderUnread(email.folderId, -1);
   } catch {
     error.value = t('errors.snooze');
   }
