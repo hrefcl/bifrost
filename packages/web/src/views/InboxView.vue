@@ -165,13 +165,14 @@ function removeFromLists(id: string) {
  */
 let badgeTimer: ReturnType<typeof setTimeout> | null = null;
 let badgeToken = 0;
+let disposed = false; // el componente se desmontó: no aplicar resultados en vuelo (review B).
 async function refreshBadges() {
   const id = accountId();
   if (!id) return;
   const token = ++badgeToken;
   try {
     const { data } = await api.get<Folder[]>(`/accounts/${id}/folders`);
-    if (token !== badgeToken) return; // llegó una más nueva.
+    if (disposed || token !== badgeToken) return; // desmontado o llegó una más nueva.
     const byId = new Map(data.map((f) => [f.id, f.unseenMessages]));
     folders.value.forEach((f) => {
       const n = byId.get(f.id);
@@ -182,6 +183,7 @@ async function refreshBadges() {
   }
 }
 function scheduleBadgeRefresh() {
+  if (disposed) return;
   if (badgeTimer) clearTimeout(badgeTimer);
   badgeTimer = setTimeout(() => void refreshBadges(), 400);
 }
@@ -553,8 +555,9 @@ onMounted(() => {
   window.addEventListener('keydown', onKey);
 });
 onBeforeUnmount(() => {
+  disposed = true; // descarta refreshBadges() en vuelo (no mutar tras desmontar).
   window.removeEventListener('keydown', onKey);
-  if (badgeTimer) clearTimeout(badgeTimer); // no refrescar tras desmontar.
+  if (badgeTimer) clearTimeout(badgeTimer);
 });
 </script>
 

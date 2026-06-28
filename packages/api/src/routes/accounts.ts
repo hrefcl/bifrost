@@ -162,31 +162,28 @@ export default function accountRoutes(fastify: FastifyInstance) {
     await requireOwnedAccount(request.user.userId, accountId);
     const folders = await Folder.find({ accountId }).sort({ sortOrder: 1, name: 1 });
 
-    // Badge de no-leídos CONSCIENTE DE SNOOZE (paridad Gmail). `unseenMessages` viene del sync IMAP
-    // y cuenta TODOS los no-leídos, incluidos los pospuestos — que están OCULTOS de su carpeta. Si
-    // no se restan, posponer un email no-leído infla el badge respecto a la lista visible. Restamos
-    // los no-leídos ocultos por snooze (snoozedUntil futuro) con UNA agregación indexada
-    // ({accountId, flags.seen, snoozedUntil, folderId}); cubre cualquier carpeta aunque snooze sea
-    // de facto solo-INBOX. NOTA: Folder.find y la agregación no son atómicos entre sí; para un badge
-    // (conteo eventual) es aceptable — a lo sumo queda off-by-one un instante hasta la próxima carga.
-    const hiddenSnoozed = await Email.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
+    // Badge de no-leídos AUTORITATIVO (paridad Gmail): se cuenta directamente cuántos emails están
+    // VISIBLES y no-leídos por carpeta (flags.seen=false Y no pospuestos), exactamente el mismo
+    // criterio que la lista de la carpeta. Así el badge refleja al instante mark-read, delete, move,
+    // snooze y unsnooze, porque cuenta documentos Email reales. (NO se usa Folder.unseenMessages: ese
+    // viene del sync IMAP y NO se actualiza al marcar leído/borrar/mover hasta el próximo sync, lo
+    // que dejaba el badge inflado de forma persistente — review B.) `snoozedUntil {$not:{$gt:now}}`
+    // incluye ausente/null/vencido en una sola condición, igual que el filtro de la lista.
+    const unread = await Email.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
       {
         $match: {
           accountId: new mongoose.Types.ObjectId(accountId),
-          snoozedUntil: { $gt: new Date() },
           'flags.seen': false,
+          snoozedUntil: { $not: { $gt: new Date() } },
         },
       },
       { $group: { _id: '$folderId', n: { $sum: 1 } } },
     ]);
-    const hiddenByFolder = new Map(hiddenSnoozed.map((h) => [h._id.toString(), h.n]));
+    const unreadByFolder = new Map(unread.map((u) => [u._id.toString(), u.n]));
 
     return folders.map((folder) => {
       const dto = serializeFolder(folder);
-      const hidden = hiddenByFolder.get(dto.id) ?? 0;
-      return hidden > 0
-        ? { ...dto, unseenMessages: Math.max(0, dto.unseenMessages - hidden) }
-        : dto;
+      return { ...dto, unseenMessages: unreadByFolder.get(dto.id) ?? 0 };
     });
   });
 
