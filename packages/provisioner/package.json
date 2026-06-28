@@ -18,6 +18,7 @@
   "dependencies": {
     "@aws-sdk/client-ec2": "^3.726.0",
     "@aws-sdk/client-route-53": "^3.726.0",
+    "@aws-sdk/client-ssm": "^3.726.0",
     "@aws-sdk/client-sts": "^3.726.0",
     "@inquirer/prompts": "^7.2.1"
   },

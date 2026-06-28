@@ -31,3 +31,11 @@ export {
 } from './state.js';
 export { buildPlan, type PlanInput, type PlanStep, type ProvisionPlan } from './plan.js';
 export { teardownOrder, TEARDOWN_NOTES } from './teardown.js';
+export { buildUserData, type UserDataInput } from './mailserver/user-data.js';
+export { projectTags, tagSpec, PROJECT, MANAGED_BY } from './tags.js';
+export {
+  provisionComputeIdentity,
+  type ComputeClients,
+  type ComputeInput,
+  type ComputeResult,
+} from './steps/provision-compute.js';
