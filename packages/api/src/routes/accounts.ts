@@ -166,7 +166,9 @@ export default function accountRoutes(fastify: FastifyInstance) {
     // y cuenta TODOS los no-leídos, incluidos los pospuestos — que están OCULTOS de su carpeta. Si
     // no se restan, posponer un email no-leído infla el badge respecto a la lista visible. Restamos
     // los no-leídos ocultos por snooze (snoozedUntil futuro) con UNA agregación indexada
-    // ({accountId, snoozedUntil}); cubre cualquier carpeta aunque snooze sea de facto solo-INBOX.
+    // ({accountId, flags.seen, snoozedUntil, folderId}); cubre cualquier carpeta aunque snooze sea
+    // de facto solo-INBOX. NOTA: Folder.find y la agregación no son atómicos entre sí; para un badge
+    // (conteo eventual) es aceptable — a lo sumo queda off-by-one un instante hasta la próxima carga.
     const hiddenSnoozed = await Email.aggregate<{ _id: mongoose.Types.ObjectId; n: number }>([
       {
         $match: {

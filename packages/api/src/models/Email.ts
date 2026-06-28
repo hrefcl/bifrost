@@ -93,8 +93,13 @@ EmailSchema.index({ accountId: 1, folderId: 1, date: -1, uid: -1 });
 EmailSchema.index({ accountId: 1, threadId: 1, date: -1 });
 EmailSchema.index({ accountId: 1, 'flags.seen': 1, folderId: 1 });
 EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
-// Pospuestos: buscar por usuario (cuenta) los que siguen en snooze.
+// Pospuestos: buscar por usuario (cuenta) los que siguen en snooze (sirve a GET /emails/snoozed,
+// que no filtra por seen → prefijo accountId + rango snoozedUntil).
 EmailSchema.index({ accountId: 1, snoozedUntil: 1 });
+// Badge de no-leídos consciente de snooze (agregación en GET /accounts/:id/folders). ESR para el
+// $match {accountId, flags.seen:false, snoozedUntil:{$gt}}: igualdad (accountId, flags.seen) →
+// rango (snoozedUntil); folderId al final permite agrupar sin fetch extra (review B+D).
+EmailSchema.index({ accountId: 1, 'flags.seen': 1, snoozedUntil: 1, folderId: 1 });
 // Índice de texto con la spec canónica (definida en email-indexes.ts, sin registrar el modelo).
 // El reconcile de arranque la reutiliza para detectar/dropear una versión legada (p.ej. sin
 // `from.name`) y recrear ésta — si no, en una DB con el índice anterior createIndexes() falla con

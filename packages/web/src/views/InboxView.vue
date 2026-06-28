@@ -151,6 +151,17 @@ function removeFromLists(id: string) {
   if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
   if (selected.value?.id === id) selected.value = null;
 }
+
+/**
+ * Ajusta el badge de no-leídos de una carpeta en local (clamp a 0) para que reaccione al instante a
+ * las acciones, sin esperar al próximo sync de carpetas. El backend ya es consciente de snooze al
+ * recargar; esto sólo mantiene el badge vivo entre cargas (review B: posponer un no-leído debe
+ * bajar el badge ya, no quedar inflado hasta recargar).
+ */
+function adjustFolderUnread(folderId: string, delta: number) {
+  const f = folders.value.find((x) => x.id === folderId);
+  if (f) f.unseenMessages = Math.max(0, f.unseenMessages + delta);
+}
 // Enter en la barra → búsqueda global. Vaciar la barra → salir del modo búsqueda.
 watch(
   () => ui.searchSubmitNonce,
@@ -312,6 +323,7 @@ async function openEmail(email: Email) {
     if (!email.flags.seen) {
       void api.patch(`/emails/${email.id}/flags`, { seen: true });
       email.flags.seen = true;
+      adjustFolderUnread(email.folderId, -1); // badge vivo: abrir un no-leído lo baja ya.
     }
   } catch {
     if (token === openToken) error.value = t('errors.body');
@@ -420,9 +432,12 @@ async function doSnooze(until: Date) {
   }
   showSnooze.value = false;
   snoozeTarget.value = null;
+  const wasUnread = !email.flags.seen;
   try {
     await api.post(`/emails/${email.id}/snooze`, { until: until.toISOString() });
     removeFromLists(email.id);
+    // El pospuesto queda oculto de su carpeta: si era no-leído, baja el badge ya (paridad Gmail).
+    if (wasUnread) adjustFolderUnread(email.folderId, -1);
   } catch {
     error.value = t('errors.snooze');
   }
