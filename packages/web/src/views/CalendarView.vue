@@ -19,6 +19,7 @@ import AppIcon from '@/components/AppIcon.vue';
 import { useCalendarStore } from '@/stores/calendar';
 import { api } from '@/lib/http';
 import { colorFor } from '@/lib/people';
+import { normalizeAllDayRange } from '@/lib/calendar-dates';
 import type { Account, CalendarEvent } from '@webmail6/shared';
 
 const { t, locale } = useI18n();
@@ -118,20 +119,11 @@ function openEdit(ev: CalendarEvent): void {
 
 async function submitCreate(): Promise<void> {
   createError.value = '';
-  const start = new Date(createForm.value.startDate);
-  const end = new Date(createForm.value.endDate);
-  // "Todo el día": inicio = 00:00; fin = fin EXCLUSIVO (convención FullCalendar/iCal: 00:00 del día
-  // siguiente al último). El `endDate` del form YA viene exclusivo desde la selección de FullCalendar
-  // (onSelect → arg.end) y desde un evento guardado (openEdit), así que sólo hay que avanzar un día
-  // cuando el fin NO es ya posterior al inicio (fin inclusivo: mismo día, p.ej. al marcar allDay en
-  // el modal manual). Así el round-trip editar→guardar es estable y un día no se duplica (review B).
+  let start = new Date(createForm.value.startDate);
+  let end = new Date(createForm.value.endDate);
+  // "Todo el día": normalizar a fin exclusivo (FullCalendar/iCal) sin duplicar día (review B).
   if (createForm.value.allDay) {
-    start.setHours(0, 0, 0, 0);
-    end.setHours(0, 0, 0, 0);
-    if (end.getTime() <= start.getTime()) {
-      end.setTime(start.getTime());
-      end.setDate(end.getDate() + 1);
-    }
+    ({ start, end } = normalizeAllDayRange(start, end));
   }
   if (!(end.getTime() > start.getTime())) {
     createError.value = t('calendar.errRange');
