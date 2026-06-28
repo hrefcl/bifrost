@@ -13,6 +13,7 @@ import { env, isSetupMode } from './config/env.js';
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
 let stuckSweep: ReturnType<typeof setInterval> | undefined;
 let accountSyncSweep: ReturnType<typeof setTimeout> | undefined;
+let activeSync: Promise<unknown> | undefined; // barrido de sync en vuelo (para drenarlo en shutdown)
 
 async function main() {
   if (isSetupMode()) {
@@ -79,7 +80,9 @@ async function main() {
   const nextSyncDelay = () => 2 * 60 * 1000 + Math.floor(Math.random() * 60_000);
   const scheduleAccountSync = () => {
     accountSyncSweep = setTimeout(() => {
-      void syncStaleAccounts()
+      // Guardar el promise del barrido EN VUELO para poder drenarlo en el shutdown (que el release
+      // del lock + el status terminen antes de cerrar Redis/Mongo — review D).
+      activeSync = syncStaleAccounts()
         .then((r) => {
           if (r.accounts > 0)
             app.log.info(
@@ -88,10 +91,11 @@ async function main() {
         })
         .catch((err: unknown) => {
           app.log.error(err);
-        })
-        .finally(() => {
-          if (!shutdownPromise) scheduleAccountSync(); // re-agenda salvo en shutdown
         });
+      void activeSync.finally(() => {
+        activeSync = undefined;
+        if (!shutdownPromise) scheduleAccountSync(); // re-agenda salvo en shutdown
+      });
     }, nextSyncDelay());
     accountSyncSweep.unref();
   };
@@ -121,6 +125,19 @@ async function doShutdown() {
   // impedir el cierre ordenado de Mongo.
   if (stuckSweep) clearInterval(stuckSweep);
   if (accountSyncSweep) clearTimeout(accountSyncSweep);
+  // Drenar un barrido de sync EN VUELO antes de cerrar deps: que complete su release de lock + el
+  // status, para no dejar un lock huérfano (acotado por el TTL de todos modos) ni `status='syncing'`
+  // colgado. Acotado a 10s para no colgar el shutdown si IMAP/Mongo no responden (review D).
+  if (activeSync) {
+    try {
+      await Promise.race([
+        activeSync,
+        new Promise((resolve) => setTimeout(resolve, 10_000).unref()),
+      ]);
+    } catch {
+      /* el error del sync ya quedó logueado/registrado en Account */
+    }
+  }
   try {
     await serverApp?.close();
   } catch (err) {

@@ -83,6 +83,7 @@ import {
 } from '../../../test/integration-helper.js';
 import { Folder } from '../../models/Folder.js';
 import { Email } from '../../models/Email.js';
+import { redis } from '../../config/redis.js';
 
 describe('endpoints con IMAP (F3.1, mocks)', () => {
   let app: FastifyInstance;
@@ -405,6 +406,21 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     // filtro inválido → 400 (zod enum).
     const bad = await app.inject({ method: 'GET', url: base + '?filter=bogus', headers });
     expect(bad.statusCode).toBe(400);
+  });
+
+  it('POST /:accountId/sync/folders — 409 si la cuenta ya tiene el lock de sync tomado', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'synclock@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const id = account._id.toString();
+    // Simula que otra instancia/el barrido ya tiene el lock de la cuenta.
+    await redis.set(`sync:account:${id}`, 'otra-instancia', 'EX', 300, 'NX');
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/accounts/${id}/sync/folders`,
+      headers,
+    });
+    expect(res.statusCode).toBe(409); // sync ya en progreso (no se pisa con el lock)
+    await redis.del(`sync:account:${id}`);
   });
 
   it('GET folders/:id/emails — paginación por CURSOR/keyset (contrato de "cargar más")', async () => {
