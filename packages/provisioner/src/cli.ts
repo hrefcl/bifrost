@@ -25,7 +25,8 @@ async function main(): Promise<void> {
   }
 
   console.log('\nValidando contra AWS (sólo lectura)…\n');
-  const clients = makeClients(region);
+  // Región de CONTROL estable para las llamadas; `region` es el destino (se valida como dato).
+  const clients = makeClients();
   const r = await runPreflight(clients, { region, domain, useS3, bucketName });
 
   console.log(`Cuenta AWS:  ${r.identity.accountId}  (${r.identity.arn})`);
@@ -34,9 +35,12 @@ async function main(): Promise<void> {
     `Dominio:     ${r.domain.value} ${r.domain.valid ? '✓' : '✗'}` +
       (r.domain.valid ? `  → ${r.domain.mailHostname}` : '')
   );
-  console.log(
-    `Route53:     ${r.domain.hostedZoneExists ? `zona existente (${r.domain.hostedZoneId ?? ''})` : 'no existe (se creará)'}`
-  );
+  const r53Status = r.domain.hostedZoneExists
+    ? `zona existente (${r.domain.hostedZoneId ?? ''})`
+    : r.domain.parentZone
+      ? `usará la zona padre ${r.domain.parentZone.name} (${r.domain.parentZone.id})`
+      : 'no existe (se creará)';
+  console.log(`Route53:     ${r53Status}`);
   if (r.s3.enabled) {
     console.log(
       `Bucket S3:   ${r.s3.bucketName ?? ''} ${r.s3.bucketNameValid ? '✓' : `✗ ${r.s3.bucketNameReason ?? ''}`}`

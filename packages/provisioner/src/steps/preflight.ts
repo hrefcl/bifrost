@@ -1,6 +1,6 @@
 import { validateCredentials, type AwsIdentity } from '../aws/sts.js';
 import { listRegions } from '../aws/ec2.js';
-import { findHostedZone } from '../aws/route53.js';
+import { listPublicHostedZones, matchHostedZone } from '../aws/route53.js';
 import type { AwsClients } from '../aws/clients.js';
 import { validateDomain, mailHostname } from '../domain.js';
 import { validateBucketName } from '../s3-naming.js';
@@ -22,8 +22,11 @@ export interface PreflightResult {
     value: string;
     valid: boolean;
     mailHostname: string;
+    /** Id de la zona EXACTA (== dominio), si existe. */
     hostedZoneId: string | null;
     hostedZoneExists: boolean;
+    /** Zona PADRE que contiene el dominio (los registros irían ahí), si no hay exacta. */
+    parentZone: { id: string; name: string } | null;
   };
   s3: {
     enabled: boolean;
@@ -56,13 +59,24 @@ export async function runPreflight(
 
   const domainValid = validateDomain(input.domain);
   let hostedZoneId: string | null = null;
+  let parentZone: { id: string; name: string } | null = null;
   if (domainValid) {
-    const zone = await findHostedZone(clients.route53, input.domain);
-    hostedZoneId = zone?.id ?? null;
-    if (!zone) {
-      warnings.push(
-        `No existe hosted zone Route53 para ${input.domain}; se creará y deberás apuntar los NS en tu registrador.`
-      );
+    const zones = await listPublicHostedZones(clients.route53);
+    const match = matchHostedZone(zones, input.domain);
+    hostedZoneId = match.exact?.id ?? null;
+    if (!match.exact) {
+      if (match.parent) {
+        // Existe la zona PADRE: los registros de correo se crean AHÍ; NO se crea una zona nueva
+        // (crear una zona hija duplicada sería una misconfiguración de DNS).
+        parentZone = { id: match.parent.id, name: match.parent.name };
+        warnings.push(
+          `No hay zona Route53 exacta para ${input.domain}, pero existe la zona padre ${match.parent.name} (${match.parent.id}); los registros de correo se crearán en esa zona.`
+        );
+      } else {
+        warnings.push(
+          `No existe hosted zone Route53 para ${input.domain}; se creará y deberás apuntar los NS en tu registrador.`
+        );
+      }
     }
   } else {
     warnings.push(`El dominio "${input.domain}" no es un FQDN válido.`);
@@ -89,6 +103,7 @@ export async function runPreflight(
       mailHostname: domainValid ? mailHostname(input.domain) : '',
       hostedZoneId,
       hostedZoneExists: hostedZoneId !== null,
+      parentZone,
     },
     s3: {
       enabled: input.useS3,
