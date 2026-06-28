@@ -4,6 +4,28 @@
 > Objetivo: un CLI interactivo que, con tus claves AWS, deja un **servidor de correo completo**
 > corriendo en EC2 y recibiendo correo real — sin tocar la consola web de AWS a mano.
 
+## 0. Misión (el filtro de TODA decisión técnica)
+
+Dar a PYMEs y freelancers (20–100 personas) un servidor de correo **propio, casi sin costo por
+buzón y "infinito"**, frente a los $5–10/usuario/mes comerciales (50 pers × $7 = $350/mes; 100 =
+$700) que para ellos es insufrible. **Meta concreta: empresa de ~50 personas con correo
+prácticamente ilimitado por ~$50/mes.**
+
+**Palanca de costo:** EC2 modesto + **S3 bien configurado** como store de bulk (cuerpos + adjuntos =
+"gigas y gigas" a ~$0.023/GB/mes), NO inflando EBS (más caro) ni Mongo. Sin licencias por asiento,
+**open source**, costo marginal por buzón ≈ 0. **Esto convierte el S3 cifrado de "opcional" en
+CENTRAL/DEFAULT** — es lo que hace verdadero el caso de costo.
+
+**Principios derivados (no negociables):**
+1. **Mail data → S3 cifrado como store primario** (cuerpos también, no solo adjuntos); minimizar EBS.
+2. **Costo transparente**: el CLI MUESTRA costo total estimado + **$/buzón/mes** (probar la tesis).
+3. **Entregabilidad VERIFICADA**: DKIM/SPF/DMARC/PTR/TLS no solo configurados sino chequeados
+   post-install — si el correo cae en spam, el producto no sirve (existencial).
+4. **Turnkey**: "llegar, instalar y todo funciona"; cero fricción/consultor/ops.
+
+Ante cualquier opción técnica: "¿baja el costo por buzón y/o hace el install más turnkey?". Si no,
+reconsiderar.
+
 ## 1. Objetivo y alcance
 
 Un comando (`bifrost-provision`) que guía paso a paso:
@@ -132,19 +154,40 @@ packages/provisioner/
   (`sts:GetCallerIdentity`); listar regiones; listar tipos EC2 curados con specs+precio (sizing
   all-in-one); validar el dominio y detectar hosted zone Route53; validar nombre de bucket S3 y
   toggle de cifrado. **Testeable con SDK mocks, cero costo.** ← primer PR.
-- **F-E2 — Plan + state + teardown:** dry-run que imprime el grafo completo + costo estimado;
-  state file; comando teardown (aún sin crear nada real). Cierra la columna de seguridad/coste.
-- **F-E2.5 — S3 cifrado + KMS (D10/D11):** crear CMK + bucket endurecido (block-public, SSE-KMS,
-  versioning, policy deny-unencrypted/deny-no-TLS); generar la config de storage de Bifrost
-  (provider s3, secret cifrado). EBS encryption con la CMK. Idempotente + teardown.
+- **F-E2 — Plan + state + teardown + COSTO:** dry-run que imprime el grafo completo + **costo
+  total estimado/mes Y $/buzón/mes** (EC2 + EBS + S3 + transferencia) para N buzones — la métrica
+  que prueba la tesis "50 personas ≈ $50/mes" (misión §0). State file; comando teardown.
+- **F-E2.5 — S3 cifrado + KMS (D10/D11) — store PRIMARIO de bulk:** crear CMK + bucket endurecido
+  (block-public, SSE-KMS, versioning, policy deny-unencrypted/deny-no-TLS); generar la config de
+  storage de Bifrost (provider s3, secret cifrado). EBS encryption con la CMK. **El correo en bulk
+  (cuerpos+adjuntos) vive acá, no en EBS** (palanca de costo, misión §0). Idempotente + teardown.
 - **F-E3 — Red + cómputo:** KeyPair (importar/crear), Security Group, Elastic IP, EC2 (user-data
   instala Docker + docker-mailserver + **Bifrost compose** all-in-one, apuntando el storage al
-  bucket S3 cifrado). Idempotente + resumible.
+  bucket S3 cifrado). Idempotente + resumible. **DECISIÓN ABIERTA DE ARQUITECTURA (ver §8).**
 - **F-E4 — DNS:** Route53 hosted zone (detectar/crear) + A/MX/SPF/DMARC; aviso de PTR.
-- **F-E5 — Correo:** SSH → crear cuentas, generar DKIM, publicar DKIM en Route53, TLS Let's Encrypt;
-  verificación de puertos/DNS/TLS; **recibir un correo de prueba**.
-- **F-E6 — Bifrost conectado:** apuntar la webapp al IMAP/SMTP del box (y, opcional, desplegar
-  Bifrost en el mismo EC2).
+- **F-E5 — Correo + ENTREGABILIDAD VERIFICADA:** SSH → crear cuentas, generar DKIM, publicar DKIM
+  en Route53, TLS Let's Encrypt; **verificar** puertos/DNS(MX/SPF/DKIM/DMARC)/TLS y hacer un
+  **envío+recepción de prueba contra un checker** (no solo "configurado": comprobado que NO cae en
+  spam — existencial, misión §0).
+- **F-E6 — Bifrost conectado:** la webapp (en el mismo EC2) usa el IMAP/SMTP local y el storage S3.
 
 Cada fase: typecheck+lint+test (mocks) verdes + review B/C/D antes de avanzar. La prueba con AWS
 real la corre el PM al final de F-E5.
+
+## 8. DECISIÓN ABIERTA — dónde vive el bulk del correo (clave para la tesis de costo)
+
+La misión (§0) exige que los **gigas y gigas de correo vivan en S3 barato**, no en EBS. Pero
+docker-mailserver guarda el **maildir en filesystem (EBS)**. Hay tensión; opciones:
+
+- **(A) docker-mailserver en EBS + S3 solo para adjuntos/archivo** (lo más simple, v1 más rápida).
+  El maildir completo crece en EBS → con volumen alto el costo NO baja tanto. Tesis parcial.
+- **(B) Bifrost como store S3-nativo** (máxima tesis de costo): Postfix recibe → entrega por
+  LMTP/pipe a Bifrost → Bifrost guarda cuerpo+adjuntos en **S3 cifrado** + metadata en Mongo; el
+  IMAP lo sirve Bifrost desde S3. EBS queda mínimo. Es un **rework grande** del modelo de storage.
+- **(C) Híbrido con tiering** (recomendado pragmático): v1 funciona con (A) para tener correo REAL
+  rápido; luego un **cap de EBS + lifecycle** que offloadea cuerpos viejos a S3 y Bifrost los sirve
+  desde ahí. Llega a la tesis de costo por etapas sin bloquear un v1 funcionando.
+
+**Recomendación A→C:** v1 funcionando (A) para validar entregabilidad con AWS real cuanto antes,
+y la pasada de optimización de costo (tiering a S3) como fase dedicada. Confirmar con el PM antes
+de F-E3.
