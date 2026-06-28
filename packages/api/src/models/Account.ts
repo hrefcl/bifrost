@@ -13,6 +13,8 @@ export interface IAccount extends Document {
   status: AccountStatus;
   lastError?: string;
   lastSyncedAt?: Date;
+  /** Cuota de adjuntos subidos, en bytes. 0/ausente = sin límite (ver enforcement en attachments). */
+  quotaBytes?: number;
   createdAt: Date;
   updatedAt: Date;
 
@@ -82,6 +84,8 @@ const AccountSchema = new Schema<IAccount>(
     status: { type: String, enum: ['active', 'syncing', 'error', 'disabled'], default: 'active' },
     lastError: { type: String },
     lastSyncedAt: { type: Date },
+    // Cuota de adjuntos en bytes (0 = sin límite). La fija el admin; se aplica al subir adjuntos.
+    quotaBytes: { type: Number, default: 0, min: 0 },
   },
   { timestamps: true }
 );

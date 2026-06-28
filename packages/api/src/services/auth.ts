@@ -55,6 +55,16 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   account: IAccount;
   isNew: boolean;
 }> {
+  // Una cuenta DESHABILITADA por el admin no puede iniciar sesión (ni reactivarse sola en el
+  // upsert de abajo). Se chequea ANTES de verificar IMAP para no exponer un oráculo de credenciales
+  // sobre cuentas bloqueadas. statusCode 403 → el error handler lo devuelve como 403 (no 500).
+  const existing = await Account.findOne({ email: input.email }).select('status').lean();
+  if (existing?.status === 'disabled') {
+    const err = new Error('Account disabled') as Error & { statusCode?: number };
+    err.statusCode = 403;
+    throw err;
+  }
+
   const isValid = await verifyImapCredentials(input);
   if (!isValid) {
     throw new Error('Invalid IMAP credentials');

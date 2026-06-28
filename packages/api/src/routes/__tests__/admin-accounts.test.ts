@@ -1,0 +1,194 @@
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+
+// IMAP mock: el alta de cuenta verifica credenciales reales (connect/logout) → las resolvemos.
+vi.mock('imapflow', () => {
+  class ImapFlow {
+    constructor(_opts: unknown) {}
+    async connect(): Promise<void> {}
+    async logout(): Promise<void> {}
+  }
+  return { ImapFlow };
+});
+
+import {
+  setupTestDb,
+  teardownTestDb,
+  resetState,
+  buildTestApp,
+  authHeaders,
+  seedUserWithAccount,
+} from '../../../test/integration-helper.js';
+import { User } from '../../models/User.js';
+import { Account } from '../../models/Account.js';
+
+const newAccountBody = (email: string) => ({
+  email,
+  password: 'pw-123',
+  displayName: 'Nuevo Usuario',
+  imapHost: 'imap.empresa.com',
+  imapPort: 993,
+  imapSecure: true,
+  smtpHost: 'smtp.empresa.com',
+  smtpPort: 465,
+  smtpSecure: true,
+  quotaBytes: 50 * 1024 * 1024,
+});
+
+async function seedAdmin(app: Awaited<ReturnType<typeof buildTestApp>>) {
+  const { user, account } = await seedUserWithAccount({ email: 'admin@test.com' });
+  await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+  return { headers: authHeaders(app, user._id.toString()), user, account };
+}
+
+describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
+  beforeAll(async () => {
+    await setupTestDb();
+  });
+  afterAll(async () => {
+    await teardownTestDb();
+  });
+  beforeEach(async () => {
+    await resetState();
+  });
+
+  it('POST /accounts crea una cuenta (verifica IMAP) y GET /accounts la lista con su cuota', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('nuevo@empresa.com'),
+    });
+    expect(create.statusCode).toBe(201);
+
+    const list = await app.inject({ method: 'GET', url: '/api/admin/accounts', headers });
+    expect(list.statusCode).toBe(200);
+    const body = JSON.parse(list.body) as {
+      accounts: { email: string; quotaBytes: number; status: string }[];
+    };
+    const created = body.accounts.find((a) => a.email === 'nuevo@empresa.com');
+    expect(created).toBeTruthy();
+    expect(created?.quotaBytes).toBe(50 * 1024 * 1024);
+    expect(created?.status).toBe('active');
+    await app.close();
+  });
+
+  it('POST /accounts con email existente → 409', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    await seedUserWithAccount({ email: 'ya@empresa.com' });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('ya@empresa.com'),
+    });
+    expect(res.statusCode).toBe(409);
+    await app.close();
+  });
+
+  it('PATCH /accounts/:id deshabilita y fija cuota; deshabilitar la propia cuenta admin → 400', async () => {
+    const app = await buildTestApp();
+    const { headers, account: adminAccount } = await seedAdmin(app);
+    const { account } = await seedUserWithAccount({ email: 'target@empresa.com' });
+
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${account._id.toString()}`,
+      headers,
+      payload: { status: 'disabled', quotaBytes: 10 * 1024 * 1024 },
+    });
+    expect(patch.statusCode).toBe(200);
+    const updated = await Account.findById(account._id).lean();
+    expect(updated?.status).toBe('disabled');
+    expect(updated?.quotaBytes).toBe(10 * 1024 * 1024);
+
+    // Auto-bloqueo prohibido.
+    const self = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${adminAccount._id.toString()}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(self.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('DELETE /accounts/:id elimina la cuenta y su usuario; borrar la propia → 400', async () => {
+    const app = await buildTestApp();
+    const { headers, account: adminAccount } = await seedAdmin(app);
+    const { user, account } = await seedUserWithAccount({ email: 'borrar@empresa.com' });
+
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/accounts/${account._id.toString()}`,
+      headers,
+    });
+    expect(del.statusCode).toBe(200);
+    expect(await Account.findById(account._id).lean()).toBeNull();
+    expect(await User.findById(user._id).lean()).toBeNull();
+
+    const self = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/accounts/${adminAccount._id.toString()}`,
+      headers,
+    });
+    expect(self.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('una cuenta deshabilitada no puede iniciar sesión (403)', async () => {
+    const app = await buildTestApp();
+    const { account } = await seedUserWithAccount({ email: 'bloqueada@empresa.com' });
+    await Account.updateOne({ _id: account._id }, { $set: { status: 'disabled' } });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: {
+        email: 'bloqueada@empresa.com',
+        password: 'pw',
+        imapHost: 'imap.x',
+        imapPort: 993,
+        imapSecure: true,
+        smtpHost: 'smtp.x',
+        smtpPort: 465,
+        smtpSecure: true,
+      },
+    });
+    expect(res.statusCode).toBe(403);
+    await app.close();
+  });
+
+  it('branding: PUT admin lo guarda y el GET público /api/branding lo devuelve (sin auth)', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { companyName: 'ACME Corp', accentColor: '#ff0000', tagline: 'Hola' },
+    });
+    expect(put.statusCode).toBe(200);
+
+    const pub = await app.inject({ method: 'GET', url: '/api/branding' });
+    expect(pub.statusCode).toBe(200);
+    const body = JSON.parse(pub.body) as { companyName: string; accentColor: string };
+    expect(body.companyName).toBe('ACME Corp');
+    expect(body.accentColor).toBe('#ff0000');
+    await app.close();
+  });
+
+  it('branding: rechaza color inválido (400)', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { accentColor: 'rojo' },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+});

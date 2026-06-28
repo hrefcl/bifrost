@@ -546,6 +546,10 @@ onMounted(async () => {
 }
 .field {
   width: 100%;
+  /* border-box: sin esto, width:100% + padding + borde se SUMAN y el input desborda su
+     contenedor (notorio en datetime-local, que además trae ancho intrínseco propio). */
+  box-sizing: border-box;
+  min-width: 0;
   padding: 10px 12px;
   font: inherit;
   font-size: 14px;
@@ -568,6 +572,9 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  /* min-width:0: un item de grid tiene min-width:auto por defecto y NO se encoge por debajo
+     del contenido → el datetime-local interno ensancharía la columna y desbordaría el modal. */
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-2);

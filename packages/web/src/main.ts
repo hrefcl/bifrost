@@ -5,13 +5,16 @@ import App from './App.vue';
 import router from './router';
 import SetupWizard from './views/SetupWizard.vue';
 import { i18n, initLocaleAttr } from './i18n';
-import { applyBrand } from './config/brand';
+import { applyBrand, loadRemoteBrand } from './config/brand';
 import './assets/main.css';
 
 async function bootstrap() {
   // Marca (white-label) + idioma: aplicar antes de montar para evitar parpadeo.
   applyBrand();
   initLocaleAttr();
+  // Branding de runtime del admin (nombre/logo/color de empresa). Pisa el default por env. Se
+  // awaitea antes de montar para no mostrar la marca por defecto y luego "saltar" a la de empresa.
+  await loadRemoteBrand();
 
   try {
     const { data } = await axios.get<{ setupRequired: boolean }>('/api/setup/status');

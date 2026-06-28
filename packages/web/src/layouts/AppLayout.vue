@@ -39,6 +39,18 @@ function pickLocale(l: Locale) {
 function isActive(name: string) {
   return route.name === name;
 }
+
+// Logout: revoca la sesión en backend + limpia el token, cierra el menú y SIEMPRE redirige
+// a login. El push va en `finally` para volver al login aunque el POST /auth/logout falle
+// (la sesión local igual quedó limpia → quedarse en una vista protegida sería un estado roto).
+async function onLogout() {
+  menuOpen.value = false;
+  try {
+    await auth.logout();
+  } finally {
+    await router.push({ name: 'login' });
+  }
+}
 </script>
 
 <template>
@@ -143,7 +155,7 @@ function isActive(name: string) {
             <AppIcon v-if="locale === l" name="check" :size="16" class="menu-check" />
           </button>
           <div class="menu-sep" />
-          <button class="menu-item danger" @click="auth.logout()">
+          <button class="menu-item danger" @click="onLogout()">
             <AppIcon name="logout" :size="17" />
             <span>{{ t('nav.logout') }}</span>
           </button>

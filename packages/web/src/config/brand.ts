@@ -1,13 +1,14 @@
+import { reactive } from 'vue';
+
 /**
- * Identidad de marca PARAMETRIZABLE (white-label).
+ * Identidad de marca PARAMETRIZABLE (white-label), en DOS capas:
  *
- * El proyecto es «Bifrost», pero el nombre, versión, color de acento y eslogan que ve el
- * usuario son configurables sin tocar código: se leen de variables de entorno `VITE_BRAND_*`
- * en tiempo de build (p. ej. en el Dockerfile.web o un `.env` de la web). Así un operador puede
- * personalizar la plataforma con su propia marca. Si no se definen, el default es Bifrost.
+ *  1. Build-time (env `VITE_BRAND_*`): el default que se hornea en la imagen. Si no se define, Bifrost.
+ *  2. Runtime (admin): lo que el administrador guarda en `/api/admin/config/branding` (nombre, logo,
+ *     color, eslogan) se sirve sin auth por `/api/branding` y PISA al default en el arranque.
  *
- * Más adelante esto puede alimentarse también desde la config del sistema (admin) en runtime;
- * la forma del objeto `Brand` es el contrato estable que consume toda la UI.
+ * `brand` es REACTIVO: al guardar en el panel admin se actualiza en vivo (logo/nombre) sin recargar.
+ * La forma del objeto `Brand` es el contrato estable que consume toda la UI.
  */
 export interface Brand {
   /** Nombre de la plataforma mostrado en logo, login, título de pestaña, etc. */
@@ -18,6 +19,8 @@ export interface Brand {
   accent: string;
   /** Eslogan/pie mostrado bajo el logo en el login. */
   tagline: string;
+  /** Logo de empresa (data URL) configurado por el admin; null → se usa el ícono por defecto. */
+  logoUrl: string | null;
 }
 
 /** Devuelve el valor de entorno si tiene contenido tras trim, o el default. */
@@ -27,17 +30,51 @@ function envOr(value: string | undefined, fallback: string): string {
 }
 
 /** Acento validado como HEX (se inyecta en CSS vars / color-mix). Si no, default. */
+function isHex(v: string): boolean {
+  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v);
+}
 function envAccent(value: string | undefined, fallback: string): string {
   const v = (value ?? '').trim();
-  return /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(v) ? v : fallback;
+  return isHex(v) ? v : fallback;
 }
 
-export const brand: Brand = {
+/** Defaults por env (capa build-time). Se conservan como fallback de la capa runtime. */
+const defaults: Brand = {
   name: envOr(import.meta.env.VITE_BRAND_NAME, 'Bifrost'),
   version: envOr(import.meta.env.VITE_BRAND_VERSION, '6.0'),
   accent: envAccent(import.meta.env.VITE_BRAND_ACCENT, '#1b66ff'),
   tagline: envOr(import.meta.env.VITE_BRAND_TAGLINE, 'IMAP & JMAP'),
+  logoUrl: null,
 };
+
+export const brand: Brand = reactive({ ...defaults });
+
+interface RemoteBranding {
+  companyName: string | null;
+  tagline: string | null;
+  accentColor: string | null;
+  logoDataUrl: string | null;
+}
+
+/**
+ * Carga el branding de runtime del admin y lo MERGEA sobre los defaults (sólo pisa los campos que
+ * el admin haya definido). Idempotente y tolerante: si el endpoint falla, se mantiene el default por
+ * env (nunca rompe el arranque). Reaplica la marca al documento tras mergear.
+ */
+export async function loadRemoteBrand(): Promise<void> {
+  try {
+    const res = await fetch('/api/branding');
+    if (!res.ok) return;
+    const b = (await res.json()) as RemoteBranding;
+    if (b.companyName) brand.name = b.companyName;
+    if (b.tagline) brand.tagline = b.tagline;
+    if (b.accentColor && isHex(b.accentColor)) brand.accent = b.accentColor;
+    brand.logoUrl = b.logoDataUrl ?? null;
+    applyBrand();
+  } catch {
+    // Sin branding remoto → queda el default por env (no es un error fatal del arranque).
+  }
+}
 
 /**
  * Aplica la marca al documento: inyecta el color de acento (y su derivado oscuro) como

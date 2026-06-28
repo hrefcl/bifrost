@@ -3,6 +3,62 @@ import { z } from 'zod';
 import { requireAdmin } from '../lib/authz.js';
 import { getStorageConfigPublic, setStorageConfig } from '../services/storage/index.js';
 import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js';
+import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
+import { loginOrRegister } from '../services/auth.js';
+import { User } from '../models/User.js';
+import { Account } from '../models/Account.js';
+import { Email } from '../models/Email.js';
+import { Folder } from '../models/Folder.js';
+import { AttachmentBlob } from '../models/AttachmentBlob.js';
+
+const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
+const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+// Logo como data URL base64 (sin SVG: un SVG podría traer scripts; aunque en <img> no ejecutan,
+// lo excluimos por defensa en profundidad). Cap de ~256KB decodificados para no inflar el doc.
+const LOGO_MAX_BYTES = 256 * 1024;
+const logoDataUrl = z
+  .string()
+  .regex(/^data:image\/(png|jpe?g|webp|gif);base64,[A-Za-z0-9+/]+={0,2}$/, 'logo inválido')
+  .refine((v) => {
+    const b64 = v.slice(v.indexOf(',') + 1);
+    return Math.floor((b64.length * 3) / 4) <= LOGO_MAX_BYTES;
+  }, 'el logo supera 256KB');
+
+const brandingSchema = z
+  .object({
+    companyName: z.string().trim().max(60).optional(),
+    tagline: z.string().trim().max(80).optional(),
+    accentColor: z.string().regex(HEX, 'color inválido').optional(),
+    // '' o null LIMPIAN el logo; un data URL válido lo fija; ausente = no tocar.
+    logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+  })
+  .strict();
+
+// Alta de cuenta por el admin (mismo contrato que el login + cuota/nombre). El backend verifica
+// las credenciales IMAP reales antes de crear (createAccount reusa loginOrRegister).
+const createAccountSchema = z
+  .object({
+    email: z.string().email(),
+    password: z.string().min(1),
+    displayName: z.string().trim().max(120).optional(),
+    imapHost: z.string().min(1),
+    imapPort: z.number().int().min(1).max(65535),
+    imapSecure: z.boolean(),
+    smtpHost: z.string().min(1),
+    smtpPort: z.number().int().min(1).max(65535),
+    smtpSecure: z.boolean(),
+    quotaBytes: z.number().int().min(0).optional(),
+  })
+  .strict();
+
+const updateAccountSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    quotaBytes: z.number().int().min(0).optional(),
+    // El admin sólo conmuta active⇄disabled; 'syncing'/'error' los maneja el sistema.
+    status: z.enum(['active', 'disabled']).optional(),
+  })
+  .strict();
 
 // `local` (sin config) o `s3` (endpoint opcional + bucket/region/keys; el secret se cifra al
 // persistir). Union discriminada → `.strict()` rechaza campos extra y mezclas inválidas.
@@ -84,6 +140,140 @@ export default function adminRoutes(fastify: FastifyInstance) {
         message: 'No se pudo conectar al bucket S3 con esos datos. Revisá endpoint/credenciales.',
       });
     }
+    return { ok: true };
+  });
+
+  // ---- Branding (white-label en runtime) ----
+  // GET con metadatos de auditoría (updatedBy/At) para el panel; la vista pública SIN auth vive en
+  // /api/branding.
+  fastify.get('/config/branding', async () => {
+    const cfg = await getBranding();
+    return { ...toPublicBranding(cfg), updatedBy: cfg.updatedBy, updatedAt: cfg.updatedAt };
+  });
+
+  fastify.put('/config/branding', async (request) => {
+    const body = brandingSchema.parse(request.body);
+    const cfg = await setBranding(body, request.user.userId);
+    return { ...toPublicBranding(cfg), updatedBy: cfg.updatedBy, updatedAt: cfg.updatedAt };
+  });
+
+  // ---- Gestión de cuentas (Roundcube administrable) ----
+  // Lista todas las cuentas con su usuario, estado, cuota y uso REAL de almacenamiento de adjuntos
+  // (suma de blobs del usuario) — no un número inventado.
+  fastify.get('/accounts', async () => {
+    const accounts = await Account.find()
+      .select('email name isPrimary status lastSyncedAt quotaBytes userId')
+      .sort({ createdAt: 1 })
+      .lean();
+    const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
+    const users = await User.find({ _id: { $in: userIds } })
+      .select('displayName primaryEmail role')
+      .lean();
+    const userById = new Map(users.map((u) => [u._id.toString(), u]));
+    // Uso por usuario = suma de bytes de sus AttachmentBlob (lo único que almacenamos nosotros;
+    // el correo vive en el servidor IMAP). Un solo aggregate para todos.
+    const usageAgg = await AttachmentBlob.aggregate<{ _id: unknown; used: number }>([
+      { $match: { userId: { $in: accounts.map((a) => a.userId) } } },
+      { $group: { _id: '$userId', used: { $sum: '$size' } } },
+    ]);
+    const usedByUser = new Map(usageAgg.map((u) => [String(u._id), u.used]));
+    return {
+      accounts: accounts.map((a) => {
+        const u = userById.get(a.userId.toString());
+        return {
+          id: a._id.toString(),
+          userId: a.userId.toString(),
+          email: a.email,
+          name: a.name,
+          displayName: u?.displayName ?? a.name,
+          role: u?.role ?? 'user',
+          isPrimary: a.isPrimary,
+          status: a.status,
+          quotaBytes: a.quotaBytes ?? 0,
+          usedBytes: usedByUser.get(a.userId.toString()) ?? 0,
+          lastSyncedAt: a.lastSyncedAt ? a.lastSyncedAt.toISOString() : null,
+        };
+      }),
+    };
+  });
+
+  // Crea una cuenta (verifica credenciales IMAP reales vía loginOrRegister antes de persistir).
+  fastify.post('/accounts', async (request, reply) => {
+    const body = createAccountSchema.parse(request.body);
+    const { user, account, isNew } = await loginOrRegister(body);
+    if (!isNew) {
+      // El email ya existía: no es un alta. Avisar en vez de fingir creación.
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Ya existe una cuenta con ese email.',
+      });
+    }
+    const set: Record<string, unknown> = {};
+    if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
+    if (Object.keys(set).length > 0) await Account.updateOne({ _id: account._id }, { $set: set });
+    if (body.displayName) {
+      await User.updateOne({ _id: user._id }, { $set: { displayName: body.displayName } });
+    }
+    return reply.code(201).send({
+      id: account._id.toString(),
+      email: account.email,
+      status: account.status,
+      quotaBytes: body.quotaBytes ?? 0,
+    });
+  });
+
+  // Edita una cuenta: nombre, cuota y habilitar/deshabilitar. No permite que un admin se
+  // deshabilite a SÍ MISMO (se dejaría afuera). El nombre vive en el usuario dueño.
+  fastify.patch('/accounts/:id', async (request, reply) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const body = updateAccountSchema.parse(request.body);
+    const account = await Account.findById(id).select('userId').lean();
+    if (!account) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+    }
+    if (body.status === 'disabled' && account.userId.toString() === request.user.userId) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'No podés deshabilitar tu propia cuenta de administrador.',
+      });
+    }
+    const set: Record<string, unknown> = {};
+    if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
+    if (body.status !== undefined) set.status = body.status;
+    if (Object.keys(set).length > 0) await Account.updateOne({ _id: id }, { $set: set });
+    if (body.displayName) {
+      await User.updateOne({ _id: account.userId }, { $set: { displayName: body.displayName } });
+    }
+    return { ok: true };
+  });
+
+  // Elimina una cuenta y su correo cacheado (emails/folders). Si era la última del usuario, borra
+  // también el usuario. No permite borrar la cuenta del propio admin (anti auto-lockout). Los blobs
+  // de adjuntos quedan para el GC (son por-usuario y mark-and-sweep).
+  fastify.delete('/accounts/:id', async (request, reply) => {
+    const { id } = z.object({ id: objectId }).parse(request.params);
+    const account = await Account.findById(id).select('userId').lean();
+    if (!account) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+    }
+    if (account.userId.toString() === request.user.userId) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'No podés eliminar tu propia cuenta de administrador.',
+      });
+    }
+    await Account.deleteOne({ _id: id });
+    await Email.deleteMany({ accountId: id });
+    await Folder.deleteMany({ accountId: id });
+    const remaining = await Account.countDocuments({ userId: account.userId });
+    if (remaining === 0) await User.deleteOne({ _id: account.userId });
     return { ok: true };
   });
 }

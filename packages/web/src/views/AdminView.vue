@@ -1,20 +1,280 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, computed } from 'vue';
 import { AxiosError } from 'axios';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
+import AppIcon from '@/components/AppIcon.vue';
 import { api } from '@/lib/http';
+import { brand, applyBrand } from '@/config/brand';
 
 /**
- * Panel de administración — Paso 1: almacenamiento de adjuntos.
- *
- * El backend (`/api/admin/config/storage`) exige rol admin. Soporta `local` (sin config) y
- * `s3` (endpoint opcional + bucket/region/keys; el secret se cifra server-side y nunca vuelve).
- * El secret NO se pre-rellena al editar: si ya está configurado, hay que re-ingresarlo para
- * guardar cambios (el backend lo exige).
+ * Panel de administración (Roundcube administrable) con tres secciones:
+ *  - Cuentas: alta/edición/baja de cuentas y cuota de almacenamiento.
+ *  - Marca: branding white-label en runtime (nombre, eslogan, color, logo de empresa).
+ *  - Almacenamiento: destino de los adjuntos (local / S3) — wizard preexistente.
+ * Todo exige rol admin (verificado también en el backend).
  */
-type ProviderType = 'local' | 's3';
+type Tab = 'accounts' | 'branding' | 'storage';
+const tab = ref<Tab>('accounts');
 
+const { t, locale } = useI18n();
+
+/** Fecha legible y localizada (en vez del ISO crudo). */
+function fmtDate(iso: string): string {
+  return new Date(iso).toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' });
+}
+
+/** Bytes → unidad legible (para cuotas y uso). */
+function fmtBytes(n: number): string {
+  if (n <= 0) return '0 MB';
+  const mb = n / (1024 * 1024);
+  if (mb >= 1024) return `${(mb / 1024).toFixed(1)} GB`;
+  return `${mb < 10 ? mb.toFixed(1) : Math.round(mb).toString()} MB`;
+}
+
+// ============================ CUENTAS ============================
+interface AdminAccount {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  displayName: string;
+  role: 'user' | 'admin';
+  isPrimary: boolean;
+  status: 'active' | 'syncing' | 'error' | 'disabled';
+  quotaBytes: number;
+  usedBytes: number;
+  lastSyncedAt: string | null;
+}
+
+const accounts = ref<AdminAccount[]>([]);
+const accLoading = ref(true);
+const accError = ref('');
+
+async function loadAccounts() {
+  accLoading.value = true;
+  accError.value = '';
+  try {
+    const { data } = await api.get<{ accounts: AdminAccount[] }>('/admin/accounts');
+    accounts.value = data.accounts;
+  } catch {
+    accError.value = t('admin.accounts.errLoad');
+  } finally {
+    accLoading.value = false;
+  }
+}
+
+// --- Alta de cuenta ---
+const showCreate = ref(false);
+const creating = ref(false);
+const createError = ref('');
+const blankCreate = () => ({
+  email: '',
+  password: '',
+  displayName: '',
+  imapHost: '',
+  imapPort: 993,
+  imapSecure: true,
+  smtpHost: '',
+  smtpPort: 465,
+  smtpSecure: true,
+  quotaMb: 0,
+});
+const form = ref(blankCreate());
+
+const createIncomplete = computed(
+  () =>
+    !form.value.email.trim() ||
+    !form.value.password ||
+    !form.value.imapHost.trim() ||
+    !form.value.smtpHost.trim()
+);
+
+async function createAccount() {
+  creating.value = true;
+  createError.value = '';
+  try {
+    await api.post('/admin/accounts', {
+      email: form.value.email.trim(),
+      password: form.value.password,
+      ...(form.value.displayName.trim() ? { displayName: form.value.displayName.trim() } : {}),
+      imapHost: form.value.imapHost.trim(),
+      imapPort: form.value.imapPort,
+      imapSecure: form.value.imapSecure,
+      smtpHost: form.value.smtpHost.trim(),
+      smtpPort: form.value.smtpPort,
+      smtpSecure: form.value.smtpSecure,
+      quotaBytes: Math.max(0, Math.round(form.value.quotaMb)) * 1024 * 1024,
+    });
+    showCreate.value = false;
+    form.value = blankCreate();
+    await loadAccounts();
+  } catch (err) {
+    if (err instanceof AxiosError && err.response?.status === 409) {
+      createError.value = t('admin.accounts.errExists');
+    } else if (err instanceof AxiosError && err.response?.status === 403) {
+      createError.value = t('admin.accounts.errImap');
+    } else {
+      createError.value = t('admin.accounts.errCreate');
+    }
+  } finally {
+    creating.value = false;
+  }
+}
+
+// --- Edición de cuota / nombre ---
+const editingId = ref<string | null>(null);
+const editQuotaMb = ref(0);
+const editName = ref('');
+const rowBusy = ref<string | null>(null);
+
+function startEdit(a: AdminAccount) {
+  editingId.value = a.id;
+  editQuotaMb.value = Math.round(a.quotaBytes / (1024 * 1024));
+  editName.value = a.displayName;
+}
+function cancelEdit() {
+  editingId.value = null;
+}
+async function saveEdit(a: AdminAccount) {
+  rowBusy.value = a.id;
+  try {
+    await api.patch(`/admin/accounts/${a.id}`, {
+      quotaBytes: Math.max(0, Math.round(editQuotaMb.value)) * 1024 * 1024,
+      ...(editName.value.trim() ? { displayName: editName.value.trim() } : {}),
+    });
+    editingId.value = null;
+    await loadAccounts();
+  } catch {
+    accError.value = t('admin.accounts.errSave');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+
+async function toggleStatus(a: AdminAccount) {
+  rowBusy.value = a.id;
+  accError.value = '';
+  try {
+    await api.patch(`/admin/accounts/${a.id}`, {
+      status: a.status === 'disabled' ? 'active' : 'disabled',
+    });
+    await loadAccounts();
+  } catch (err) {
+    accError.value =
+      err instanceof AxiosError && err.response?.status === 400
+        ? t('admin.accounts.errSelf')
+        : t('admin.accounts.errSave');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+
+async function removeAccount(a: AdminAccount) {
+  if (!confirm(t('admin.accounts.confirmDelete', { email: a.email }))) return;
+  rowBusy.value = a.id;
+  accError.value = '';
+  try {
+    await api.delete(`/admin/accounts/${a.id}`);
+    await loadAccounts();
+  } catch (err) {
+    accError.value =
+      err instanceof AxiosError && err.response?.status === 400
+        ? t('admin.accounts.errSelf')
+        : t('admin.accounts.errDelete');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+
+// ============================ MARCA (branding) ============================
+const brandForm = ref({ companyName: '', tagline: '', accentColor: '#1b66ff', logoDataUrl: '' });
+const brandLoading = ref(true);
+const brandSaving = ref(false);
+const brandSaved = ref(false);
+const brandError = ref('');
+
+async function loadBranding() {
+  brandLoading.value = true;
+  try {
+    const { data } = await api.get<{
+      companyName: string | null;
+      tagline: string | null;
+      accentColor: string | null;
+      logoDataUrl: string | null;
+    }>('/admin/config/branding');
+    brandForm.value.companyName = data.companyName ?? '';
+    brandForm.value.tagline = data.tagline ?? '';
+    brandForm.value.accentColor = data.accentColor ?? brand.accent;
+    brandForm.value.logoDataUrl = data.logoDataUrl ?? '';
+  } catch {
+    brandError.value = t('admin.branding.errLoad');
+  } finally {
+    brandLoading.value = false;
+  }
+}
+
+const LOGO_MAX = 256 * 1024;
+function onLogoPick(e: Event) {
+  brandError.value = '';
+  brandSaved.value = false;
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.type)) {
+    brandError.value = t('admin.branding.errType');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    // readAsDataURL siempre da string; el guard satisface el tipo (string | ArrayBuffer | null).
+    const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+    if (!dataUrl) return;
+    // ~33% de overhead base64; chequeo rápido contra el cap del backend (256KB).
+    if (dataUrl.length * 0.75 > LOGO_MAX) {
+      brandError.value = t('admin.branding.errSize');
+      return;
+    }
+    brandForm.value.logoDataUrl = dataUrl;
+  };
+  reader.readAsDataURL(file);
+}
+function clearLogo() {
+  brandForm.value.logoDataUrl = '';
+  brandSaved.value = false;
+}
+
+async function saveBranding() {
+  brandSaving.value = true;
+  brandSaved.value = false;
+  brandError.value = '';
+  try {
+    const payload = {
+      companyName: brandForm.value.companyName.trim(),
+      tagline: brandForm.value.tagline.trim(),
+      accentColor: brandForm.value.accentColor,
+      logoDataUrl: brandForm.value.logoDataUrl, // '' limpia el logo
+    };
+    await api.put('/admin/config/branding', payload);
+    // Aplicar en vivo (sin recargar): la marca es reactiva y la consume toda la UI.
+    brand.name = payload.companyName || 'Bifrost';
+    brand.tagline = payload.tagline || brand.tagline;
+    brand.accent = payload.accentColor;
+    brand.logoUrl = payload.logoDataUrl || null;
+    applyBrand();
+    brandSaved.value = true;
+  } catch (err) {
+    brandError.value =
+      err instanceof AxiosError && err.response?.status === 400
+        ? t('admin.branding.errInvalid')
+        : t('admin.branding.errSave');
+  } finally {
+    brandSaving.value = false;
+  }
+}
+
+// ============================ ALMACENAMIENTO (wizard preexistente) ============================
+type ProviderType = 'local' | 's3';
 interface PublicS3 {
   endpoint?: string;
   bucket: string;
@@ -22,19 +282,11 @@ interface PublicS3 {
   accessKeyId: string;
   secretConfigured: boolean;
 }
-
 interface StorageConfig {
   providerType: ProviderType;
   s3?: PublicS3;
   updatedBy?: string;
   updatedAt?: string;
-}
-
-const { t, locale } = useI18n();
-
-/** Fecha legible y localizada (en vez del ISO crudo — review D). */
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
 const loading = ref(true);
@@ -43,12 +295,10 @@ const saved = ref(false);
 const error = ref('');
 const selected = ref<ProviderType>('local');
 const current = ref<StorageConfig | null>(null);
-
-// Formulario S3 (el secret nunca llega del backend; arranca vacío).
 const s3 = ref({ endpoint: '', bucket: '', region: '', accessKeyId: '', secretAccessKey: '' });
 const secretAlreadyConfigured = ref(false);
 
-onMounted(async () => {
+async function loadStorage() {
   try {
     const { data } = await api.get<StorageConfig>('/admin/config/storage');
     current.value = data;
@@ -65,25 +315,24 @@ onMounted(async () => {
   } finally {
     loading.value = false;
   }
+}
+
+onMounted(async () => {
+  await Promise.all([loadAccounts(), loadBranding(), loadStorage()]);
 });
 
 function choose(provider: ProviderType) {
   selected.value = provider;
   saved.value = false;
   error.value = '';
-  tested.value = null; // el resultado de "Probar conexión" no aplica al nuevo provider.
-  // Defensa en profundidad: no retener el secret si el admin se va de S3 sin guardar.
+  tested.value = null;
   if (provider !== 's3') s3.value.secretAccessKey = '';
 }
-
-/** Limpia el "Guardado"/error/resultado-de-test previo al editar los campos (input handler). */
 function clearStatus() {
   saved.value = false;
   error.value = '';
   tested.value = null;
 }
-
-/** Faltan datos obligatorios para guardar S3 (el secret SIEMPRE se exige al guardar). */
 function s3Incomplete(): boolean {
   return (
     selected.value === 's3' &&
@@ -93,8 +342,6 @@ function s3Incomplete(): boolean {
       !s3.value.secretAccessKey)
   );
 }
-
-/** Objeto S3 con los campos del form (endpoint omitido si vacío). */
 function s3Payload() {
   return {
     ...(s3.value.endpoint.trim() ? { endpoint: s3.value.endpoint.trim() } : {}),
@@ -104,11 +351,8 @@ function s3Payload() {
     secretAccessKey: s3.value.secretAccessKey,
   };
 }
-
 const testing = ref(false);
 const tested = ref<'ok' | 'fail' | null>(null);
-
-/** Prueba la conexión S3 sin persistir (round-trip real en el backend). Feedback ✓/✗. */
 async function testConnection() {
   testing.value = true;
   tested.value = null;
@@ -122,7 +366,6 @@ async function testConnection() {
     testing.value = false;
   }
 }
-
 async function save() {
   saving.value = true;
   saved.value = false;
@@ -136,10 +379,9 @@ async function save() {
     current.value = data;
     selected.value = data.providerType;
     if (data.s3) secretAlreadyConfigured.value = data.s3.secretConfigured;
-    s3.value.secretAccessKey = ''; // no retener el secret en memoria tras guardar
+    s3.value.secretAccessKey = '';
     saved.value = true;
   } catch (err) {
-    // 400 = datos S3 inválidos (endpoint/region/campos rechazados por el backend).
     if (err instanceof AxiosError && err.response?.status === 400) {
       error.value = t('admin.errInvalid');
     } else {
@@ -156,16 +398,251 @@ async function save() {
     <div class="admin">
       <div class="admin-inner">
         <h1 class="admin-title">{{ t('admin.title') }}</h1>
-        <p class="admin-step">{{ t('admin.step') }}</p>
 
-        <div class="card">
+        <nav class="tabs">
+          <button class="tab" :class="{ active: tab === 'accounts' }" @click="tab = 'accounts'">
+            <AppIcon name="users" :size="16" /> {{ t('admin.tabs.accounts') }}
+          </button>
+          <button class="tab" :class="{ active: tab === 'branding' }" @click="tab = 'branding'">
+            <AppIcon name="settings" :size="16" /> {{ t('admin.tabs.branding') }}
+          </button>
+          <button class="tab" :class="{ active: tab === 'storage' }" @click="tab = 'storage'">
+            <AppIcon name="archive" :size="16" /> {{ t('admin.tabs.storage') }}
+          </button>
+        </nav>
+
+        <!-- ===================== CUENTAS ===================== -->
+        <div v-if="tab === 'accounts'" class="card">
+          <div class="card-head">
+            <div>
+              <h2 class="card-h">{{ t('admin.accounts.title') }}</h2>
+              <p class="card-desc">{{ t('admin.accounts.desc') }}</p>
+            </div>
+            <button class="btn-primary" @click="showCreate = !showCreate">
+              {{ showCreate ? t('admin.accounts.cancelNew') : t('admin.accounts.new') }}
+            </button>
+          </div>
+
+          <!-- Form de alta -->
+          <div v-if="showCreate" class="create-form" @input="createError = ''">
+            <div class="grid2">
+              <label class="fld"
+                ><span>{{ t('admin.accounts.email') }}</span
+                ><input v-model="form.email" class="adminput" placeholder="user@empresa.com"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('admin.accounts.password') }}</span
+                ><input
+                  v-model="form.password"
+                  type="password"
+                  class="adminput"
+                  autocomplete="new-password"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('admin.accounts.displayName') }}</span
+                ><input v-model="form.displayName" class="adminput"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('admin.accounts.quotaMb') }}</span
+                ><input v-model.number="form.quotaMb" type="number" min="0" class="adminput"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('admin.accounts.imapHost') }}</span
+                ><input v-model="form.imapHost" class="adminput" placeholder="imap.empresa.com"
+              /></label>
+              <div class="grid2 tight">
+                <label class="fld"
+                  ><span>{{ t('admin.accounts.imapPort') }}</span
+                  ><input v-model.number="form.imapPort" type="number" class="adminput"
+                /></label>
+                <label class="fld check2"
+                  ><input v-model="form.imapSecure" type="checkbox" /> {{ t('admin.accounts.tls') }}
+                </label>
+              </div>
+              <label class="fld"
+                ><span>{{ t('admin.accounts.smtpHost') }}</span
+                ><input v-model="form.smtpHost" class="adminput" placeholder="smtp.empresa.com"
+              /></label>
+              <div class="grid2 tight">
+                <label class="fld"
+                  ><span>{{ t('admin.accounts.smtpPort') }}</span
+                  ><input v-model.number="form.smtpPort" type="number" class="adminput"
+                /></label>
+                <label class="fld check2"
+                  ><input v-model="form.smtpSecure" type="checkbox" /> {{ t('admin.accounts.tls') }}
+                </label>
+              </div>
+            </div>
+            <p class="hint">{{ t('admin.accounts.imapHint') }}</p>
+            <div class="actions">
+              <button
+                class="btn-primary"
+                :disabled="creating || createIncomplete"
+                @click="createAccount"
+              >
+                {{ creating ? t('admin.accounts.creating') : t('admin.accounts.create') }}
+              </button>
+              <span v-if="createError" class="err-text">{{ createError }}</span>
+            </div>
+          </div>
+
+          <p v-if="accLoading" class="muted">{{ t('common.loading') }}</p>
+          <p v-else-if="accError" class="err-text">{{ accError }}</p>
+          <table v-else class="acc-table">
+            <thead>
+              <tr>
+                <th>{{ t('admin.accounts.colEmail') }}</th>
+                <th>{{ t('admin.accounts.colStatus') }}</th>
+                <th>{{ t('admin.accounts.colQuota') }}</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="a in accounts" :key="a.id" :class="{ dim: a.status === 'disabled' }">
+                <td>
+                  <template v-if="editingId === a.id">
+                    <input v-model="editName" class="adminput sm" />
+                  </template>
+                  <template v-else>
+                    <div class="acc-name">
+                      {{ a.displayName }}
+                      <span v-if="a.role === 'admin'" class="badge admin">admin</span>
+                    </div>
+                    <div class="acc-email">{{ a.email }}</div>
+                  </template>
+                </td>
+                <td>
+                  <span class="status" :class="a.status">{{
+                    t('admin.accounts.st.' + a.status)
+                  }}</span>
+                </td>
+                <td>
+                  <template v-if="editingId === a.id">
+                    <input v-model.number="editQuotaMb" type="number" min="0" class="adminput sm" />
+                    <span class="mb">MB</span>
+                  </template>
+                  <template v-else>
+                    <span class="quota">{{ fmtBytes(a.usedBytes) }}</span>
+                    <span class="quota-sep">/</span>
+                    <span class="quota">{{
+                      a.quotaBytes > 0 ? fmtBytes(a.quotaBytes) : t('admin.accounts.unlimited')
+                    }}</span>
+                  </template>
+                </td>
+                <td class="row-actions">
+                  <template v-if="editingId === a.id">
+                    <button class="link-btn" :disabled="rowBusy === a.id" @click="saveEdit(a)">
+                      {{ t('admin.accounts.saveRow') }}
+                    </button>
+                    <button class="link-btn" @click="cancelEdit">
+                      {{ t('admin.accounts.cancelRow') }}
+                    </button>
+                  </template>
+                  <template v-else>
+                    <button
+                      class="icon-act"
+                      :title="t('admin.accounts.edit')"
+                      @click="startEdit(a)"
+                    >
+                      <AppIcon name="settings" :size="16" />
+                    </button>
+                    <button
+                      class="icon-act"
+                      :disabled="rowBusy === a.id"
+                      :title="
+                        a.status === 'disabled'
+                          ? t('admin.accounts.enable')
+                          : t('admin.accounts.disable')
+                      "
+                      @click="toggleStatus(a)"
+                    >
+                      <AppIcon :name="a.status === 'disabled' ? 'check' : 'x'" :size="16" />
+                    </button>
+                    <button
+                      class="icon-act danger"
+                      :disabled="rowBusy === a.id"
+                      :title="t('admin.accounts.delete')"
+                      @click="removeAccount(a)"
+                    >
+                      <AppIcon name="trash" :size="16" />
+                    </button>
+                  </template>
+                </td>
+              </tr>
+              <tr v-if="accounts.length === 0">
+                <td colspan="4" class="muted center">{{ t('admin.accounts.empty') }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ===================== MARCA ===================== -->
+        <div v-else-if="tab === 'branding'" class="card">
+          <h2 class="card-h">{{ t('admin.branding.title') }}</h2>
+          <p class="card-desc">{{ t('admin.branding.desc') }}</p>
+          <p v-if="brandLoading" class="muted">{{ t('common.loading') }}</p>
+          <div v-else class="brand-form" @input="brandSaved = false">
+            <label class="fld"
+              ><span>{{ t('admin.branding.companyName') }}</span
+              ><input
+                v-model="brandForm.companyName"
+                class="adminput"
+                maxlength="60"
+                placeholder="Bifrost"
+            /></label>
+            <label class="fld"
+              ><span>{{ t('admin.branding.tagline') }}</span
+              ><input v-model="brandForm.tagline" class="adminput" maxlength="80"
+            /></label>
+            <label class="fld"
+              ><span>{{ t('admin.branding.accent') }}</span>
+              <span class="color-row">
+                <input v-model="brandForm.accentColor" type="color" class="color-input" />
+                <input v-model="brandForm.accentColor" class="adminput" maxlength="7" />
+              </span>
+            </label>
+            <label class="fld"
+              ><span>{{ t('admin.branding.logo') }}</span>
+              <div class="logo-row">
+                <div class="logo-preview" :class="{ empty: !brandForm.logoDataUrl }">
+                  <img v-if="brandForm.logoDataUrl" :src="brandForm.logoDataUrl" alt="logo" />
+                  <span v-else class="muted sm">{{ t('admin.branding.noLogo') }}</span>
+                </div>
+                <div class="logo-actions">
+                  <label class="btn-secondary file-btn">
+                    {{ t('admin.branding.pickLogo') }}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      hidden
+                      @change="onLogoPick"
+                    />
+                  </label>
+                  <button v-if="brandForm.logoDataUrl" class="link-btn" @click="clearLogo">
+                    {{ t('admin.branding.removeLogo') }}
+                  </button>
+                  <p class="hint">{{ t('admin.branding.logoHint') }}</p>
+                </div>
+              </div>
+            </label>
+            <div class="actions">
+              <button class="btn-primary" :disabled="brandSaving" @click="saveBranding">
+                {{ brandSaving ? t('admin.saving') : t('admin.save') }}
+              </button>
+              <span v-if="brandSaved" class="ok-text">{{ t('admin.saved') }}</span>
+              <span v-if="brandError" class="err-text">{{ brandError }}</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- ===================== ALMACENAMIENTO ===================== -->
+        <div v-else class="card">
           <h2 class="card-h">{{ t('admin.question') }}</h2>
           <p class="card-desc">{{ t('admin.questionDesc') }}</p>
 
           <p v-if="loading" class="muted">{{ t('common.loading') }}</p>
 
           <div v-else class="options">
-            <!-- LOCAL -->
             <label class="option" :class="{ active: selected === 'local' }">
               <input
                 type="radio"
@@ -183,7 +660,6 @@ async function save() {
               </span>
             </label>
 
-            <!-- S3 -->
             <label class="option" :class="{ active: selected === 's3' }">
               <input
                 type="radio"
@@ -201,7 +677,6 @@ async function save() {
               </span>
             </label>
 
-            <!-- Campos S3. @input descarta el "Guardado"/error previo al editar. -->
             <div v-if="selected === 's3'" class="s3-fields" @input="clearStatus">
               <label class="fld-lbl">{{ t('admin.endpoint') }}</label>
               <input
@@ -275,7 +750,7 @@ async function save() {
   background: var(--surface);
 }
 .admin-inner {
-  max-width: 640px;
+  max-width: 760px;
   margin: 0 auto;
   padding: 28px 32px;
 }
@@ -283,18 +758,48 @@ async function save() {
   font-size: 22px;
   font-weight: 600;
   letter-spacing: -0.02em;
-  margin: 0 0 2px;
+  margin: 0 0 16px;
 }
-.admin-step {
-  font-size: 13px;
-  color: var(--text-3);
-  margin: 0 0 22px;
+.tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+.tab:hover {
+  color: var(--text-1);
+}
+.tab.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
 }
 .card {
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 24px;
   background: var(--bg);
+}
+.card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 .card-h {
   font-size: 16px;
@@ -310,6 +815,18 @@ async function save() {
 .muted {
   font-size: 14px;
   color: var(--text-3);
+}
+.muted.sm {
+  font-size: 12px;
+}
+.center {
+  text-align: center;
+  padding: 18px 0;
+}
+.hint {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 8px 0 0;
 }
 .options {
   display: flex;
@@ -365,6 +882,11 @@ async function save() {
   color: #16a34a;
   background: color-mix(in srgb, #16a34a 14%, transparent);
 }
+.badge.admin {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  margin-left: 6px;
+}
 .s3-fields {
   display: flex;
   flex-direction: column;
@@ -388,6 +910,7 @@ async function save() {
 }
 .adminput {
   width: 100%;
+  box-sizing: border-box;
   padding: 9px 12px;
   font: inherit;
   font-size: 13.5px;
@@ -399,6 +922,10 @@ async function save() {
 }
 .adminput:focus {
   border-color: var(--accent);
+}
+.adminput.sm {
+  width: 96px;
+  padding: 6px 8px;
 }
 .actions {
   display: flex;
@@ -417,6 +944,7 @@ async function save() {
   background: var(--accent);
   color: #fff;
   cursor: pointer;
+  white-space: nowrap;
 }
 .btn-primary:hover:not(:disabled) {
   background: var(--accent-700);
@@ -458,5 +986,203 @@ async function save() {
   font-size: 12px;
   color: var(--text-3);
   margin: 8px 0 0;
+}
+
+/* ---- Cuentas ---- */
+.create-form {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 18px;
+  background: var(--surface-dim);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.grid2.tight {
+  gap: 8px;
+  align-items: end;
+}
+.fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.fld.check2 {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.acc-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+}
+.acc-table th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.acc-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.acc-table tr.dim {
+  opacity: 0.55;
+}
+.acc-name {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.acc-email {
+  font-size: 12.5px;
+  color: var(--text-3);
+}
+.status {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 9px;
+  border-radius: 12px;
+}
+.status.active {
+  color: #16a34a;
+  background: color-mix(in srgb, #16a34a 14%, transparent);
+}
+.status.disabled {
+  color: var(--text-3);
+  background: var(--hover);
+}
+.status.error {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+.status.syncing {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.quota {
+  color: var(--text-1);
+}
+.quota-sep {
+  color: var(--text-3);
+  margin: 0 4px;
+}
+.mb {
+  font-size: 12px;
+  color: var(--text-3);
+  margin-left: 4px;
+}
+.row-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  align-items: center;
+}
+.icon-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text-2);
+  cursor: pointer;
+}
+.icon-act:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text-1);
+}
+.icon-act.danger:hover:not(:disabled) {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+.icon-act:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.link-btn {
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+}
+.link-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ---- Marca ---- */
+.brand-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 460px;
+}
+.color-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.color-input {
+  width: 44px;
+  height: 38px;
+  padding: 2px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.logo-row {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.logo-preview {
+  width: 120px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.logo-preview.empty {
+  border-style: dashed;
+}
+.logo-preview img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+.logo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.file-btn {
+  display: inline-block;
+  cursor: pointer;
 }
 </style>

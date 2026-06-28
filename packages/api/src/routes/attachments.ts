@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify';
+import mongoose from 'mongoose';
 import { z } from 'zod';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
+import { Account } from '../models/Account.js';
 import { getActiveStorage, providerForType, newStorageKey } from '../services/storage/index.js';
 
 const MAX_BYTES = 25 * 1024 * 1024; // 25 MB (alineado con MAX_MESSAGE_BYTES del parseo IMAP)
@@ -105,6 +107,32 @@ export default function attachmentRoutes(fastify: FastifyInstance) {
         error: 'Too Many Requests',
         message: 'Attachment storage quota reached. Quitá adjuntos de borradores y reintentá.',
       });
+    }
+
+    // CUOTA DE BYTES por usuario (la fija el admin en la cuenta primaria; 0 = sin límite). Mismo
+    // patrón optimista-con-rollback que el cap de cantidad: sumamos los bytes del usuario YA con el
+    // blob creado y, si exceden la cuota, deshacemos (DOC-FIRST). 507 Insufficient Storage.
+    const primary = await Account.findOne({ userId: request.user.userId, isPrimary: true })
+      .select('quotaBytes')
+      .lean();
+    const quota = primary?.quotaBytes ?? 0;
+    if (quota > 0) {
+      const agg = await AttachmentBlob.aggregate<{ bytes: number }>([
+        { $match: { userId: new mongoose.Types.ObjectId(request.user.userId) } },
+        { $group: { _id: null, bytes: { $sum: '$size' } } },
+      ]);
+      const usedBytes = agg.at(0)?.bytes ?? 0;
+      if (usedBytes > quota) {
+        const del = await AttachmentBlob.deleteOne({ _id: blob._id }).catch(() => ({
+          deletedCount: 0,
+        }));
+        if (del.deletedCount === 1) await active.delete(storageKey).catch(() => undefined);
+        return reply.code(507).send({
+          statusCode: 507,
+          error: 'Insufficient Storage',
+          message: 'Cuota de almacenamiento alcanzada. Contactá al administrador.',
+        });
+      }
     }
 
     return {

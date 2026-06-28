@@ -94,6 +94,8 @@ export interface Account {
   status: AccountStatus;
   lastError?: string;
   lastSyncedAt?: string;
+  /** Cuota de almacenamiento de adjuntos subidos, en bytes. 0/ausente = sin límite. */
+  quotaBytes?: number;
   createdAt: string;
   updatedAt: string;
 }

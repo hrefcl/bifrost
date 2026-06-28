@@ -10,7 +10,16 @@ withDefaults(defineProps<{ size?: number; wordmark?: boolean }>(), {
 
 <template>
   <div class="logo">
+    <!-- Logo de empresa (white-label) si el admin lo configuró; si no, el ícono por defecto. -->
+    <img
+      v-if="brand.logoUrl"
+      :src="brand.logoUrl"
+      :alt="brand.name"
+      class="logo-img"
+      :style="{ height: size + 'px', borderRadius: size * 0.18 + 'px' }"
+    />
     <div
+      v-else
       class="mark"
       :style="{ width: size + 'px', height: size + 'px', borderRadius: size * 0.28 + 'px' }"
     >
@@ -18,7 +27,9 @@ withDefaults(defineProps<{ size?: number; wordmark?: boolean }>(), {
     </div>
     <span v-if="wordmark" class="wordmark" :style="{ fontSize: size * 0.5 + 'px' }">
       {{ brand.name }}
-      <span class="version" :style="{ fontSize: size * 0.34 + 'px' }">{{ brand.version }}</span>
+      <span v-if="!brand.logoUrl" class="version" :style="{ fontSize: size * 0.34 + 'px' }">{{
+        brand.version
+      }}</span>
     </span>
   </div>
 </template>
@@ -28,6 +39,12 @@ withDefaults(defineProps<{ size?: number; wordmark?: boolean }>(), {
   display: inline-flex;
   align-items: center;
   gap: 10px;
+}
+.logo-img {
+  display: block;
+  width: auto;
+  max-width: 160px;
+  object-fit: contain;
 }
 .mark {
   position: relative;
