@@ -297,6 +297,10 @@ async function loadStorage() {
   }
 }
 
+// Token de cancelación de cargas de lista (carpeta/Pospuestos): una respuesta vieja no debe pisar
+// la lista actual. Necesario porque togglear filtros o navegar rápido dispara varios GET cuya
+// respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — operador 3AM).
+let loadToken = 0;
 async function selectFolder(folderId: string) {
   selectedFolderId.value = folderId;
   selected.value = null;
@@ -305,17 +309,19 @@ async function selectFolder(folderId: string) {
   // selectLabel). Así un sync (que llama selectFolder) preserva el filtro, y el filtro se aplica
   // server-side en el fetch (review B+D: client-side sólo veía la página cargada).
   loading.value = true;
+  const token = ++loadToken;
   try {
     const params = listFilter.value !== 'all' ? { filter: listFilter.value } : undefined;
     const { data } = await api.get<{ data: Email[] }>(
       `/accounts/${accountId()}/folders/${folderId}/emails`,
       { params }
     );
+    if (token !== loadToken) return; // una carga/filtro más nueva ganó
     emails.value = data.data;
   } catch {
-    error.value = t('errors.emails');
+    if (token === loadToken) error.value = t('errors.emails');
   } finally {
-    loading.value = false;
+    if (token === loadToken) loading.value = false;
   }
 }
 
@@ -334,17 +340,22 @@ async function selectStandard(item: StdItem) {
     if (item.virtual === 'starred') {
       const inbox = folderForSpecial('inbox');
       if (inbox) await selectFolder(inbox.id);
-      else emails.value = [];
+      else {
+        loadToken++; // invalida cualquier carga en vuelo antes de vaciar
+        emails.value = [];
+      }
     } else {
       // Pospuestos: los emails snoozed del usuario (reaparecen en su carpeta al vencer).
       loading.value = true;
+      const token = ++loadToken;
       try {
         const { data } = await api.get<{ data: Email[] }>('/emails/snoozed');
+        if (token !== loadToken) return; // una carga más nueva ganó
         emails.value = data.data;
       } catch {
-        error.value = t('errors.emails');
+        if (token === loadToken) error.value = t('errors.emails');
       } finally {
-        loading.value = false;
+        if (token === loadToken) loading.value = false;
       }
     }
   } else {
@@ -352,6 +363,7 @@ async function selectStandard(item: StdItem) {
     const f = folderForSpecial(item.special);
     if (f) await selectFolder(f.id);
     else {
+      loadToken++; // invalida cualquier carga en vuelo antes de vaciar
       selectedFolderId.value = null;
       emails.value = [];
     }
