@@ -144,6 +144,13 @@ let searchToken = 0;
 // la lista actual. Necesario porque togglear filtros o navegar rápido entre carpetas dispara varios
 // GET cuya respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — 3AM).
 let loadToken = 0;
+// Generación de remociones: cada delete/move/snooze/unsnooze incrementa removalGen y registra el id.
+// Un GET de lista captura la generación al arrancar; al volver, EXCLUYE los emails removidos DESPUÉS
+// de ese punto (su snapshot es anterior a la remoción → stale). Así una carga en vuelo no "revive"
+// un email recién quitado, SIN romper mover-a-destino / unsnooze-return / Pospuestos (esos casos el
+// load arranca DESPUÉS de la remoción, así que el email se conserva). Review B.
+let removalGen = 0;
+const removedAt = new Map<string, number>();
 // IDs eliminados/movidos/pospuestos durante una búsqueda EN VUELO. searchToken evita que una
 // búsqueda vieja pise una nueva, pero NO que la respuesta de la búsqueda actual reinserte un
 // email que se quitó mientras estaba pendiente (race real de UI — review B). Filtramos la
@@ -171,6 +178,7 @@ async function runSearch(q: string) {
 }
 function exitSearch() {
   searchToken++; // invalida cualquier búsqueda en vuelo
+  searching.value = false; // y apaga su spinner (si quedaba una en vuelo, su finally no corre) — review B+D
   searchResults.value = null;
   searchActiveQuery.value = '';
 }
@@ -178,6 +186,7 @@ function exitSearch() {
 /** Saca un email de la lista visible (carpeta Y resultados de búsqueda) tras eliminar/mover/snooze. */
 function removeFromLists(id: string) {
   removedIds.add(id); // que una búsqueda en vuelo no lo reinserte al volver (review B).
+  removedAt.set(id, ++removalGen); // y que una carga de carpeta en vuelo no lo reviva (review B).
   emails.value = emails.value.filter((e) => e.id !== id);
   if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
   if (selected.value?.id === id) selected.value = null;
@@ -311,6 +320,7 @@ async function selectFolder(folderId: string) {
   loading.value = true;
   error.value = ''; // limpia un error previo al iniciar la carga (review D)
   const token = ++loadToken;
+  const gen = removalGen; // generación de remociones al arrancar (para descartar revivals stale)
   try {
     const params = listFilter.value !== 'all' ? { filter: listFilter.value } : undefined;
     const { data } = await api.get<{ data: Email[] }>(
@@ -318,7 +328,8 @@ async function selectFolder(folderId: string) {
       { params }
     );
     if (token !== loadToken) return; // una carga/filtro más nueva ganó
-    emails.value = data.data;
+    // Excluye los removidos DESPUÉS de arrancar este GET (snapshot stale → no revivir) — review B.
+    emails.value = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen);
   } catch {
     if (token === loadToken) error.value = t('errors.emails');
   } finally {
@@ -328,7 +339,7 @@ async function selectFolder(folderId: string) {
 
 /** Selecciona un ítem estándar del sidebar: carpeta real o vista virtual (Destacados/Pospuestos). */
 async function selectStandard(item: StdItem) {
-  if (inSearch.value) {
+  if (inSearch.value || searching.value) {
     ui.searchQuery = '';
     exitSearch();
   }
@@ -351,10 +362,11 @@ async function selectStandard(item: StdItem) {
       loading.value = true;
       error.value = '';
       const token = ++loadToken;
+      const gen = removalGen;
       try {
         const { data } = await api.get<{ data: Email[] }>('/emails/snoozed');
         if (token !== loadToken) return; // una carga más nueva ganó
-        emails.value = data.data;
+        emails.value = data.data.filter((e) => (removedAt.get(e.id) ?? -1) <= gen);
       } catch {
         if (token === loadToken) error.value = t('errors.emails');
       } finally {
@@ -376,7 +388,7 @@ async function selectStandard(item: StdItem) {
 
 /** Selecciona una etiqueta (carpeta IMAP sin specialUse). */
 async function selectLabel(f: Folder) {
-  if (inSearch.value) {
+  if (inSearch.value || searching.value) {
     ui.searchQuery = '';
     exitSearch();
   }
