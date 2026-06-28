@@ -95,6 +95,14 @@ export default {
   storage: {
     title: 'Almacenamiento',
   },
+  snooze: {
+    title: 'Posponer hasta…',
+    laterToday: 'Más tarde hoy',
+    tomorrow: 'Mañana',
+    nextWeek: 'La próxima semana',
+    custom: 'Fecha y hora',
+    action: 'Posponer',
+  },
   compose: {
     new: 'Redactar',
   },
@@ -234,6 +242,7 @@ export default {
     body: 'No se pudo cargar el mensaje',
     delete: 'No se pudo eliminar el correo',
     move: 'No se pudo mover el correo',
+    snooze: 'No se pudo posponer el correo',
   },
   settings: {
     title: 'Ajustes',

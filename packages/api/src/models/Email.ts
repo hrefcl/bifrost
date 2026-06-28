@@ -26,6 +26,8 @@ export interface IEmail extends Document {
   modseq?: number;
   bodyCached: boolean;
   bodyCachedAt?: Date;
+  /** Pospuesto (snooze, estilo Gmail): oculto de su carpeta hasta esta fecha; null = no pospuesto. */
+  snoozedUntil?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -75,6 +77,7 @@ const EmailSchema = new Schema<IEmail>(
     modseq: { type: Number },
     bodyCached: { type: Boolean, default: false },
     bodyCachedAt: { type: Date },
+    snoozedUntil: { type: Date },
   },
   { timestamps: true }
 );
@@ -87,6 +90,8 @@ EmailSchema.index({ accountId: 1, folderId: 1, date: -1, uid: -1 });
 EmailSchema.index({ accountId: 1, threadId: 1, date: -1 });
 EmailSchema.index({ accountId: 1, 'flags.seen': 1, folderId: 1 });
 EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
+// Pospuestos: buscar por usuario (cuenta) los que siguen en snooze.
+EmailSchema.index({ accountId: 1, snoozedUntil: 1 });
 EmailSchema.index(
   { accountId: 1, subject: 'text', preview: 'text', 'from.address': 'text' },
   { weights: { subject: 10, preview: 5, 'from.address': 3 }, name: 'email_text_search' }

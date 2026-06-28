@@ -156,6 +156,8 @@ export interface Email {
   modseq?: number;
   bodyCached: boolean;
   bodyCachedAt?: string;
+  /** Pospuesto (snooze): ISO de cuándo reaparece; ausente = no pospuesto. */
+  snoozedUntil?: string;
   createdAt: string;
   updatedAt: string;
 }

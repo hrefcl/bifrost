@@ -114,6 +114,7 @@ function serializeEmail(email: import('../models/Email.js').IEmail): EmailDto {
     modseq: email.modseq,
     bodyCached: email.bodyCached,
     bodyCachedAt: email.bodyCachedAt?.toISOString(),
+    snoozedUntil: email.snoozedUntil?.toISOString(),
     createdAt: email.createdAt.toISOString(),
     updatedAt: email.updatedAt.toISOString(),
   };
@@ -180,9 +181,16 @@ export default function accountRoutes(fastify: FastifyInstance) {
     const { page, limit } = paginationSchema.parse(request.query);
     const skip = (page - 1) * limit;
 
+    // Pospuestos (snooze): ocultar los que siguen en snooze (snoozedUntil futuro). Al pasar la
+    // hora reaparecen solos (no hace falta scheduler: es una condición de query).
+    const filter = {
+      accountId,
+      folderId,
+      $or: [{ snoozedUntil: { $exists: false } }, { snoozedUntil: { $lte: new Date() } }],
+    };
     const [data, total] = await Promise.all([
-      Email.find({ accountId, folderId }).sort({ date: -1, uid: -1 }).skip(skip).limit(limit),
-      Email.countDocuments({ accountId, folderId }),
+      Email.find(filter).sort({ date: -1, uid: -1 }).skip(skip).limit(limit),
+      Email.countDocuments(filter),
     ]);
 
     const response: Paginated<EmailDto> = {

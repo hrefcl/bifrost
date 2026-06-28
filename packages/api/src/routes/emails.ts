@@ -47,6 +47,7 @@ function serializeEmail(email: IEmail): EmailDto {
     modseq: email.modseq,
     bodyCached: email.bodyCached,
     bodyCachedAt: email.bodyCachedAt?.toISOString(),
+    snoozedUntil: email.snoozedUntil?.toISOString(),
     createdAt: email.createdAt.toISOString(),
     updatedAt: email.updatedAt.toISOString(),
   };
@@ -104,6 +105,20 @@ export default function emailRoutes(fastify: FastifyInstance) {
     })
       .sort({ date: -1 })
       .limit(50);
+    return { data: emails.map(serializeEmail) };
+  });
+
+  // Pospuestos (snooze): emails del usuario que SIGUEN pospuestos (snoozedUntil futuro).
+  fastify.get('/snoozed', async (request) => {
+    const accounts = await Account.find({ userId: request.user.userId }).select('_id');
+    const accountIds = accounts.map((a) => a._id);
+    if (accountIds.length === 0) return { data: [] };
+    const emails = await Email.find({
+      accountId: { $in: accountIds },
+      snoozedUntil: { $gt: new Date() },
+    })
+      .sort({ snoozedUntil: 1 })
+      .limit(100);
     return { data: emails.map(serializeEmail) };
   });
 
@@ -264,6 +279,32 @@ export default function emailRoutes(fastify: FastifyInstance) {
     await moveEmailToFolder(account, folderPath, email.uid, target.path);
     await Email.deleteOne({ _id: email._id });
     await redis.del(`emailbody:${email._id.toString()}`);
+    return { ok: true };
+  });
+
+  // Posponer (snooze): ocultar el email hasta `until` (futuro). Reaparece solo al pasar la hora
+  // (la query de la carpeta lo excluye mientras snoozedUntil > now). Owner-bound.
+  const snoozeSchema = z.object({ until: z.string().datetime() });
+  fastify.post('/:emailId/snooze', async (request, reply) => {
+    const { emailId } = request.params as { emailId: string };
+    objectIdSchema.parse(emailId);
+    const { until } = snoozeSchema.parse(request.body);
+    const untilDate = new Date(until);
+    if (untilDate.getTime() <= Date.now()) {
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'until must be in the future' });
+    }
+    const { email } = await requireOwnedEmail(request.user.userId, emailId);
+    await Email.updateOne({ _id: email._id }, { $set: { snoozedUntil: untilDate } });
+    return { ok: true, snoozedUntil: untilDate.toISOString() };
+  });
+
+  fastify.post('/:emailId/unsnooze', async (request) => {
+    const { emailId } = request.params as { emailId: string };
+    objectIdSchema.parse(emailId);
+    const { email } = await requireOwnedEmail(request.user.userId, emailId);
+    await Email.updateOne({ _id: email._id }, { $unset: { snoozedUntil: '' } });
     return { ok: true };
   });
 

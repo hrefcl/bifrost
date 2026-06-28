@@ -389,4 +389,56 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     });
     expect((JSON.parse(cross.body) as { data: unknown[] }).data).toHaveLength(0);
   });
+
+  it('snooze: oculta de la carpeta + aparece en /snoozed; vence solo; future-only; owner-bound', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'snz@test.com' });
+    const inbox = await seedFolder(account._id, { name: 'INBOX', path: 'INBOX' });
+    await Folder.updateOne({ _id: inbox._id }, { specialUse: 'inbox' });
+    const email = await seedEmail(account._id, inbox._id, { uid: 50, subject: 'Pendiente' });
+    const headers = authHeaders(app, user._id.toString());
+    const folderUrl = `/api/accounts/${account._id.toString()}/folders/${inbox._id.toString()}/emails`;
+    const subjects = (body: string) =>
+      (JSON.parse(body) as { data: { subject: string }[] }).data.map((e) => e.subject);
+
+    const until = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // +1h
+    const snz = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/snooze`,
+      headers,
+      payload: { until },
+    });
+    expect(snz.statusCode).toBe(200);
+
+    // No aparece en la carpeta; sí en /snoozed.
+    const folderRes = await app.inject({ method: 'GET', url: folderUrl, headers });
+    expect(subjects(folderRes.body)).not.toContain('Pendiente');
+    const snoozedRes = await app.inject({ method: 'GET', url: '/api/emails/snoozed', headers });
+    expect(subjects(snoozedRes.body)).toContain('Pendiente');
+
+    // future-only: until pasado → 400.
+    const past = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/snooze`,
+      headers,
+      payload: { until: new Date(Date.now() - 1000).toISOString() },
+    });
+    expect(past.statusCode).toBe(400);
+
+    // Vence SOLO (sin scheduler): snoozedUntil al pasado → vuelve a la carpeta, sale de /snoozed.
+    await Email.updateOne({ _id: email._id }, { snoozedUntil: new Date(Date.now() - 1000) });
+    const folder2 = await app.inject({ method: 'GET', url: folderUrl, headers });
+    expect(subjects(folder2.body)).toContain('Pendiente');
+    const snoozed2 = await app.inject({ method: 'GET', url: '/api/emails/snoozed', headers });
+    expect((JSON.parse(snoozed2.body) as { data: unknown[] }).data).toHaveLength(0);
+
+    // owner-bound: otro usuario no puede posponer este email.
+    const { user: other } = await seedUserWithAccount({ email: 'snz-other@test.com' });
+    const cross2 = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email._id.toString()}/snooze`,
+      headers: authHeaders(app, other._id.toString()),
+      payload: { until },
+    });
+    expect([403, 404]).toContain(cross2.statusCode);
+  });
 });

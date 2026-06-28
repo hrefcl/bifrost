@@ -95,6 +95,14 @@ export default {
   storage: {
     title: 'Storage',
   },
+  snooze: {
+    title: 'Snooze until…',
+    laterToday: 'Later today',
+    tomorrow: 'Tomorrow',
+    nextWeek: 'Next week',
+    custom: 'Date & time',
+    action: 'Snooze',
+  },
   compose: {
     new: 'Compose',
   },
@@ -234,6 +242,7 @@ export default {
     body: 'Failed to load message',
     delete: 'Failed to delete email',
     move: 'Failed to move email',
+    snooze: 'Failed to snooze email',
   },
   settings: {
     title: 'Settings',

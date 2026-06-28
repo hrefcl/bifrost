@@ -92,8 +92,7 @@ const currentTitle = computed(() => {
 
 // Filtro en cliente de la carpeta actual (mientras se tipea) + vistas virtuales.
 const filteredEmails = computed(() => {
-  if (virtualView.value === 'snoozed') return [];
-  let list = emails.value;
+  let list = emails.value; // Pospuestos: emails.value ya viene de GET /emails/snoozed
   if (virtualView.value === 'starred') list = list.filter((e) => e.flags.flagged);
   const q = ui.searchQuery.trim().toLowerCase();
   if (q) {
@@ -244,7 +243,16 @@ async function selectStandard(item: StdItem) {
       if (inbox) await selectFolder(inbox.id);
       else emails.value = [];
     } else {
-      emails.value = []; // Pospuestos: sin backend de snooze todavía
+      // Pospuestos: los emails snoozed del usuario (reaparecen en su carpeta al vencer).
+      loading.value = true;
+      try {
+        const { data } = await api.get<{ data: Email[] }>('/emails/snoozed');
+        emails.value = data.data;
+      } catch {
+        error.value = t('errors.emails');
+      } finally {
+        loading.value = false;
+      }
     }
   } else {
     virtualView.value = null;
@@ -347,6 +355,53 @@ async function moveEmail(email: Email | null, specialUse: SpecialUse, ev?: Event
 }
 function archive(email: Email | null, ev?: Event) {
   void moveEmail(email, 'archive', ev);
+}
+
+// ---- Posponer (snooze, estilo Gmail) ----
+const showSnooze = ref(false);
+const snoozeTarget = ref<Email | null>(null);
+const customSnooze = ref('');
+
+function toLocalInput(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${String(d.getFullYear())}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+function presetLaterToday(): Date {
+  const d = new Date();
+  d.setHours(d.getHours() + 3, 0, 0, 0);
+  return d;
+}
+function presetTomorrow(): Date {
+  const d = new Date();
+  d.setDate(d.getDate() + 1);
+  d.setHours(8, 0, 0, 0);
+  return d;
+}
+function presetNextWeek(): Date {
+  const d = new Date();
+  const add = (1 - d.getDay() + 7) % 7 || 7; // próximo lunes
+  d.setDate(d.getDate() + add);
+  d.setHours(8, 0, 0, 0);
+  return d;
+}
+function openSnooze(email: Email | null) {
+  if (!email) return;
+  snoozeTarget.value = email;
+  customSnooze.value = toLocalInput(presetTomorrow());
+  showSnooze.value = true;
+}
+async function doSnooze(until: Date) {
+  const email = snoozeTarget.value;
+  showSnooze.value = false;
+  snoozeTarget.value = null;
+  if (!email || until.getTime() <= Date.now()) return;
+  try {
+    await api.post(`/emails/${email.id}/snooze`, { until: until.toISOString() });
+    emails.value = emails.value.filter((e) => e.id !== email.id);
+    if (selected.value?.id === email.id) selected.value = null;
+  } catch {
+    error.value = t('errors.snooze');
+  }
 }
 
 function compose() {
@@ -559,7 +614,7 @@ onBeforeUnmount(() => {
           <button class="icon-btn" :title="t('thread.delete')" @click="deleteEmail(selected)">
             <AppIcon name="trash" :size="20" />
           </button>
-          <button class="icon-btn" :title="t('thread.snooze')">
+          <button class="icon-btn" :title="t('thread.snooze')" @click="openSnooze(selected)">
             <AppIcon name="clock" :size="20" />
           </button>
           <button class="icon-btn" :title="t('thread.tag')">
@@ -657,6 +712,34 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </section>
+    </div>
+
+    <!-- Modal de posponer (snooze) -->
+    <div v-if="showSnooze" class="snooze-overlay" @click.self="showSnooze = false">
+      <div class="snooze-modal">
+        <div class="snooze-head">
+          <h3>{{ t('snooze.title') }}</h3>
+          <button class="icon-btn" :title="t('common.close')" @click="showSnooze = false">
+            <AppIcon name="x" :size="18" />
+          </button>
+        </div>
+        <button class="snooze-preset" @click="doSnooze(presetLaterToday())">
+          <AppIcon name="clock" :size="17" />{{ t('snooze.laterToday') }}
+        </button>
+        <button class="snooze-preset" @click="doSnooze(presetTomorrow())">
+          <AppIcon name="clock" :size="17" />{{ t('snooze.tomorrow') }}
+        </button>
+        <button class="snooze-preset" @click="doSnooze(presetNextWeek())">
+          <AppIcon name="clock" :size="17" />{{ t('snooze.nextWeek') }}
+        </button>
+        <div class="snooze-custom">
+          <span class="snooze-custom-lbl">{{ t('snooze.custom') }}</span>
+          <input v-model="customSnooze" type="datetime-local" class="snooze-input" />
+          <button class="snooze-go" @click="doSnooze(new Date(customSnooze))">
+            {{ t('snooze.action') }}
+          </button>
+        </div>
+      </div>
     </div>
   </AppLayout>
 </template>
@@ -1178,5 +1261,96 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 500;
   padding: 40px;
+}
+
+/* ---- Modal de snooze ---- */
+.snooze-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.32);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 70;
+}
+.snooze-modal {
+  width: 340px;
+  max-width: calc(100vw - 32px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-lg);
+  padding: 16px;
+}
+.snooze-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.snooze-head h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0;
+}
+.snooze-preset {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 11px 12px;
+  border: none;
+  background: transparent;
+  border-radius: 9px;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-1);
+  text-align: left;
+}
+.snooze-preset:hover {
+  background: var(--hover);
+}
+.snooze-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.snooze-custom-lbl {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.snooze-input {
+  flex: 1;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text-1);
+  outline: none;
+}
+.snooze-input:focus {
+  border-color: var(--accent);
+}
+.snooze-go {
+  padding: 8px 14px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.snooze-go:hover {
+  background: var(--accent-700);
 }
 </style>
