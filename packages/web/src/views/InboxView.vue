@@ -140,6 +140,11 @@ const displayedEmails = computed(() => {
 // Token de cancelación: una búsqueda vieja no debe pisar la carpeta/búsqueda actual ni
 // reactivar el modo búsqueda tras salir (review B+D).
 let searchToken = 0;
+// Token de cancelación de cargas de lista (carpeta/Pospuestos): una respuesta vieja no debe pisar
+// la lista actual. Necesario porque togglear filtros o navegar/buscar rápido dispara varios GET cuya
+// respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — operador 3AM).
+// Se declara aquí (antes de runSearch) porque entrar/salir de búsqueda también lo invalida.
+let loadToken = 0;
 // IDs eliminados/movidos/pospuestos durante una búsqueda EN VUELO. searchToken evita que una
 // búsqueda vieja pise una nueva, pero NO que la respuesta de la búsqueda actual reinserte un
 // email que se quitó mientras estaba pendiente (race real de UI — review B). Filtramos la
@@ -150,6 +155,7 @@ const removedIds = new Set<string>();
 const actionInFlight = new Set<string>();
 async function runSearch(q: string) {
   const token = ++searchToken;
+  loadToken++; // invalida una carga de carpeta en vuelo (no debe pisar emails.value al salir de búsqueda)
   removedIds.clear();
   searching.value = true;
   selected.value = null;
@@ -167,6 +173,7 @@ async function runSearch(q: string) {
 }
 function exitSearch() {
   searchToken++; // invalida cualquier búsqueda en vuelo
+  loadToken++; // y cualquier carga de carpeta en vuelo (no debe pisar la lista al volver)
   searchResults.value = null;
   searchActiveQuery.value = '';
 }
@@ -174,6 +181,7 @@ function exitSearch() {
 /** Saca un email de la lista visible (carpeta Y resultados de búsqueda) tras eliminar/mover/snooze. */
 function removeFromLists(id: string) {
   removedIds.add(id); // que una búsqueda en vuelo no lo reinserte al volver (review B).
+  loadToken++; // que una carga de carpeta en vuelo no reviva el email recién removido (review D).
   emails.value = emails.value.filter((e) => e.id !== id);
   if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
   if (selected.value?.id === id) selected.value = null;
@@ -297,10 +305,6 @@ async function loadStorage() {
   }
 }
 
-// Token de cancelación de cargas de lista (carpeta/Pospuestos): una respuesta vieja no debe pisar
-// la lista actual. Necesario porque togglear filtros o navegar rápido dispara varios GET cuya
-// respuesta puede llegar fuera de orden (mismo patrón que searchToken/openToken — operador 3AM).
-let loadToken = 0;
 async function selectFolder(folderId: string) {
   selectedFolderId.value = folderId;
   selected.value = null;
@@ -309,6 +313,7 @@ async function selectFolder(folderId: string) {
   // selectLabel). Así un sync (que llama selectFolder) preserva el filtro, y el filtro se aplica
   // server-side en el fetch (review B+D: client-side sólo veía la página cargada).
   loading.value = true;
+  error.value = ''; // limpia un error previo al iniciar la carga (review D)
   const token = ++loadToken;
   try {
     const params = listFilter.value !== 'all' ? { filter: listFilter.value } : undefined;
@@ -343,10 +348,12 @@ async function selectStandard(item: StdItem) {
       else {
         loadToken++; // invalida cualquier carga en vuelo antes de vaciar
         emails.value = [];
+        loading.value = false; // no dejar el spinner pegado de una carga vieja
       }
     } else {
       // Pospuestos: los emails snoozed del usuario (reaparecen en su carpeta al vencer).
       loading.value = true;
+      error.value = '';
       const token = ++loadToken;
       try {
         const { data } = await api.get<{ data: Email[] }>('/emails/snoozed');
@@ -366,6 +373,7 @@ async function selectStandard(item: StdItem) {
       loadToken++; // invalida cualquier carga en vuelo antes de vaciar
       selectedFolderId.value = null;
       emails.value = [];
+      loading.value = false; // no dejar el spinner pegado de una carga vieja
     }
   }
 }
