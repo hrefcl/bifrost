@@ -174,6 +174,17 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
       },
     });
     expect(bad.statusCode).toBe(400);
+
+    // PATCH PARCIAL inválido contra la fecha EXISTENTE: el evento quedó 00:00→23:59 (allDay). Mandar
+    // sólo endDate ANTERIOR al startDate existente debe dar 400 (no sólo cuando llegan ambas) —
+    // review B: el endpoint protege su invariante aunque la otra fecha no venga en el body.
+    const partialBad = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${id}`,
+      headers,
+      payload: { endDate: '2026-06-11T00:00:00.000Z' }, // antes del start existente (2026-06-12 00:00)
+    });
+    expect(partialBad.statusCode).toBe(400);
     await app.close();
   });
 });

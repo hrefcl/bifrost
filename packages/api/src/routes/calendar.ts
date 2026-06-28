@@ -70,33 +70,32 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     if (body.accountId) {
       await requireOwnedAccount(request.user.userId, body.accountId);
     }
-    // Si el update trae ambas fechas (drag/resize), el fin debe ser posterior al inicio.
-    if (body.startDate && body.endDate) {
-      if (new Date(body.endDate).getTime() <= new Date(body.startDate).getTime()) {
-        return reply
-          .code(400)
-          .send({
-            statusCode: 400,
-            error: 'Bad Request',
-            message: 'endDate must be after startDate',
-          });
-      }
+    // Owner-bound: leer el evento del propio usuario (404 si no existe / es de otro).
+    const existing = await CalendarEvent.findOne({ _id: eventId, userId: request.user.userId });
+    if (!existing) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
+    }
+    // Invariante fin>inicio validada contra las fechas EFECTIVAS (las nuevas que vengan + las
+    // existentes para las que no), no sólo cuando llegan ambas — así un PATCH parcial no puede
+    // dejar el evento inválido contra su otra fecha ya guardada (review B).
+    const effStart = body.startDate ? new Date(body.startDate) : existing.startDate;
+    const effEnd = body.endDate ? new Date(body.endDate) : existing.endDate;
+    if (effEnd.getTime() <= effStart.getTime()) {
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'endDate must be after startDate',
+      });
     }
     const update: Record<string, unknown> = { ...body };
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);
 
-    const event = await CalendarEvent.findOneAndUpdate(
-      { _id: eventId, userId: request.user.userId },
-      update,
-      { new: true }
-    );
-    if (!event) {
-      return reply
-        .code(404)
-        .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
-    }
-    return serializeCalendarEvent(event);
+    existing.set(update);
+    await existing.save();
+    return serializeCalendarEvent(existing);
   });
 
   fastify.delete('/:eventId', async (request, reply) => {

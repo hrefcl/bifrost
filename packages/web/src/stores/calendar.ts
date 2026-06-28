@@ -7,7 +7,9 @@ export const useCalendarStore = defineStore('calendar', () => {
   const events = ref<CalendarEvent[]>([]);
 
   // Token de cancelación: al navegar rápido entre rangos, una respuesta vieja no debe
-  // sobreescribir el rango actual con datos stale (review B).
+  // sobreescribir el rango actual con datos stale (review B). Además, CADA mutación lo incrementa:
+  // así un fetchEvents en vuelo que responda DESPUÉS de un create/update/delete queda invalidado y
+  // no pisa el estado local recién mutado (race store, review B+D).
   let fetchToken = 0;
   async function fetchEvents(start: string, end: string) {
     const token = ++fetchToken;
@@ -19,20 +21,24 @@ export const useCalendarStore = defineStore('calendar', () => {
     event: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt' | 'userId'>
   ) {
     const { data } = await api.post<CalendarEvent>('/calendar', event);
+    fetchToken++; // invalida cualquier fetch en vuelo que pisaría esta inserción.
     events.value.push(data);
     return data;
   }
 
-  /** Actualiza un evento (drag/resize en el calendario → PATCH parcial) y refleja el resultado. */
+  /** Actualiza un evento (drag/resize o modal de edición → PATCH parcial) y refleja el resultado. */
   async function updateEvent(id: string, patch: Partial<CalendarEvent>) {
     const { data } = await api.patch<CalendarEvent>(`/calendar/${id}`, patch);
+    fetchToken++; // invalida cualquier fetch en vuelo que pisaría esta edición.
     const i = events.value.findIndex((e) => e.id === id);
     if (i >= 0) events.value[i] = data;
+    else events.value.push(data); // si no estaba cargado, mostrarlo igual (review D).
     return data;
   }
 
   async function deleteEvent(id: string) {
     await api.delete(`/calendar/${id}`);
+    fetchToken++; // invalida cualquier fetch en vuelo que reviviría el evento borrado.
     events.value = events.value.filter((e) => e.id !== id);
   }
 

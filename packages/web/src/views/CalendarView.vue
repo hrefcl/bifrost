@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import FullCalendar from '@fullcalendar/vue3';
 import dayGridPlugin from '@fullcalendar/daygrid';
@@ -36,6 +36,12 @@ const createError = ref('');
 
 // Modal de detalle (click en un evento).
 const detail = ref<CalendarEvent | null>(null);
+
+// Reset defensivo: al cerrar el modal (cancel/X/click-fuera/guardar) se vuelve a modo "crear",
+// para que ningún reapertura futura herede el editingId de una edición previa (review B/D).
+watch(showCreate, (open) => {
+  if (!open) editingId.value = null;
+});
 
 function fcApi() {
   return calendarRef.value?.getApi();
@@ -114,10 +120,14 @@ async function submitCreate(): Promise<void> {
   createError.value = '';
   const start = new Date(createForm.value.startDate);
   const end = new Date(createForm.value.endDate);
-  // "Todo el día": normalizar a inicio/fin del día local (review B/D).
+  // "Todo el día": inicio = 00:00 del día; fin = 00:00 del día SIGUIENTE al último (EXCLUSIVO,
+  // convención FullCalendar/iCal) → un evento de un día dura exactamente un día, sin off-by-one en
+  // multi-día (review B). Mínimo un día completo.
   if (createForm.value.allDay) {
     start.setHours(0, 0, 0, 0);
-    end.setHours(23, 59, 59, 999);
+    end.setHours(0, 0, 0, 0);
+    if (end.getTime() <= start.getTime()) end.setTime(start.getTime());
+    end.setDate(end.getDate() + 1);
   }
   if (!(end.getTime() > start.getTime())) {
     createError.value = t('calendar.errRange');
