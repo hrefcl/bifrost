@@ -119,4 +119,61 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
     expect(cross.statusCode).toBe(404);
     await app.close();
   });
+
+  // Cubre el path del MODAL DE EDICIÓN del calendario (click en evento → Editar → PATCH con
+  // summary + fechas + allDay juntos), distinto del drag que sólo manda fechas.
+  it('PATCH edita summary + allDay + fechas a la vez (modal de edición) y es owner-bound', async () => {
+    const app = await buildTestApp();
+    const { user, account } = await seedUserWithAccount({ email: 'edit@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/calendar',
+      headers,
+      payload: {
+        accountId: account._id.toString(),
+        calendarId: 'default',
+        calendarName: 'Personal',
+        uid: 'uid-edit',
+        summary: 'Borrador',
+        startDate: '2026-06-12T09:00:00.000Z',
+        endDate: '2026-06-12T10:00:00.000Z',
+        allDay: false,
+      },
+    });
+    expect(create.statusCode).toBe(200);
+    const id = (JSON.parse(create.body) as { id: string }).id;
+
+    const edited = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${id}`,
+      headers,
+      payload: {
+        summary: 'Reunión confirmada',
+        startDate: '2026-06-12T00:00:00.000Z',
+        endDate: '2026-06-12T23:59:59.999Z',
+        allDay: true,
+      },
+    });
+    expect(edited.statusCode).toBe(200);
+    const body = JSON.parse(edited.body) as { summary: string; allDay: boolean; startDate: string };
+    expect(body.summary).toBe('Reunión confirmada');
+    expect(body.allDay).toBe(true);
+    expect(new Date(body.startDate).toISOString()).toBe('2026-06-12T00:00:00.000Z');
+
+    // Editar con rango inválido (fin <= inicio) → 400, no corrompe el evento.
+    const bad = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${id}`,
+      headers,
+      payload: {
+        summary: 'X',
+        startDate: '2026-06-12T10:00:00.000Z',
+        endDate: '2026-06-12T09:00:00.000Z',
+      },
+    });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
 });

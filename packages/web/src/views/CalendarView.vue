@@ -28,8 +28,9 @@ const accounts = ref<Account[]>([]);
 const periodTitle = ref('');
 const currentView = ref<'timeGridDay' | 'timeGridWeek' | 'dayGridMonth'>('timeGridWeek');
 
-// Modal de creación rápida (Crear o arrastrar para seleccionar un rango).
+// Modal de creación/edición (Crear, arrastrar para seleccionar un rango, o editar un evento).
 const showCreate = ref(false);
+const editingId = ref<string | null>(null); // null = crear; id = editar ese evento.
 const createForm = ref({ summary: '', startDate: '', endDate: '', allDay: false });
 const createError = ref('');
 
@@ -66,6 +67,7 @@ function onDatesSet(arg: DatesSetArg): void {
 
 /** Arrastrar sobre la grilla para crear → abre el modal con el rango preseleccionado. */
 function onSelect(arg: DateSelectArg): void {
+  editingId.value = null;
   createForm.value = {
     summary: '',
     startDate: toLocalInput(arg.start),
@@ -79,6 +81,7 @@ function onSelect(arg: DateSelectArg): void {
 
 /** Botón "Crear": evento de 1h desde la próxima hora en punto. */
 function openCreate(): void {
+  editingId.value = null;
   const start = new Date();
   start.setMinutes(0, 0, 0);
   start.setHours(start.getHours() + 1);
@@ -90,6 +93,20 @@ function openCreate(): void {
     allDay: false,
   };
   createError.value = '';
+  showCreate.value = true;
+}
+
+/** Editar un evento existente (desde el modal de detalle): precarga el form y entra en modo edición. */
+function openEdit(ev: CalendarEvent): void {
+  editingId.value = ev.id;
+  createForm.value = {
+    summary: ev.summary,
+    startDate: toLocalInput(new Date(ev.startDate)),
+    endDate: toLocalInput(new Date(ev.endDate)),
+    allDay: ev.allDay,
+  };
+  createError.value = '';
+  detail.value = null;
   showCreate.value = true;
 }
 
@@ -107,19 +124,29 @@ async function submitCreate(): Promise<void> {
     return;
   }
   try {
-    await store.createEvent({
-      accountId: accounts.value[0]?.id ?? '',
-      calendarId: 'default',
-      calendarName: 'Personal',
-      uid: `local-${crypto.randomUUID()}`,
-      summary: createForm.value.summary,
-      startDate: start.toISOString(),
-      startTimezone: 'UTC',
-      endDate: end.toISOString(),
-      endTimezone: 'UTC',
-      allDay: createForm.value.allDay,
-      status: 'confirmed',
-    });
+    if (editingId.value) {
+      // Editar: PATCH parcial (mismo endpoint owner-bound que usa el drag/resize).
+      await store.updateEvent(editingId.value, {
+        summary: createForm.value.summary,
+        startDate: start.toISOString(),
+        endDate: end.toISOString(),
+        allDay: createForm.value.allDay,
+      });
+    } else {
+      await store.createEvent({
+        accountId: accounts.value[0]?.id ?? '',
+        calendarId: 'default',
+        calendarName: 'Personal',
+        uid: `local-${crypto.randomUUID()}`,
+        summary: createForm.value.summary,
+        startDate: start.toISOString(),
+        startTimezone: 'UTC',
+        endDate: end.toISOString(),
+        endTimezone: 'UTC',
+        allDay: createForm.value.allDay,
+        status: 'confirmed',
+      });
+    }
     showCreate.value = false;
   } catch {
     createError.value = t('calendar.errSave');
@@ -238,7 +265,7 @@ onMounted(async () => {
     <div v-if="showCreate" class="overlay" @click.self="showCreate = false">
       <div class="modal">
         <div class="modal-head">
-          <h3>{{ t('calendar.new') }}</h3>
+          <h3>{{ editingId ? t('calendar.edit') : t('calendar.new') }}</h3>
           <button class="icon-btn" :title="t('common.close')" @click="showCreate = false">
             <AppIcon name="x" :size="18" />
           </button>
@@ -288,6 +315,7 @@ onMounted(async () => {
         </div>
         <div class="detail-row"><AppIcon name="tag" :size="15" />{{ detail.calendarName }}</div>
         <div class="modal-foot">
+          <button class="create-btn" @click="openEdit(detail)">{{ t('calendar.edit') }}</button>
           <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
         </div>
       </div>

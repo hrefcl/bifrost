@@ -187,6 +187,7 @@ export default {
   calendar: {
     title: 'Calendar',
     new: 'Create',
+    edit: 'Edit',
     today: 'Today',
     view: { timeGridDay: 'Day', timeGridWeek: 'Week', dayGridMonth: 'Month' },
     eventTitle: 'Event title',
