@@ -451,12 +451,22 @@ function archive(email: Email | null, ev?: Event) {
   void moveEmail(email, 'archive', ev);
 }
 
-// ---- Etiquetar (mover a una carpeta-etiqueta, estilo Roundcube/IMAP: las etiquetas SON carpetas) ----
+// ---- Mover a (carpeta/etiqueta, estilo Gmail "Mover a"): en IMAP/Roundcube las etiquetas SON
+// carpetas. Destinos = Recibidos + carpetas-etiqueta, EXCLUYENDO la carpeta actual del email (mover
+// a la misma sería un no-op del backend pero el front lo sacaría de la vista — review B; además
+// incluir Recibidos da el camino de vuelta — review D). El menú es honesto: MUEVE, no etiqueta
+// no-destructivamente (el modelo IMAP-carpeta no soporta multi-etiqueta).
 const showLabelMenu = ref(false);
+const moveTargets = computed(() => {
+  const currentId = selected.value?.folderId;
+  return folders.value.filter(
+    (f) => (f.specialUse === 'inbox' || !f.specialUse) && f.id !== currentId
+  );
+});
 function toggleLabelMenu() {
-  if (labelFolders.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
+  if (moveTargets.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
 }
-/** Aplica una etiqueta = mueve el email a esa carpeta-etiqueta (owner-bound en el backend). */
+/** Mueve el email a la carpeta/etiqueta elegida (owner-bound en el backend, por folderId). */
 function applyLabel(email: Email | null, folderId: string) {
   showLabelMenu.value = false;
   void doMove(email, { folderId });
@@ -599,6 +609,10 @@ function printEmail() {
 
 // ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
 function onKey(e: KeyboardEvent) {
+  if (e.key === 'Escape' && showLabelMenu.value) {
+    showLabelMenu.value = false; // Escape cierra el menú "Mover a" (review D)
+    return;
+  }
   const el = e.target as HTMLElement | null;
   const typing =
     el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable === true;
@@ -822,21 +836,23 @@ onBeforeUnmount(() => {
           <div class="label-wrap">
             <button
               class="icon-btn"
-              :title="t('thread.tag')"
-              :disabled="labelFolders.length === 0"
+              :title="t('thread.moveTo')"
+              :disabled="moveTargets.length === 0"
               @click.stop="toggleLabelMenu"
             >
               <AppIcon name="tag" :size="20" />
             </button>
             <div v-if="showLabelMenu" class="label-menu" @click.stop>
-              <div class="label-menu-head">{{ t('thread.moveToLabel') }}</div>
+              <div class="label-menu-head">{{ t('thread.moveTo') }}</div>
               <button
-                v-for="f in labelFolders"
+                v-for="f in moveTargets"
                 :key="f.id"
                 class="label-menu-item"
                 @click="applyLabel(selected, f.id)"
               >
-                <AppIcon name="tag" :size="15" />{{ f.displayName }}
+                <AppIcon :name="f.specialUse === 'inbox' ? 'inbox' : 'tag'" :size="15" />{{
+                  f.displayName
+                }}
               </button>
             </div>
           </div>
