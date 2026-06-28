@@ -311,7 +311,8 @@ export interface Paginated<T> {
     /** Sólo en paginación por offset; ausente en cursor/keyset. */
     page?: number;
     limit: number;
-    total: number;
+    /** Conteo total; sólo en la primera página (evita un countDocuments por "cargar más"). */
+    total?: number;
     hasMore: boolean;
   };
 }

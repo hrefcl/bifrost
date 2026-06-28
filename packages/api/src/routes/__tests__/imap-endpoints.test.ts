@@ -426,20 +426,21 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
       expect(res.statusCode).toBe(200);
       return JSON.parse(res.body) as {
         data: { uid: number; date: string }[];
-        pagination: { total: number; hasMore: boolean };
+        pagination: { total?: number; hasMore: boolean };
       };
     };
 
     const p1 = await page('?limit=2');
     expect(p1.data.map((e) => e.uid)).toEqual([52, 51]); // 2 más nuevos
-    expect(p1.pagination).toMatchObject({ total: 3, hasMore: true });
+    expect(p1.pagination).toMatchObject({ total: 3, hasMore: true }); // total sólo en 1ª página
 
     // "Cargar más": cursor = último email de p1 (uid 51).
     const last = p1.data[p1.data.length - 1];
     const cursor = `beforeDate=${encodeURIComponent(last.date)}&beforeUid=${String(last.uid)}`;
     const p2 = await page(`?limit=2&${cursor}`);
     expect(p2.data.map((e) => e.uid)).toEqual([50]); // el restante, estrictamente anterior
-    expect(p2.pagination).toMatchObject({ total: 3, hasMore: false });
+    expect(p2.pagination.hasMore).toBe(false);
+    expect(p2.pagination.total).toBeUndefined(); // sin count en páginas con cursor (escalabilidad)
 
     // Sin solape entre páginas.
     const all = [...p1.data, ...p2.data].map((e) => e.uid);

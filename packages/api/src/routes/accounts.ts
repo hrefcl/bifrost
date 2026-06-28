@@ -249,11 +249,14 @@ export default function accountRoutes(fastify: FastifyInstance) {
       .limit(limit + 1);
     const hasMore = docs.length > limit;
     const pageDocs = hasMore ? docs.slice(0, limit) : docs;
-    const total = await Email.countDocuments(base);
+    // `total` sólo en la PRIMERA página (sin cursor): un countDocuments por cada "cargar más" sería
+    // O(carpeta) repetido sin que la UI lo use (review B+D — escalabilidad).
+    const isFirstPage = beforeDate === undefined;
+    const total = isFirstPage ? await Email.countDocuments(base) : undefined;
 
     const response: Paginated<EmailDto> = {
       data: pageDocs.map(serializeEmail),
-      pagination: { limit, total, hasMore },
+      pagination: { limit, hasMore, ...(total !== undefined ? { total } : {}) },
     };
     return response;
   });

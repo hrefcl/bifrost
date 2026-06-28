@@ -96,6 +96,13 @@ EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
 // Pospuestos: buscar por usuario (cuenta) los que siguen en snooze (sirve a GET /emails/snoozed,
 // que no filtra por seen → prefijo accountId + rango snoozedUntil).
 EmailSchema.index({ accountId: 1, snoozedUntil: 1 });
+// Filtro de lista "con adjuntos" (GET folders/:id/emails?filter=attachments). hasAttachments es
+// disperso (pocos emails con adjuntos), así que un índice PARCIAL (sólo true) es pequeño y barato en
+// escritura, y evita el COLLSCAN que escaneaba toda la carpeta para llenar 20 (review B+D, dim. 6).
+EmailSchema.index(
+  { accountId: 1, folderId: 1, date: -1, uid: -1 },
+  { partialFilterExpression: { hasAttachments: true }, name: 'email_attachments_list' }
+);
 // Badge de no-leídos autoritativo (agregación en GET /accounts/:id/folders que CUENTA los Email
 // visibles no-leídos por carpeta). ESR para el $match {accountId, flags.seen:false,
 // snoozedUntil:{$not:{$gt:now}}}: igualdad (accountId, flags.seen) → snoozedUntil; folderId al final
