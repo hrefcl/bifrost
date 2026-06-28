@@ -1,6 +1,48 @@
 import mongoose from 'mongoose';
+import { EMAIL_TEXT_INDEX } from '../models/email-indexes.js';
 
 type ObjectId = mongoose.Types.ObjectId;
+
+/**
+ * Reconciliación del índice de texto `email_text_search` (review B).
+ *
+ * El índice cambió de campos/pesos (se añadió `from.name`). Mongoose con autoIndex/createIndexes
+ * NUNCA modifica un índice existente con el mismo nombre pero distinta definición: lanza
+ * `IndexOptionsConflict` y deja el índice VIEJO activo. Resultado en upgrades: la búsqueda por
+ * remitente no quedaría realmente habilitada. Esta función, de forma idempotente y sólo si la
+ * definición existente difiere de la canónica, dropea el índice legado y recrea el actual.
+ * En DB fresh es no-op (no existe el índice todavía; lo crea autoIndex/createIndexes).
+ */
+export async function reconcileEmailTextIndex(): Promise<void> {
+  const coll = mongoose.connection.db?.collection('emails');
+  if (!coll) return;
+
+  let indexes;
+  try {
+    indexes = await coll.indexes();
+  } catch (err) {
+    if ((err as { codeName?: string }).codeName === 'NamespaceNotFound') return;
+    throw err;
+  }
+
+  const existing = indexes.find((i) => i.name === EMAIL_TEXT_INDEX.name);
+  if (!existing) return; // fresh: no hay índice → autoIndex/createIndexes lo crea con la spec actual.
+
+  // ¿Coinciden los pesos con la spec canónica? Mongo expone los pesos del índice de texto en
+  // `weights`. Si difieren (p.ej. falta `from.name`), el índice está desactualizado.
+  const currentWeights = (existing.weights ?? {}) as Record<string, number>;
+  const desiredWeights = EMAIL_TEXT_INDEX.weights as Record<string, number>;
+  const sameKeys =
+    Object.keys(desiredWeights).length === Object.keys(currentWeights).length &&
+    Object.entries(desiredWeights).every(([k, v]) => currentWeights[k] === v);
+  if (sameKeys) return; // ya está actualizado.
+
+  await coll.dropIndex(EMAIL_TEXT_INDEX.name);
+  await coll.createIndex(EMAIL_TEXT_INDEX.key, {
+    name: EMAIL_TEXT_INDEX.name,
+    weights: EMAIL_TEXT_INDEX.weights,
+  });
+}
 
 /**
  * Migración para el índice único {accountId, folderId, uid} de emails (F3.4 / TD-4):

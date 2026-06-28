@@ -3,7 +3,11 @@ import { connectDatabase, disconnectDatabase } from './config/db.js';
 import { redis, closeRedis } from './config/redis.js';
 import { buildApp } from './app.js';
 import { buildSetupApp } from './setup/index.js';
-import { reconcileLegacyIndexes, reconcileEmailUidIndex } from './db/reconcile-indexes.js';
+import {
+  reconcileLegacyIndexes,
+  reconcileEmailUidIndex,
+  reconcileEmailTextIndex,
+} from './db/reconcile-indexes.js';
 import { env, isSetupMode } from './config/env.js';
 
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
@@ -26,6 +30,7 @@ async function main() {
   await connectDatabase();
   await reconcileLegacyIndexes();
   await reconcileEmailUidIndex();
+  await reconcileEmailTextIndex();
   await redis.ping();
 
   const app = await buildApp();

@@ -77,6 +77,7 @@ import {
   buildTestApp,
   authHeaders,
   seedUserWithAccount,
+  seedAccountFor,
   seedFolder,
   seedEmail,
 } from '../../../test/integration-helper.js';
@@ -395,6 +396,28 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
       headers: authHeaders(app, other._id.toString()),
     });
     expect((JSON.parse(cross.body) as { data: unknown[] }).data).toHaveLength(0);
+  });
+
+  it('GET /api/emails/search — multi-cuenta: agrega todas las cuentas del usuario sin 500 (regresión B)', async () => {
+    // Regresión del HIGH (review B): con 2+ cuentas, `accountId: {$in:[...]}` sobre el índice
+    // $text COMPUESTO (prefijo accountId) hacía fallar el planner (NoQueryExecutionPlans) → 500.
+    // Ahora se lanza una query indexada POR cuenta y se fusiona. Aquí verificamos 200 + agregación.
+    const { user, account } = await seedUserWithAccount({ email: 'multi@test.com' });
+    const acc2 = await seedAccountFor(user._id, 'multi-2@test.com');
+    const f1 = await seedFolder(account._id);
+    const f2 = await seedFolder(acc2._id);
+    await seedEmail(account._id, f1._id, { uid: 60, subject: 'Factura cuenta uno' });
+    await seedEmail(acc2._id, f2._id, { uid: 61, subject: 'Factura cuenta dos' });
+    const headers = authHeaders(app, user._id.toString());
+
+    const res = await app.inject({ method: 'GET', url: '/api/emails/search?q=factura', headers });
+    expect(res.statusCode).toBe(200); // antes: 500 con 2+ cuentas.
+    const subjects = (JSON.parse(res.body) as { data: { subject: string }[] }).data.map(
+      (e) => e.subject
+    );
+    // Resultado AGREGADO de ambas cuentas del usuario.
+    expect(subjects).toContain('Factura cuenta uno');
+    expect(subjects).toContain('Factura cuenta dos');
   });
 
   it('snooze: oculta de la carpeta + aparece en /snoozed; vence solo; future-only; owner-bound', async () => {

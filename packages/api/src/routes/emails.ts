@@ -87,6 +87,12 @@ export default function emailRoutes(fastify: FastifyInstance) {
   // Búsqueda global estilo Gmail: usa el índice de TEXTO (email_text_search) sobre
   // asunto/remitente/preview en TODAS las cuentas del usuario (owner-bound). $text escala con
   // índice (a diferencia de un $regex sin ancla, que era un COLLSCAN O(n) — review B+D). Cap 50.
+  //
+  // IMPORTANTE (review B): el índice de texto es COMPUESTO con prefijo `accountId`. MongoDB exige
+  // IGUALDAD sobre el prefijo de un índice $text; `accountId: {$in: [...]}` NO es igualdad y el
+  // planner falla con `NoQueryExecutionPlans` → 500 en cuanto el usuario tiene 2+ cuentas (los
+  // tests con 1 cuenta lo ocultaban). Por eso lanzamos UNA query indexada por cuenta (igualdad,
+  // tenant-aislada) y fusionamos por textScore. El caso común (1 cuenta) sigue siendo 1 query.
   const searchSchema = z.object({ q: z.string().trim().min(1).max(200) });
   fastify.get('/search', async (request, reply) => {
     const parsed = searchSchema.safeParse(request.query);
@@ -98,13 +104,25 @@ export default function emailRoutes(fastify: FastifyInstance) {
     const accounts = await Account.find({ userId: request.user.userId }).select('_id');
     const accountIds = accounts.map((a) => a._id);
     if (accountIds.length === 0) return { data: [] };
-    const emails = await Email.find({
-      accountId: { $in: accountIds },
-      $text: { $search: parsed.data.q },
-    })
-      .sort({ score: { $meta: 'textScore' }, date: -1 })
-      .limit(50);
-    return { data: emails.map(serializeEmail) };
+    const q = parsed.data.q;
+    const perAccount = await Promise.all(
+      accountIds.map((accountId) =>
+        Email.find({ accountId, $text: { $search: q } }, { score: { $meta: 'textScore' } })
+          .sort({ score: { $meta: 'textScore' }, date: -1 })
+          .limit(50)
+      )
+    );
+    // Fusión global por relevancia (textScore desc, luego fecha desc) y cap 50. El textScore es
+    // comparable entre cuentas (mismo término/pesos del índice), así que ordenar el conjunto basta.
+    const merged = perAccount
+      .flat()
+      .sort((a, b) => {
+        const sa = (a.get('score') as number | undefined) ?? 0;
+        const sb = (b.get('score') as number | undefined) ?? 0;
+        return sb - sa || b.date.getTime() - a.date.getTime();
+      })
+      .slice(0, 50);
+    return { data: merged.map(serializeEmail) };
   });
 
   // Pospuestos (snooze): emails del usuario que SIGUEN pospuestos (snoozedUntil futuro).

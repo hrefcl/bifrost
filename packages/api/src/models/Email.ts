@@ -1,5 +1,8 @@
 import mongoose, { Schema, type Document } from 'mongoose';
 import type { EmailFlags, Address } from '@webmail6/shared';
+import { EMAIL_TEXT_INDEX } from './email-indexes.js';
+
+export { EMAIL_TEXT_INDEX };
 
 export interface IEmail extends Document {
   accountId: mongoose.Types.ObjectId;
@@ -92,12 +95,13 @@ EmailSchema.index({ accountId: 1, 'flags.seen': 1, folderId: 1 });
 EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
 // Pospuestos: buscar por usuario (cuenta) los que siguen en snooze.
 EmailSchema.index({ accountId: 1, snoozedUntil: 1 });
-EmailSchema.index(
-  { accountId: 1, subject: 'text', preview: 'text', 'from.name': 'text', 'from.address': 'text' },
-  {
-    weights: { subject: 10, 'from.name': 6, preview: 5, 'from.address': 3 },
-    name: 'email_text_search',
-  }
-);
+// Índice de texto con la spec canónica (definida en email-indexes.ts, sin registrar el modelo).
+// El reconcile de arranque la reutiliza para detectar/dropear una versión legada (p.ej. sin
+// `from.name`) y recrear ésta — si no, en una DB con el índice anterior createIndexes() falla con
+// IndexOptionsConflict y el índice viejo queda activo (review B).
+EmailSchema.index(EMAIL_TEXT_INDEX.key, {
+  weights: EMAIL_TEXT_INDEX.weights,
+  name: EMAIL_TEXT_INDEX.name,
+});
 
 export const Email = mongoose.model<IEmail>('Email', EmailSchema);

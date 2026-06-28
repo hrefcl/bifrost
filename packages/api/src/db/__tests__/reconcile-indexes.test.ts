@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import mongoose from 'mongoose';
-import { reconcileLegacyIndexes, reconcileEmailUidIndex } from '../reconcile-indexes.js';
+import {
+  reconcileLegacyIndexes,
+  reconcileEmailUidIndex,
+  reconcileEmailTextIndex,
+} from '../reconcile-indexes.js';
+import { EMAIL_TEXT_INDEX } from '../../models/email-indexes.js';
 
 describe('reconcileLegacyIndexes (F3.2 / H-DATA-TTL)', () => {
   let server: MongoMemoryServer;
@@ -67,5 +72,47 @@ describe('reconcileLegacyIndexes (F3.2 / H-DATA-TTL)', () => {
     const idx = await coll.indexes();
     const unique = idx.find((i) => i.name === 'accountId_1_folderId_1_uid_1');
     expect(unique?.unique).toBe(true);
+  });
+
+  it('reconcileEmailTextIndex: dropea un email_text_search legado (sin from.name) y recrea la spec actual', async () => {
+    const coll = mongoose.connection.db!.collection('emails');
+    try {
+      await coll.dropIndex(EMAIL_TEXT_INDEX.name);
+    } catch {
+      /* no existe aún */
+    }
+    // Índice de texto LEGADO: sin from.name y con pesos antiguos.
+    await coll.createIndex(
+      { accountId: 1, subject: 'text', preview: 'text', 'from.address': 'text' },
+      { name: EMAIL_TEXT_INDEX.name, weights: { subject: 10, preview: 5, 'from.address': 3 } }
+    );
+    const legacy = (await coll.indexes()).find((i) => i.name === EMAIL_TEXT_INDEX.name);
+    expect(legacy?.weights?.['from.name']).toBeUndefined();
+
+    await reconcileEmailTextIndex();
+
+    // Tras reconciliar: el índice tiene la spec actual, incluido from.name con su peso.
+    const after = (await coll.indexes()).find((i) => i.name === EMAIL_TEXT_INDEX.name);
+    expect(after?.weights?.['from.name']).toBe(EMAIL_TEXT_INDEX.weights['from.name']);
+  });
+
+  it('reconcileEmailTextIndex: NO toca un índice ya actualizado (idempotente)', async () => {
+    const coll = mongoose.connection.db!.collection('emails');
+    try {
+      await coll.dropIndex(EMAIL_TEXT_INDEX.name);
+    } catch {
+      /* no existe */
+    }
+    await coll.createIndex(EMAIL_TEXT_INDEX.key as Record<string, 1 | 'text'>, {
+      name: EMAIL_TEXT_INDEX.name,
+      weights: EMAIL_TEXT_INDEX.weights,
+    });
+    const before = (await coll.indexes()).find((i) => i.name === EMAIL_TEXT_INDEX.name);
+
+    await reconcileEmailTextIndex();
+
+    const after = (await coll.indexes()).find((i) => i.name === EMAIL_TEXT_INDEX.name);
+    // Mismos pesos (no se recreó innecesariamente).
+    expect(after?.weights).toEqual(before?.weights);
   });
 });

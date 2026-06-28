@@ -116,14 +116,22 @@ const displayedEmails = computed(() =>
 // Token de cancelación: una búsqueda vieja no debe pisar la carpeta/búsqueda actual ni
 // reactivar el modo búsqueda tras salir (review B+D).
 let searchToken = 0;
+// IDs eliminados/movidos/pospuestos durante una búsqueda EN VUELO. searchToken evita que una
+// búsqueda vieja pise una nueva, pero NO que la respuesta de la búsqueda actual reinserte un
+// email que se quitó mientras estaba pendiente (race real de UI — review B). Filtramos la
+// respuesta contra este set para que nunca reviva un elemento ya removido.
+const removedIds = new Set<string>();
 async function runSearch(q: string) {
   const token = ++searchToken;
+  removedIds.clear();
   searching.value = true;
   selected.value = null;
   searchActiveQuery.value = q;
   try {
     const { data } = await api.get<{ data: Email[] }>('/emails/search', { params: { q } });
-    if (token === searchToken) searchResults.value = data.data;
+    if (token === searchToken) {
+      searchResults.value = data.data.filter((e) => !removedIds.has(e.id));
+    }
   } catch {
     if (token === searchToken) searchResults.value = [];
   } finally {
@@ -138,6 +146,7 @@ function exitSearch() {
 
 /** Saca un email de la lista visible (carpeta Y resultados de búsqueda) tras eliminar/mover/snooze. */
 function removeFromLists(id: string) {
+  removedIds.add(id); // que una búsqueda en vuelo no lo reinserte al volver (review B).
   emails.value = emails.value.filter((e) => e.id !== id);
   if (searchResults.value) searchResults.value = searchResults.value.filter((e) => e.id !== id);
   if (selected.value?.id === id) selected.value = null;
