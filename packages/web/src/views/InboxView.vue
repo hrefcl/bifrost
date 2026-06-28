@@ -538,31 +538,42 @@ const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.add
  *  impresión. Cabeceras escapadas; el cuerpo usa el sanitizedHtml ya saneado por el backend. */
 function printEmail() {
   const email = selected.value;
-  if (!email) return;
+  if (!email || !body.value) return; // requiere el cuerpo cargado (no imprimir un mensaje vacío)
   const html = buildEmailPrintHtml({
     subject: email.subject || t('thread.noSubject'),
     fromName: senderName(email),
     fromAddress: email.from.address,
     toLabel: t('thread.to', { name: t('thread.me') }),
     dateText: fmtFull(email.date),
-    sanitizedHtml: body.value?.sanitizedHtml,
-    text: body.value?.text,
+    sanitizedHtml: body.value.sanitizedHtml,
+    text: body.value.text,
   });
-  // iframe oculto con srcdoc (sin document.write deprecado, sin popup-blocker): se imprime su
-  // contentWindow al cargar y se descarta después.
+  // iframe oculto con srcdoc (sin document.write deprecado, sin popup-blocker). SANDBOX sin
+  // allow-scripts → ningún script del cuerpo se ejecuta aunque sanitize-html tuviera un bypass
+  // (el contenido del email es NO confiable); allow-same-origin para que el padre pueda llamar
+  // print(); allow-modals para el diálogo. Defensa en profundidad sobre el saneo + CSP (review B+D).
   try {
     const iframe = document.createElement('iframe');
     iframe.setAttribute('aria-hidden', 'true');
+    iframe.setAttribute('sandbox', 'allow-same-origin allow-modals');
     iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0';
-    iframe.srcdoc = html;
-    iframe.onload = () => {
-      iframe.contentWindow?.focus();
-      iframe.contentWindow?.print();
-      setTimeout(() => {
-        iframe.remove();
-      }, 1000);
+    let cleaned = false;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      iframe.remove();
     };
+    iframe.onload = () => {
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } finally {
+        setTimeout(cleanup, 1000);
+      }
+    };
+    iframe.srcdoc = html;
     document.body.appendChild(iframe);
+    setTimeout(cleanup, 10_000); // respaldo: si onload no dispara, no dejar el iframe colgado
   } catch {
     error.value = t('errors.print');
   }
@@ -788,7 +799,12 @@ onBeforeUnmount(() => {
             <AppIcon name="tag" :size="20" />
           </button>
           <div class="spacer" />
-          <button class="icon-btn" :title="t('thread.print')" @click="printEmail">
+          <button
+            class="icon-btn"
+            :title="t('thread.print')"
+            :disabled="!body || bodyLoading"
+            @click="printEmail"
+          >
             <AppIcon name="printer" :size="20" />
           </button>
           <button class="icon-btn" :title="t('common.more')">

@@ -50,4 +50,26 @@ describe('buildEmailPrintHtml', () => {
     expect(html).toMatch(/^<!DOCTYPE html>/);
     expect(html).toContain('<title>Hola</title>');
   });
+
+  it('escapa TODAS las cabeceras: fromAddress, toLabel y dateText', () => {
+    const html = buildEmailPrintHtml({
+      subject: 's',
+      fromName: 'n',
+      fromAddress: 'a"<x>@t',
+      toLabel: 'para <b>mí</b>',
+      dateText: '<i>fecha</i>',
+      text: 'x',
+    });
+    expect(html).toContain('a&quot;&lt;x&gt;@t');
+    expect(html).toContain('para &lt;b&gt;mí&lt;/b&gt;');
+    expect(html).toContain('&lt;i&gt;fecha&lt;/i&gt;');
+    expect(html).not.toContain('<b>mí</b>');
+    expect(html).not.toContain('<i>fecha</i>');
+  });
+
+  it('escapa el asunto también en el <title>', () => {
+    const html = buildEmailPrintHtml({ ...base, subject: '</title><script>x', text: 'x' });
+    expect(html).not.toContain('</title><script>x');
+    expect(html).toContain('&lt;/title&gt;&lt;script&gt;x');
+  });
 });
