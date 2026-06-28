@@ -116,3 +116,33 @@ servir el branding al frontend al boot, y sección en `AdminView.vue` para edita
 - **N5 — Dropdown de filtro de la lista** se desbordaba a la derecha (`left:0` → `.right`
   `right:0`) y el kebab de la lista no hacía nada → menú "Marcar todas como leídas" + "Actualizar".
 
+
+---
+
+## Auto-auditoría (2026-06-28) — hallazgos sobre el punch-list recién shippeado
+
+**Corregidos este turno (commit `e270ed7`, api 191/191, web build+lint):**
+- 🔴→✅ **DELETE de cuenta dejaba huérfanos** (fuga de datos + storage): no borraba Drafts/
+  CalendarEvents (accountId) ni Contacts (userId); los AttachmentBlob quedaban referenciados por
+  drafts huérfanos → el GC nunca los reclamaba. Ahora cascada completa + test de no-huérfanos.
+- 🟠→✅ **`loadRemoteBrand()` sin timeout** se awaitea en el bootstrap → un `/api/branding` colgado
+  daba pantalla en blanco. AbortController 3s → cae al default por env.
+
+**ABIERTOS (registrados, NO resueltos):**
+- 🔴 **Cero cobertura automatizada de UI** para las dos tandas (logout-redirect, admin CRUD,
+  branding upload/apply, kebabs, embudo, modal snooze). No hay infra de test de componentes en web
+  (`environment: node`, sin `@vue/test-utils`/jsdom) y **no se puede correr un browser en este
+  entorno**. Verificación real = extender Playwright e2e (existe el harness `e2e/server.ts`, pero
+  es pesado y sensible a timing/rate-limit). **Hasta entonces el frontend está "correcto por
+  construcción" (typecheck+build+lectura), NO verificado-funcionando.** Próxima unidad natural.
+- 🟡 **"Marcar todas como leídas"** sólo marca las CARGADAS (no toda la carpeta) y dispara N PATCH
+  sueltos (no hay endpoint bulk). El label sobre-promete. LOW.
+- 🟡 **Review B/C/D pendiente** de ambas tandas (NO phase-closed). Regla de oro: consultar B+C+D
+  antes de cerrar fase; score <9 o HIGH abierto = no se avanza.
+- ⚪ Menor: `accentColor` no se puede limpiar con `''` (el schema exige HEX → 400); no expuesto en
+  la UI (input color siempre trae valor). Cosmético.
+
+**Veredicto honesto:** backend de las features está **tested (191) y endurecido** (~9). El
+entregable INTEGRADO de UI está **implementado + typecheck + build pero SIN verificación e2e/browser**
+→ no puedo declararlo "funcionando de verdad" con la misma confianza. **La unidad NO está cerrada**:
+falta (a) cobertura e2e de las dos tandas y (b) review externa B/C/D.
