@@ -80,6 +80,10 @@ async function main() {
   const nextSyncDelay = () => 2 * 60 * 1000 + Math.floor(Math.random() * 60_000);
   const scheduleAccountSync = () => {
     accountSyncSweep = setTimeout(() => {
+      // Si el shutdown ya empezó (gracefulShutdown setea shutdownPromise en su 1ª línea), NO arrancar
+      // un barrido: cubre la ventana en que el timer ya disparó (callback encolado) y clearTimeout no
+      // pudo cancelarlo, evitando un sync contra Redis/Mongo cerrándose (review D).
+      if (shutdownPromise) return;
       // Guardar el promise del barrido EN VUELO para poder drenarlo en el shutdown (que el release
       // del lock + el status terminen antes de cerrar Redis/Mongo — review D).
       activeSync = syncStaleAccounts()
