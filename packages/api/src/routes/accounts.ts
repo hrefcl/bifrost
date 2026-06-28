@@ -19,6 +19,9 @@ const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
+  // Filtro de la lista (estilo Gmail). Server-side: filtra TODA la carpeta, no sólo la página
+  // cargada (un filtro client-side sobre 20 emails mostraría "0" aunque hubiera matches después).
+  filter: z.enum(['unread', 'starred', 'attachments']).optional(),
 });
 
 function serializeAccount(account: import('../models/Account.js').IAccount): AccountDto {
@@ -201,7 +204,7 @@ export default function accountRoutes(fastify: FastifyInstance) {
     objectIdSchema.parse(accountId);
     objectIdSchema.parse(folderId);
     await requireOwnedFolder(request.user.userId, accountId, folderId);
-    const { page, limit } = paginationSchema.parse(request.query);
+    const { page, limit, filter: listFilter } = paginationSchema.parse(request.query);
     const skip = (page - 1) * limit;
 
     // Pospuestos (snooze): ocultar los que siguen en snooze (snoozedUntil futuro). Al pasar la
@@ -209,11 +212,15 @@ export default function accountRoutes(fastify: FastifyInstance) {
     // `$not {$gt}` (en vez de un $or) incluye ausente/null/<=now en UNA condición: deja que el
     // índice ESR {accountId,folderId,date,uid} sirva igualdad+sort y aplica esto como filtro
     // residual sobre la carpeta ya acotada (el $or rompía el plan); además cubre null (review B+D).
-    const filter = {
+    const filter: Record<string, unknown> = {
       accountId,
       folderId,
       snoozedUntil: { $not: { $gt: new Date() } },
     };
+    // Filtro de la lista (server-side → filtra toda la carpeta, conteo `total` honesto).
+    if (listFilter === 'unread') filter['flags.seen'] = false;
+    else if (listFilter === 'starred') filter['flags.flagged'] = true;
+    else if (listFilter === 'attachments') filter.hasAttachments = true;
     const [data, total] = await Promise.all([
       Email.find(filter).sort({ date: -1, uid: -1 }).skip(skip).limit(limit),
       Email.countDocuments(filter),

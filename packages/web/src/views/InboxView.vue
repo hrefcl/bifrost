@@ -39,6 +39,14 @@ const LIST_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
   { key: 'starred', label: 'list.filterStarred', icon: 'star' },
   { key: 'attachments', label: 'list.filterAttachments', icon: 'paperclip' },
 ];
+// Predicado del filtro (client-side). En carpetas reales el backend ya filtró (server-side), así que
+// aquí es idempotente; es el que filtra las vistas client-only: búsqueda y Pospuestos/Destacados.
+function matchesListFilter(e: Email): boolean {
+  if (listFilter.value === 'unread') return !e.flags.seen;
+  if (listFilter.value === 'starred') return e.flags.flagged;
+  if (listFilter.value === 'attachments') return e.hasAttachments;
+  return true;
+}
 
 const selected = ref<Email | null>(null);
 const body = ref<EmailBody | null>(null);
@@ -105,10 +113,8 @@ const currentTitle = computed(() => {
 const filteredEmails = computed(() => {
   let list = emails.value; // Pospuestos: emails.value ya viene de GET /emails/snoozed
   if (virtualView.value === 'starred') list = list.filter((e) => e.flags.flagged);
-  // Filtro de la barra de la lista (independiente de la vista/carpeta actual).
-  if (listFilter.value === 'unread') list = list.filter((e) => !e.flags.seen);
-  else if (listFilter.value === 'starred') list = list.filter((e) => e.flags.flagged);
-  else if (listFilter.value === 'attachments') list = list.filter((e) => e.hasAttachments);
+  // Filtro de la barra de la lista (server-side en carpetas; client-side aquí para vistas virtuales).
+  if (listFilter.value !== 'all') list = list.filter(matchesListFilter);
   const q = ui.searchQuery.trim().toLowerCase();
   if (q) {
     list = list.filter(
@@ -123,10 +129,13 @@ const filteredEmails = computed(() => {
   return list;
 });
 
-// Lo que se muestra: resultados globales de búsqueda (si hay) o los de la carpeta.
-const displayedEmails = computed(() =>
-  inSearch.value ? (searchResults.value ?? []) : filteredEmails.value
-);
+// Lo que se muestra: resultados globales de búsqueda (si hay) o los de la carpeta. El filtro de
+// lista también se aplica a la búsqueda (client-side sobre los ≤50 resultados — review B+D).
+const displayedEmails = computed(() => {
+  if (!inSearch.value) return filteredEmails.value;
+  const results = searchResults.value ?? [];
+  return listFilter.value === 'all' ? results : results.filter(matchesListFilter);
+});
 
 // Token de cancelación: una búsqueda vieja no debe pisar la carpeta/búsqueda actual ni
 // reactivar el modo búsqueda tras salir (review B+D).
@@ -292,11 +301,15 @@ async function selectFolder(folderId: string) {
   selectedFolderId.value = folderId;
   selected.value = null;
   category.value = 'primary';
-  listFilter.value = 'all';
+  // NO se resetea listFilter aquí: el reset es responsabilidad de la navegación (selectStandard/
+  // selectLabel). Así un sync (que llama selectFolder) preserva el filtro, y el filtro se aplica
+  // server-side en el fetch (review B+D: client-side sólo veía la página cargada).
   loading.value = true;
   try {
+    const params = listFilter.value !== 'all' ? { filter: listFilter.value } : undefined;
     const { data } = await api.get<{ data: Email[] }>(
-      `/accounts/${accountId()}/folders/${folderId}/emails`
+      `/accounts/${accountId()}/folders/${folderId}/emails`,
+      { params }
     );
     emails.value = data.data;
   } catch {
@@ -353,6 +366,7 @@ async function selectLabel(f: Folder) {
   }
   selectedKey.value = f.id;
   virtualView.value = null;
+  listFilter.value = 'all'; // el filtro no persiste al cambiar de carpeta (reset antes del fetch)
   await selectFolder(f.id);
 }
 
@@ -480,17 +494,29 @@ const moveTargets = computed(() => {
   );
 });
 function toggleLabelMenu() {
+  showFilterMenu.value = false; // sólo un popover abierto a la vez (review B/D)
   if (moveTargets.value.length > 0) showLabelMenu.value = !showLabelMenu.value;
 }
 
 // ---- Filtro de la lista ----
 const showFilterMenu = ref(false);
 function toggleFilterMenu() {
+  showLabelMenu.value = false; // sólo un popover abierto a la vez
   showFilterMenu.value = !showFilterMenu.value;
 }
 function setListFilter(v: ListFilter) {
+  if (v === listFilter.value) {
+    showFilterMenu.value = false;
+    return;
+  }
   listFilter.value = v;
   showFilterMenu.value = false;
+  // En carpeta real, re-consultar server-side (filtra TODA la carpeta, no sólo la página cargada).
+  // En vistas virtuales (Pospuestos/Destacados) y búsqueda, el filtro se aplica client-side sobre
+  // la lista ya cargada (acotada).
+  if (selectedFolderId.value && !virtualView.value && !inSearch.value) {
+    void selectFolder(selectedFolderId.value);
+  }
 }
 /** Mueve el email a la carpeta/etiqueta elegida (owner-bound en el backend, por folderId). */
 function applyLabel(email: Email | null, folderId: string) {

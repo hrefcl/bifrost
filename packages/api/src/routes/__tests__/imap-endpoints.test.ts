@@ -369,6 +369,44 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     expect(await Email.findById(email2._id)).not.toBeNull(); // no se movió
   });
 
+  it('GET folders/:id/emails?filter — filtra SERVER-SIDE (toda la carpeta) con total honesto', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'flt@test.com' });
+    const inbox = await seedFolder(account._id, { name: 'INBOX', path: 'INBOX' });
+    const e1 = await seedEmail(account._id, inbox._id, { uid: 40 }); // no leído (default)
+    const e2 = await seedEmail(account._id, inbox._id, { uid: 41 }); // leído + destacado
+    const e3 = await seedEmail(account._id, inbox._id, { uid: 42 }); // leído + con adjunto
+    await Email.updateOne({ _id: e1._id }, { 'flags.seen': false });
+    await Email.updateOne({ _id: e2._id }, { 'flags.seen': true, 'flags.flagged': true });
+    await Email.updateOne({ _id: e3._id }, { 'flags.seen': true, hasAttachments: true });
+    const headers = authHeaders(app, user._id.toString());
+    const base = `/api/accounts/${account._id.toString()}/folders/${inbox._id.toString()}/emails`;
+    const get = async (qs: string) => {
+      const res = await app.inject({ method: 'GET', url: base + qs, headers });
+      expect(res.statusCode).toBe(200);
+      return JSON.parse(res.body) as {
+        data: { uid: number }[];
+        pagination: { total: number };
+      };
+    };
+
+    const all = await get('');
+    expect(all.pagination.total).toBe(3);
+
+    const unread = await get('?filter=unread');
+    expect(unread.data.map((e) => e.uid)).toEqual([40]);
+    expect(unread.pagination.total).toBe(1); // total honesto: TODA la carpeta, no la página
+
+    const starred = await get('?filter=starred');
+    expect(starred.data.map((e) => e.uid)).toEqual([41]);
+
+    const attachments = await get('?filter=attachments');
+    expect(attachments.data.map((e) => e.uid)).toEqual([42]);
+
+    // filtro inválido → 400 (zod enum).
+    const bad = await app.inject({ method: 'GET', url: base + '?filter=bogus', headers });
+    expect(bad.statusCode).toBe(400);
+  });
+
   it('PATCH /api/emails/:id/flags — persiste flagged (estrella) y seen; vacío → 400', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'star@test.com' });
     const folder = await seedFolder(account._id);
