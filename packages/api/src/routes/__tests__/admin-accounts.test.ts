@@ -20,6 +20,9 @@ import {
 } from '../../../test/integration-helper.js';
 import { User } from '../../models/User.js';
 import { Account } from '../../models/Account.js';
+import { Draft } from '../../models/Draft.js';
+import { Contact } from '../../models/Contact.js';
+import { CalendarEvent } from '../../models/CalendarEvent.js';
 
 const newAccountBody = (email: string) => ({
   email,
@@ -115,10 +118,18 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     await app.close();
   });
 
-  it('DELETE /accounts/:id elimina la cuenta y su usuario; borrar la propia → 400', async () => {
+  it('DELETE /accounts/:id elimina la cuenta, su usuario y CASCADA sus datos; borrar la propia → 400', async () => {
     const app = await buildTestApp();
     const { headers, account: adminAccount } = await seedAdmin(app);
     const { user, account } = await seedUserWithAccount({ email: 'borrar@empresa.com' });
+    // Datos del usuario/cuenta que DEBEN borrarse en cascada (insertOne evita validaciones ajenas).
+    await Draft.collection.insertOne({ userId: user._id, accountId: account._id, subject: 'x' });
+    await CalendarEvent.collection.insertOne({
+      userId: user._id,
+      accountId: account._id,
+      uid: 'u1',
+    });
+    await Contact.collection.insertOne({ userId: user._id, name: 'Juan' });
 
     const del = await app.inject({
       method: 'DELETE',
@@ -128,6 +139,10 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     expect(del.statusCode).toBe(200);
     expect(await Account.findById(account._id).lean()).toBeNull();
     expect(await User.findById(user._id).lean()).toBeNull();
+    // Sin huérfanos: drafts/eventos (accountId-bound) y contactos (userId-bound) eliminados.
+    expect(await Draft.countDocuments({ accountId: account._id })).toBe(0);
+    expect(await CalendarEvent.countDocuments({ accountId: account._id })).toBe(0);
+    expect(await Contact.countDocuments({ userId: user._id })).toBe(0);
 
     const self = await app.inject({
       method: 'DELETE',

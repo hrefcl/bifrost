@@ -10,6 +10,9 @@ import { Account } from '../models/Account.js';
 import { Email } from '../models/Email.js';
 import { Folder } from '../models/Folder.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
+import { Draft } from '../models/Draft.js';
+import { Contact } from '../models/Contact.js';
+import { CalendarEvent } from '../models/CalendarEvent.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -270,10 +273,24 @@ export default function adminRoutes(fastify: FastifyInstance) {
       });
     }
     await Account.deleteOne({ _id: id });
-    await Email.deleteMany({ accountId: id });
-    await Folder.deleteMany({ accountId: id });
+    // Datos ACOTADOS A LA CUENTA (accountId-bound): se borran SIEMPRE, sea o no la última cuenta.
+    // Incluye Drafts: así sus AttachmentBlob quedan SIN referencia y el GC mark-and-sweep los
+    // reclama (docs + bytes en el storage provider) — si no, fuga de storage por blobs inmortales.
+    await Promise.all([
+      Email.deleteMany({ accountId: id }),
+      Folder.deleteMany({ accountId: id }),
+      Draft.deleteMany({ accountId: id }),
+      CalendarEvent.deleteMany({ accountId: id }),
+    ]);
+    // Si era la ÚLTIMA cuenta del usuario, borrar también el usuario y sus datos por-usuario
+    // (Contacts). Los AttachmentBlob (userId-bound) los recicla el GC al quedar sin drafts.
     const remaining = await Account.countDocuments({ userId: account.userId });
-    if (remaining === 0) await User.deleteOne({ _id: account.userId });
+    if (remaining === 0) {
+      await Promise.all([
+        User.deleteOne({ _id: account.userId }),
+        Contact.deleteMany({ userId: account.userId }),
+      ]);
+    }
     return { ok: true };
   });
 }

@@ -63,7 +63,19 @@ interface RemoteBranding {
  */
 export async function loadRemoteBrand(): Promise<void> {
   try {
-    const res = await fetch('/api/branding');
+    // Timeout duro: este fetch se awaitea en el bootstrap ANTES de montar la app. Sin tope, un
+    // /api/branding colgado (red lenta, backend trabado) dejaría pantalla en blanco. A los 3s
+    // seguimos con el default por env (la marca no es crítica para arrancar).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      ctrl.abort();
+    }, 3000);
+    let res: Response;
+    try {
+      res = await fetch('/api/branding', { signal: ctrl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
     if (!res.ok) return;
     const b = (await res.json()) as RemoteBranding;
     if (b.companyName) brand.name = b.companyName;
