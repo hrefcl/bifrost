@@ -161,9 +161,11 @@ packages/provisioner/
   (block-public, SSE-KMS, versioning, policy deny-unencrypted/deny-no-TLS); generar la config de
   storage de Bifrost (provider s3, secret cifrado). EBS encryption con la CMK. **El correo en bulk
   (cuerpos+adjuntos) vive acá, no en EBS** (palanca de costo, misión §0). Idempotente + teardown.
-- **F-E3 — Red + cómputo:** KeyPair (importar/crear), Security Group, Elastic IP, EC2 (user-data
-  instala Docker + docker-mailserver + **Bifrost compose** all-in-one, apuntando el storage al
-  bucket S3 cifrado). Idempotente + resumible. **DECISIÓN ABIERTA DE ARQUITECTURA (ver §8).**
+- **F-E3 — Red + cómputo:** KeyPair (importar/crear), Security Group, Elastic IP, EC2. **REUSA la
+  plantilla REAL existente `deploy/example-mailserver/`** (Traefik+TLS · docker-mailserver con
+  OpenDKIM/DMARC/SPF/fail2ban · Mongo+Redis · Bifrost API/Web + `setup.sh` que parametriza dominio,
+  genera secretos e imprime DNS) — NO reinventar; el user-data clona/parametriza ese compose.
+  Idempotente + resumible. **DECISIÓN ABIERTA DE ARQUITECTURA (ver §8).**
 - **F-E4 — DNS:** Route53 hosted zone (detectar/crear) + A/MX/SPF/DMARC; aviso de PTR.
 - **F-E5 — Correo + ENTREGABILIDAD VERIFICADA:** SSH → crear cuentas, generar DKIM, publicar DKIM
   en Route53, TLS Let's Encrypt; **verificar** puertos/DNS(MX/SPF/DKIM/DMARC)/TLS y hacer un

@@ -14,3 +14,4 @@ export {
   type InstanceTypeInfo,
 } from './catalog/instance-types.js';
 export { type AwsIdentity } from './aws/sts.js';
+export { estimateMonthlyCost, PRICING, type CostInput, type CostBreakdown } from './cost.js';

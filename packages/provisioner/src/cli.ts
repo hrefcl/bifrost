@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-import { input, confirm } from '@inquirer/prompts';
+import { input, confirm, number } from '@inquirer/prompts';
 import { makeClients } from './aws/clients.js';
 import { runPreflight } from './steps/preflight.js';
 import { ALLINONE_CATALOG } from './catalog/instance-types.js';
+import { estimateMonthlyCost } from './cost.js';
 
 /**
  * F-E1 — Preflight interactivo (read-only). Reúne región/dominio/S3, valida contra AWS sin crear
@@ -23,6 +24,8 @@ async function main(): Promise<void> {
     const suggested = `bifrost-${domain.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-data`;
     bucketName = await input({ message: 'Nombre del bucket S3', default: suggested });
   }
+  const mailboxes = (await number({ message: '¿Cuántos buzones/empleados?', default: 50 })) ?? 50;
+  const bulkGiB = (await number({ message: 'Correo total estimado (GB)', default: 200 })) ?? 200;
 
   console.log('\nValidando contra AWS (sólo lectura)…\n');
   // Región de CONTROL estable para las llamadas; `region` es el destino (se valida como dato).
@@ -57,6 +60,27 @@ async function main(): Promise<void> {
       `  - ${i.type}: ${String(i.vcpu)} vCPU / ${String(i.memGiB)} GB — ~$${String(i.approxMonthlyUsd)}/mes (${i.note})`
     );
   }
+
+  // Costo estimado: la métrica que prueba la tesis de la misión ($/buzón << $5–10 comerciales).
+  // Ilustra la palanca: CON S3 el bulk va barato a S3; SIN S3 el bulk infla el EBS (más caro).
+  const cost = estimateMonthlyCost({
+    instanceMonthlyUsd: rec.approxMonthlyUsd,
+    ebsGiB: useS3 ? 40 : 40 + bulkGiB,
+    s3GiB: useS3 ? bulkGiB : 0,
+    dataTransferOutGiB: 50,
+    mailboxes,
+    createHostedZone: !r.domain.hostedZoneExists && r.domain.parentZone === null,
+    useKms: useS3,
+  });
+  const commercial = mailboxes * 7;
+  console.log(`\nCosto estimado (aprox, us-east-1, ${String(mailboxes)} buzones):`);
+  console.log(
+    `  EC2 ${rec.type}: $${String(cost.ec2)} · EBS: $${String(cost.ebs)} · S3: $${String(cost.s3)} · IPv4: $${String(cost.publicIpv4)} · KMS: $${String(cost.kms)} · Route53: $${String(cost.route53)} · egress: $${String(cost.dataTransfer)}`
+  );
+  console.log(`  TOTAL ~$${String(cost.total)}/mes  →  ~$${String(cost.perMailbox)}/buzón/mes`);
+  console.log(
+    `  (comercial a $7/usuario ≈ $${String(commercial)}/mes — ahorro ≈ $${String(Math.round(commercial - cost.total))}/mes)`
+  );
 
   if (r.warnings.length > 0) {
     console.log('\nAvisos:');
