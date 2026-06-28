@@ -316,11 +316,13 @@ onMounted(async () => {
         <input
           v-model="createForm.location"
           type="text"
+          maxlength="1024"
           :placeholder="t('calendar.location')"
           class="field"
         />
         <textarea
           v-model="createForm.description"
+          maxlength="8192"
           :placeholder="t('calendar.description')"
           class="field"
           rows="3"

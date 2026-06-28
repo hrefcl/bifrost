@@ -243,6 +243,15 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
     const blank = JSON.parse(cleared.body) as { description?: string; location?: string };
     expect(blank.description ?? '').toBe('');
     expect(blank.location ?? '').toBe('');
+
+    // Límite de longitud (anti texto absurdo): description > 8192 → 400.
+    const tooLong = await app.inject({
+      method: 'PATCH',
+      url: `/api/calendar/${created.id}`,
+      headers,
+      payload: { description: 'x'.repeat(8193) },
+    });
+    expect(tooLong.statusCode).toBe(400);
     await app.close();
   });
 });
