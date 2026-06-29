@@ -90,6 +90,15 @@ echo "STORAGE_PROVIDER=local" > .env   # S3 aún no cableado a la app (ver doc)
 docker compose pull
 docker compose up -d
 
+# Readiness mínima: dar unos segundos y verificar que NINGÚN contenedor murió al arrancar (atrapa
+# crashes inmediatos como un secreto inválido). Si alguno salió, el trap señaliza FRACASO a CFN.
+sleep 20
+if docker compose ps --status=exited --quiet | grep -q .; then
+  echo "ERROR: un contenedor salió al arrancar:" >&2
+  docker compose ps >&2
+  exit 1
+fi
+
 echo "bifrost-provision: stack levantado para $DOMAIN" > /var/log/bifrost-provision.log
 
 # 8) ÉXITO → señalizar a CloudFormation (sin esto, CreationPolicy expira y el stack falla).

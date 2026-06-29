@@ -353,7 +353,9 @@ export function buildStackTemplate(): Record<string, unknown> {
               Name: { Ref: 'DomainName' },
               Type: 'TXT',
               TTL: '300',
-              ResourceRecords: ['"v=spf1 mx -all"'],
+              // ~all (softfail) en el setup inicial: evita rebotar correo legítimo mientras se afina
+              // la config; endurecer a -all después. Coherente con deploy/example-mailserver/setup.sh.
+              ResourceRecords: ['"v=spf1 mx ~all"'],
             },
             {
               Name: { 'Fn::Sub': '_dmarc.${DomainName}' },

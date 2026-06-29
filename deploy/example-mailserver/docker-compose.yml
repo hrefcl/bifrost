@@ -77,7 +77,7 @@ services:
     networks: [mailnet]
 
   # --- Bifrost API (reemplaza el backend de Roundcube) ------------------------
-  bifrost-api:
+  api:
     image: ghcr.io/hrefcl/bifrost/api:latest
     restart: unless-stopped
     depends_on: [mongo, redis]
@@ -97,10 +97,10 @@ services:
     networks: [mailnet]
 
   # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
-  bifrost-web:
+  web:
     image: ghcr.io/hrefcl/bifrost/web:latest
     restart: unless-stopped
-    depends_on: [bifrost-api]
+    depends_on: [api]
     labels:
       - traefik.enable=true
       - traefik.http.routers.bifrost.rule=Host(`webmail.example.com`) # ← tu dominio webmail

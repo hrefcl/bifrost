@@ -48,7 +48,10 @@ const envSchema = z.object({
     .default('15m'),
   ENCRYPTION_KEY: z
     .string()
-    .length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)'),
+    .length(64, 'ENCRYPTION_KEY must be a 64-character hex string (32 bytes)')
+    // Fail-fast en el boot: exigir HEX acá (no recién al usarse en crypto.ts) — un valor de 64
+    // chars no-hex pasaría el length y fallaría tarde, en la primera operación de cifrado.
+    .regex(/^[0-9a-f]{64}$/i, 'ENCRYPTION_KEY debe ser hex (0-9a-f)'),
 
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
