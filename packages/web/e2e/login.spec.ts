@@ -12,3 +12,13 @@ test('login page loads', async ({ page }) => {
   await expect(page.locator('input[type="email"]')).toBeVisible();
   await expect(page.locator('input[type="password"]')).toBeVisible();
 });
+
+test('server settings exponen el toggle TLS/STARTTLS (IMAP y SMTP)', async ({ page }) => {
+  await page.addInitScript(() => window.localStorage.setItem('locale', 'en'));
+  await page.goto('/login');
+  // El toggle de seguridad estaba oculto/hardcodeado; ahora se puede configurar (fix HIGH de B).
+  await page.getByRole('button', { name: /server settings/i }).click();
+  const tlsToggles = page.locator('.server-grid .secure input[type="checkbox"]');
+  await expect(tlsToggles).toHaveCount(2); // uno para IMAP, uno para SMTP
+  await expect(tlsToggles.first()).toBeChecked(); // default: SSL directo
+});

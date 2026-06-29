@@ -120,6 +120,9 @@ function switchLocale(l: Locale) {
               class="field port"
               :placeholder="t('login.imapPort')"
             />
+            <label class="secure" :title="t('login.tlsHint')">
+              <input v-model="form.imapSecure" type="checkbox" /> {{ t('login.tls') }}
+            </label>
           </div>
           <div class="row">
             <input
@@ -134,6 +137,9 @@ function switchLocale(l: Locale) {
               class="field port"
               :placeholder="t('login.smtpPort')"
             />
+            <label class="secure" :title="t('login.tlsHint')">
+              <input v-model="form.smtpSecure" type="checkbox" /> {{ t('login.tls') }}
+            </label>
           </div>
         </div>
 
@@ -287,6 +293,18 @@ function switchLocale(l: Locale) {
 }
 .field.port {
   max-width: 110px;
+}
+.secure {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12.5px;
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.secure input {
+  accent-color: var(--accent);
 }
 .login-error {
   font-size: 12.5px;
