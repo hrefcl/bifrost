@@ -83,7 +83,7 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 # host (no viajan en el user-data). El compose sólo usa jwt_secret y encryption_key.
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
-openssl rand -hex 64 > secrets/encryption_key.txt   # 64 hex = 32 bytes para AES-256
+openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
 echo "STORAGE_PROVIDER=local" > .env   # S3 aún no cableado a la app (ver doc)
 
 # 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).

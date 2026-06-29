@@ -1,9 +1,33 @@
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const CRITICAL_VARS = ['MONGODB_URI', 'REDIS_URL', 'JWT_SECRET', 'ENCRYPTION_KEY'] as const;
+
+/**
+ * Soporte de docker-secrets (`<VAR>_FILE`): si está seteado `<VAR>_FILE` y `<VAR>` está vacío, lee
+ * el secreto del archivo y lo carga en `<VAR>`. Es la convención estándar de Docker Compose secrets
+ * (el compose monta el secreto y pasa `JWT_SECRET_FILE`/`ENCRYPTION_KEY_FILE`, NO el valor en claro).
+ * Debe correr ANTES de evaluar setup-mode / parsear el schema. Exportada para poder testearla.
+ */
+export function resolveFileSecrets(): void {
+  for (const key of CRITICAL_VARS) {
+    const filePath = process.env[`${key}_FILE`];
+    const current = process.env[key];
+    if (filePath && (!current || current.trim() === '')) {
+      try {
+        process.env[key] = readFileSync(filePath, 'utf8').trim();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(`No se pudo leer ${key}_FILE=${filePath}: ${msg}`);
+      }
+    }
+  }
+}
+
+resolveFileSecrets();
 
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
