@@ -132,9 +132,11 @@ getStackStatus/deleteStack). Todo mock-testeable.
 **Lo que QUEDA fuera de CFN (por necesidad):** (1) **key pair** — el CLI lo crea por SDK para obtener
 el `.pem` (CFN no devuelve la clave privada); (2) **DKIM** — la clave se genera en el box al boot, así
 que su registro Route53 se agrega DESPUÉS por SDK (los A/MX/SPF/DMARC sí pueden ir en el template).
-**SUPERSEDED:** el cómputo imperativo (`aws/compute.ts` run/eip + `provisionInstance`) y el
-state/teardown propios — se retiran cuando el flujo CFN esté cableado en el CLI (evitar deuda de dos
-caminos). El `user-data`, el preflight y el cost-calc se CONSERVAN (CFN pasa el user-data como param).
+**REMOVIDO (auto-auditoría dim 5):** el cómputo imperativo (SG/EIP/RunInstances/associate +
+`provisionInstance`/`provisionComputeIdentity`), el `state`/`plan`/`teardown` propios y la resolución
+de AMI por SDK (`aws/ssm.ts`) — todo superseded por CloudFormation (el stack ES el estado; DeleteStack
+ES el teardown; el template resuelve el AMI por SSM). De `aws/compute.ts` queda SÓLO `ensureKeyPair`
+(lo único que CFN no hace: devolver el `.pem`). Se CONSERVAN user-data, preflight y cost-calc.
 
 ## 4. Arquitectura del código
 

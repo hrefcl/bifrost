@@ -1,7 +1,7 @@
 /**
- * `@webmail6/provisioner` — CLI para aprovisionar un servidor de correo all-in-one en AWS
- * (docker-mailserver + Bifrost) con repositorio de datos opcional en S3 cifrado (SSE-KMS).
- * Ver `docs/cli-provisioning-aws.md`. Esta fase (F-E1) expone sólo el PREFLIGHT read-only.
+ * `@webmail6/provisioner` — wizard que aprovisiona un servidor de correo all-in-one en AWS
+ * (docker-mailserver + Bifrost) con S3 cifrado opcional, vía CloudFormation: pregunta → arma el
+ * template → lo corre (o entrega el YAML). Ver `docs/cli-provisioning-aws.md`.
  */
 export { runPreflight, type PreflightInput, type PreflightResult } from './steps/preflight.js';
 export { makeClients, type AwsClients } from './aws/clients.js';
@@ -15,22 +15,6 @@ export {
 } from './catalog/instance-types.js';
 export { type AwsIdentity } from './aws/sts.js';
 export { estimateMonthlyCost, PRICING, type CostInput, type CostBreakdown } from './cost.js';
-export {
-  emptyState,
-  addResource,
-  removeResource,
-  hasResource,
-  serializeState,
-  parseState,
-  saveState,
-  loadState,
-  RESOURCE_ORDER,
-  type ProvisionState,
-  type ResourceRef,
-  type ResourceKind,
-} from './state.js';
-export { buildPlan, type PlanInput, type PlanStep, type ProvisionPlan } from './plan.js';
-export { teardownOrder, TEARDOWN_NOTES } from './teardown.js';
 export { buildUserData, type UserDataInput } from './mailserver/user-data.js';
 export {
   buildStackTemplate,
@@ -48,13 +32,6 @@ export {
   type StackParameter,
   type DeployStackInput,
 } from './aws/cloudformation.js';
+export { ensureKeyPair, type KeyPairResult } from './aws/compute.js';
 export { projectTags, tagSpec, PROJECT, MANAGED_BY } from './tags.js';
-export {
-  provisionComputeIdentity,
-  provisionInstance,
-  type ComputeClients,
-  type ComputeInput,
-  type ComputeResult,
-  type InstanceInput,
-  type InstanceResult,
-} from './steps/provision-compute.js';
+export { assembleStackParams, deriveBucketName, type WizardAnswers } from './wizard/params.js';
