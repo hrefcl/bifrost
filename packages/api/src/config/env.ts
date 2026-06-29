@@ -55,6 +55,11 @@ const envSchema = z.object({
 
   FRONTEND_URL: z.string().url().default('http://localhost:5173'),
   CORS_ORIGIN: z.string().default('http://localhost:5173'),
+
+  // Si el box trae su PROPIO mailserver (turnkey), su hostname (p.ej. mail.empresa.com). Cuando está
+  // seteado, el login del webmail defaultea a este servidor y OCULTA "Configuración del servidor" → se
+  // comporta como webmail NATIVO del dominio. Vacío = instalación genérica (modo "traé tu IMAP").
+  MAIL_SERVER_HOST: z.string().optional(),
 });
 
 const partialSchema = z.object({

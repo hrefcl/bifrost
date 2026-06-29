@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
@@ -28,6 +28,42 @@ const showPwd = ref(false);
 const showServer = ref(false);
 const error = ref('');
 const loading = ref(false);
+// Si el box trae su PROPIO mailserver (turnkey), defaulteamos el login a ese servidor y OCULTAMOS
+// "Configuración del servidor" → webmail NATIVO del dominio. El usuario sólo pone email + contraseña.
+const hasBaseServer = ref(false);
+
+onMounted(async () => {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => {
+      if (!ctrl.signal.aborted) ctrl.abort();
+    }, 3000);
+    const res = await fetch('/api/config/mail-server', { signal: ctrl.signal });
+    clearTimeout(timer);
+    if (!res.ok) return;
+    const { mailServer } = (await res.json()) as {
+      mailServer: {
+        imapHost: string;
+        imapPort: number;
+        imapSecure: boolean;
+        smtpHost: string;
+        smtpPort: number;
+        smtpSecure: boolean;
+      } | null;
+    };
+    if (mailServer) {
+      form.value.imapHost = mailServer.imapHost;
+      form.value.imapPort = mailServer.imapPort;
+      form.value.imapSecure = mailServer.imapSecure;
+      form.value.smtpHost = mailServer.smtpHost;
+      form.value.smtpPort = mailServer.smtpPort;
+      form.value.smtpSecure = mailServer.smtpSecure;
+      hasBaseServer.value = true; // oculta la sección de configuración manual
+    }
+  } catch {
+    // Red/timeout: degradamos al modo genérico (defaults Gmail + config manual visible).
+  }
+});
 
 async function submit() {
   error.value = '';
@@ -100,12 +136,17 @@ function switchLocale(l: Locale) {
         <label class="field-label">{{ t('login.displayNameOptional') }}</label>
         <input v-model="form.displayName" type="text" class="field" />
 
-        <button type="button" class="server-toggle" @click="showServer = !showServer">
+        <button
+          v-if="!hasBaseServer"
+          type="button"
+          class="server-toggle"
+          @click="showServer = !showServer"
+        >
           <AppIcon name="settings" :size="15" />
           {{ t('login.serverSettings') }}
           <AppIcon :name="showServer ? 'chevronDown' : 'chevronRight'" :size="15" />
         </button>
-        <div v-if="showServer" class="server-grid">
+        <div v-if="!hasBaseServer && showServer" class="server-grid">
           <p class="server-hint">{{ t('login.serverSettingsHint') }}</p>
           <div class="row">
             <input

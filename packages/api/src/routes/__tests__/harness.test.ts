@@ -1,4 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { ImapFlow } from 'imapflow';
+import { setImapClientFactory } from '../../services/mail-transport.js';
 import {
   setupTestDb,
   teardownTestDb,
@@ -48,6 +50,38 @@ describe('test harness (F3.0)', () => {
     const res = await app.inject({ method: 'GET', url: '/api/accounts' });
     expect(res.statusCode).toBe(401);
     await app.close();
+  });
+
+  it('login con credenciales/servidor IMAP inválidos → 401 (no 500)', async () => {
+    const app = await buildTestApp();
+    // Fábrica IMAP que rechaza el connect (server/credenciales malos). Restaurada en finally.
+    setImapClientFactory(
+      () =>
+        ({
+          connect: () => Promise.reject(new Error('auth failed')),
+          logout: () => Promise.resolve(),
+        }) as unknown as ImapFlow
+    );
+    try {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/api/auth/login',
+        payload: {
+          email: 'x@aulion.app',
+          password: 'bad',
+          imapHost: 'imap.gmail.com',
+          imapPort: 993,
+          imapSecure: true,
+          smtpHost: 'smtp.gmail.com',
+          smtpPort: 465,
+          smtpSecure: true,
+        },
+      });
+      expect(res.statusCode).toBe(401); // antes daba 500 (Error plano sin statusCode)
+    } finally {
+      setImapClientFactory((o) => new ImapFlow(o));
+      await app.close();
+    }
   });
 
   it('GET /api/metrics expone métricas Prometheus (sin auth)', async () => {

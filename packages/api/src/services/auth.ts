@@ -67,7 +67,11 @@ export async function loginOrRegister(input: LoginInput): Promise<{
 
   const isValid = await verifyImapCredentials(input);
   if (!isValid) {
-    throw new Error('Invalid IMAP credentials');
+    // statusCode 401 → el error handler lo devuelve como 401 (no 500). Sin esto, credenciales/server
+    // inválidos (caso común: typo o host equivocado) daban "Internal Server Error" al usuario.
+    const err = new Error('Invalid IMAP credentials') as Error & { statusCode?: number };
+    err.statusCode = 401;
+    throw err;
   }
 
   // Upsert atómico del usuario (evita E11000 por findOne→create concurrente).

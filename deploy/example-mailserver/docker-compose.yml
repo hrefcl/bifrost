@@ -108,6 +108,9 @@ services:
       ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
       FRONTEND_URL: https://webmail.example.com
       CORS_ORIGIN: https://webmail.example.com
+      # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
+      # (webmail NATIVO del dominio). El sed del provisioner lo convierte a mail.<tu-dominio>.
+      MAIL_SERVER_HOST: mail.example.com
     secrets: [jwt_secret, encryption_key]
     networks: [mailnet]
 

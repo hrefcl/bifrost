@@ -18,6 +18,7 @@ import contactRoutes from './routes/contacts.js';
 import calendarRoutes from './routes/calendar.js';
 import adminRoutes from './routes/admin.js';
 import brandingRoutes from './routes/branding.js';
+import configRoutes from './routes/config.js';
 import attachmentRoutes from './routes/attachments.js';
 import metricsRoutes from './routes/metrics.js';
 import { counters, observeDuration } from './lib/metrics.js';
@@ -126,6 +127,7 @@ export async function buildApp() {
   await app.register(calendarRoutes, { prefix: '/api/calendar' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(brandingRoutes, { prefix: '/api/branding' });
+  await app.register(configRoutes, { prefix: '/api/config' });
   await app.register(attachmentRoutes, { prefix: '/api/attachments' });
 
   return app;
