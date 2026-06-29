@@ -212,7 +212,11 @@ ningún merge con HIGH abierto o score <9):
   y `Condition: CreateS3`; cfn-lint no modela Conditions/Rules al resolver defaults). Los unit tests
   cubren estructura pero NO validez contra el spec de CFN. Mejora: añadir un paso de CI que genere el
   template y corra `cfn-lint` → atrapa regresiones estructurales antes de que rompan un deploy real.
-  (Auto-auditoría sesión 6: el artefacto mission-critical es desplegable.)
+  (Auto-auditoría sesión 6: el artefacto mission-critical es desplegable.) **+ el user-data bash** se
+  validó con `shellcheck --severity=warning` (0 warnings/errors) y `bash -n` (sintaxis OK); el CI
+  debería correr AMBOS (cfn-lint del template + shellcheck del user-data generado) para blindar las dos
+  mitades del turnkey. Infos shellcheck aceptados: SC2015 (idioma `cmd && break || sleep` de retry,
+  seguro porque break/return no fallan) y SC1091 (no sigue `/etc/os-release`, archivo del target).
 - **TD-PROVISION-SUBNET-VPC-MEMBERSHIP (LOW, límite de CFN — documentado)** — la `Rule`
   `SubnetRequiredWithExistingVpc` obliga a pasar ambos `ExistingVpcId`+`ExistingSubnetId` juntos, pero
   NO valida que el subnet PERTENEZCA a esa VPC (una CFN Rule sólo asierta parámetros, sin lookups AWS).

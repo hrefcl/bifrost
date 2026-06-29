@@ -69,4 +69,11 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('STORAGE_PROVIDER=local');
     expect(s).not.toContain('STORAGE_PROVIDER=s3');
   });
+
+  it('los exit explícitos (readiness, ref) señalizan a CFN — exit NO dispara el trap ERR', () => {
+    const s = buildUserData(base);
+    // El readiness check (contenedor muerto) hace signal_fail ANTES del exit 1 → CFN falla ya,
+    // no por timeout de 15 min del CreationPolicy. [shellcheck re-audit]
+    expect(s).toMatch(/docker compose ps >&2\n(?:\s*#[^\n]*\n)+\s*signal_fail\n\s*exit 1/);
+  });
 });

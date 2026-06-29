@@ -52,10 +52,10 @@ signal_fail() { cfn-signal -e 1 --stack "$STACK" --resource Instance --region "$
 trap signal_fail ERR
 
 # 0) ESPERAR salida a internet (la ruta al IGW de una VPC nueva puede tardar unos segundos).
-for i in $(seq 1 30); do curl -fsS --max-time 5 https://aws.amazon.com >/dev/null 2>&1 && break || sleep 5; done
+for _ in $(seq 1 30); do curl -fsS --max-time 5 https://aws.amazon.com >/dev/null 2>&1 && break || sleep 5; done
 
 # 1) Dependencias base (una AMI mínima NO trae git/openssl/gnupg garantizados).
-apt_retry() { for i in $(seq 1 5); do apt-get "$@" && return 0 || sleep 10; done; return 1; }
+apt_retry() { for _ in $(seq 1 5); do apt-get "$@" && return 0 || sleep 10; done; return 1; }
 apt_retry update
 apt_retry install -y ca-certificates curl gnupg git openssl python3-pip
 
@@ -72,7 +72,7 @@ apt_retry update
 apt_retry install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable --now docker
 # Esperar a que el daemon esté listo antes de usarlo (race de arranque del servicio).
-for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
+for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
@@ -114,6 +114,9 @@ sleep 20
 if docker compose ps --status=exited --quiet | grep -q .; then
   echo "ERROR: un contenedor salió al arrancar:" >&2
   docker compose ps >&2
+  # signal_fail explícito: 'exit' NO dispara el trap ERR (sólo un comando que falla bajo set -e) → sin
+  # esto, CFN no recibe el fracaso y cae recién por timeout del CreationPolicy (15 min). [shellcheck re-audit]
+  signal_fail
   exit 1
 fi
 
