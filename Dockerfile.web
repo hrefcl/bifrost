@@ -15,6 +15,12 @@ COPY packages/web/index.html packages/web/vite.config.ts packages/web/tsconfig.j
 COPY packages/web/src packages/web/src
 
 RUN pnpm --filter @webmail6/shared build
+
+# Metadata de build → la lee vite.config.ts y la bakea en el bundle (admin muestra qué versión corre).
+ARG BUILD_NUMBER=dev
+ARG BUILD_SHA=local
+ARG BUILD_TIME=
+ENV BUILD_NUMBER=$BUILD_NUMBER BUILD_SHA=$BUILD_SHA BUILD_TIME=$BUILD_TIME
 RUN pnpm --filter @webmail6/web build
 
 FROM nginx:alpine

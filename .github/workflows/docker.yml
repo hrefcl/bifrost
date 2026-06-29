@@ -36,6 +36,12 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Sello de build → BUILD_NUMBER = contador de GitHub (sube solo en cada corrida), sha y hora UTC.
+      # Se hornean en ambas imágenes (build-args) → el admin muestra qué versión corre y detecta cache.
+      - name: Build metadata
+        id: build
+        run: echo "time=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+
       # Metadata por imagen → tags reales (branch, semver vX.Y.Z en tags, sha, latest en main).
       - name: Metadata (API)
         id: meta-api
@@ -57,6 +63,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-api.outputs.tags }}
           labels: ${{ steps.meta-api.outputs.labels }}
+          build-args: |
+            BUILD_NUMBER=${{ github.run_number }}
+            BUILD_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.build.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -80,6 +90,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta-web.outputs.tags }}
           labels: ${{ steps.meta-web.outputs.labels }}
+          build-args: |
+            BUILD_NUMBER=${{ github.run_number }}
+            BUILD_SHA=${{ github.sha }}
+            BUILD_TIME=${{ steps.build.outputs.time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 

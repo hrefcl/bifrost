@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import mongoose from 'mongoose';
 import { redis } from '../config/redis.js';
 import { Account } from '../models/Account.js';
+import { BUILD_INFO } from '../lib/buildInfo.js';
 
 async function checkDeps(): Promise<{ mongoHealthy: boolean; redisHealthy: boolean }> {
   const mongoHealthy = mongoose.connection.readyState === mongoose.ConnectionStates.connected;
@@ -23,6 +24,7 @@ export default function healthRoutes(fastify: FastifyInstance) {
     void reply.code(healthy ? 200 : 503).send({
       status: healthy ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
+      version: BUILD_INFO,
       services: {
         mongodb: mongoHealthy ? 'connected' : 'disconnected',
         redis: redisHealthy ? 'connected' : 'disconnected',

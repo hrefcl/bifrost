@@ -6,6 +6,7 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
+import { BUILD_INFO } from '@/lib/buildInfo';
 
 /**
  * Panel de administración (Roundcube administrable) con tres secciones:
@@ -317,8 +318,22 @@ async function loadStorage() {
   }
 }
 
+// Versión del SERVIDOR (imagen api desplegada). El front muestra su propio build (baked en el bundle)
+// + el del backend → si uno no avanzó tras un deploy, salta a la vista (mismatch = una capa quedó
+// cacheada/sin actualizar). Falla suave: si /health no trae versión, queda '—'.
+const apiBuild = ref<string | null>(null);
+async function loadApiBuild() {
+  try {
+    const { data } = await api.get<{ version?: { build?: string; sha?: string } }>('/health');
+    if (data.version)
+      apiBuild.value = `build ${data.version.build ?? '—'} · ${data.version.sha ?? ''}`;
+  } catch {
+    apiBuild.value = null;
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadAccounts(), loadBranding(), loadStorage()]);
+  await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild()]);
 });
 
 function choose(provider: ProviderType) {
@@ -738,6 +753,20 @@ async function save() {
             </p>
           </div>
         </div>
+
+        <!-- Versión desplegada: el build del WEB sale baked del bundle (detecta cache); el del API se
+             consulta a /health. Si tras un deploy el número no cambia, estás viendo una versión vieja. -->
+        <footer class="build-info" data-testid="build-info">
+          <span class="bi-app">{{ brand.name }}</span>
+          <span class="bi-ver">v{{ BUILD_INFO.version }}</span>
+          <span class="bi-sep">·</span>
+          <span class="bi-build" data-testid="build-web">web build {{ BUILD_INFO.build }}</span>
+          <span class="bi-sha">{{ BUILD_INFO.sha }}</span>
+          <template v-if="apiBuild">
+            <span class="bi-sep">·</span>
+            <span class="bi-build" data-testid="build-api">api {{ apiBuild }}</span>
+          </template>
+        </footer>
       </div>
     </div>
   </AppLayout>
@@ -753,6 +782,29 @@ async function save() {
   max-width: 760px;
   margin: 0 auto;
   padding: 28px 32px;
+}
+.build-info {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border, #e5e7eb);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #8a8f98);
+  font-variant-numeric: tabular-nums;
+}
+.build-info .bi-app {
+  font-weight: 600;
+  color: var(--text, #1a1a1a);
+}
+.build-info .bi-sha {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  opacity: 0.8;
+}
+.build-info .bi-sep {
+  opacity: 0.4;
 }
 .admin-title {
   font-size: 22px;

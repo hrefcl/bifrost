@@ -19,5 +19,12 @@ RUN pnpm --filter @webmail6/shared build
 RUN pnpm --filter @webmail6/api build
 
 WORKDIR /app/packages/api
+
+# Metadata de build → ENV en runtime, la lee lib/buildInfo.ts y la expone en /health (par del front).
+ARG BUILD_NUMBER=dev
+ARG BUILD_SHA=local
+ARG BUILD_TIME=
+ENV APP_VERSION=6.0.0 BUILD_NUMBER=$BUILD_NUMBER BUILD_SHA=$BUILD_SHA BUILD_TIME=$BUILD_TIME
+
 EXPOSE 3000
 CMD ["node", "dist/index.js"]

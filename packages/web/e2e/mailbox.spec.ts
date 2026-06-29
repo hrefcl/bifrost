@@ -560,6 +560,12 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
   await page.getByRole('button', { name: 'Save' }).click();
   expect((await patchResp).status()).toBe(200);
   await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 });
+
+  // Footer de versión (abajo de almacenamiento): muestra el build del WEB (baked en el bundle) para
+  // detectar cache tras un deploy. En el server E2E el build queda 'dev' pero el footer debe estar.
+  const buildInfo = page.getByTestId('build-info');
+  await expect(buildInfo).toBeVisible();
+  await expect(buildInfo.getByTestId('build-web')).toContainText('web build');
 });
 
 test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox', async ({
