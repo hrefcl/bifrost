@@ -95,9 +95,12 @@ test('full flow: login → sync → read email body → compose & send', async (
   );
   await page.getByText('Welcome to Webmail 6.0').click();
 
-  // El detalle renderiza el HTML saneado por el backend (postal-mime + sanitize-html).
+  // El detalle renderiza el HTML saneado por el backend (postal-mime + sanitize-html) DENTRO de un
+  // iframe sandbox (aislamiento CSS + seguridad). El cuerpo se busca con frameLocator.
   await expect(page.getByRole('heading', { name: 'Welcome to Webmail 6.0' })).toBeVisible();
-  await expect(page.getByText('Hello from the', { exact: false })).toBeVisible({ timeout: 15_000 });
+  await expect(
+    page.frameLocator('.email-frame').getByText('Hello from the', { exact: false })
+  ).toBeVisible({ timeout: 15_000 });
   expect((await flagsResp).status(), 'marcar como leído debe persistir (PATCH /flags)').toBe(200);
 
   // 4) ENVIAR: componer un correo nuevo y enviarlo (API real → fake SMTP + APPEND a Sent).

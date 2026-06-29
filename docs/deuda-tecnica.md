@@ -175,7 +175,7 @@ ningún merge con HIGH abierto o score <9):
 - **TD-IMG-PRIVACY (MEDIUM)** — `autoLoadImages`/`blockRemoteContentUnknown` existen en
   `UserPreferences` pero NO se enforcan → imágenes remotas siempre cargan (tracking pixels).
   Enforcement = sanear `img src` según preferencia + toggle "cargar imágenes" en la UI.
-- **TD-EMAIL-IFRAME-SANDBOX (MEDIUM, hardening — B+D)** — al permitir HTML rico (firmas/newsletters),
+- **TD-EMAIL-IFRAME-SANDBOX — HECHO (iframe sandbox implementado)** — al permitir HTML rico (firmas/newsletters),
   `sanitizeEmailHtml` ahora acepta `style` con un guard regex (`SAFE_VALUE` bloquea url(/javascript:/
   expression(/escapes `\`/comentarios `/*`) + atributos de tabla + data:image ráster. Los bypasses
   concretos están cerrados (21 tests, B 6→re-validando, D 4→8 APRUEBA), pero la defensa por regex

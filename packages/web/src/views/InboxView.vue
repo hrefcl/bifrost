@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
+import EmailBodyFrame from '@/components/EmailBodyFrame.vue';
 import { api } from '@/lib/http';
 import { useUiStore } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
@@ -1323,14 +1324,10 @@ onBeforeUnmount(() => {
             <div class="msg-content">
               <p v-if="bodyLoading" class="msg">{{ t('common.loading') }}</p>
               <template v-else-if="body">
-                <!-- sanitizedHtml ya viene saneado por el backend (sanitize-html). -->
-                <!-- eslint-disable vue/no-v-html -->
-                <div
-                  v-if="body.sanitizedHtml"
-                  class="prose max-w-none dark:prose-invert"
-                  v-html="body.sanitizedHtml"
-                />
-                <!-- eslint-enable vue/no-v-html -->
+                <!-- El HTML (ya saneado por el backend) se renderiza en un IFRAME SANDBOX: aísla el CSS
+                     del email (si no, las tablas de firmas/newsletters colapsan con el CSS de la app) y
+                     bloquea scripts (defensa en profundidad sobre el saneo). -->
+                <EmailBodyFrame v-if="body.sanitizedHtml" :html="body.sanitizedHtml" />
                 <pre v-else class="plain">{{ body.text }}</pre>
               </template>
 
