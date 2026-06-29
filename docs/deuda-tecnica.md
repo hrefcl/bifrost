@@ -200,6 +200,16 @@ ningún merge con HIGH abierto o score <9):
   `admin-grant.ts`). Seguridad de la ruta pública `/api/signature-images/:id` (sin auth, semi-pública):
   rate-limit + **cuota de almacenamiento por usuario** + considerar UUID en vez de ObjectId (anti
   enumeración/IDOR). El usuario eligió el parche simple (re-guardar la firma) para el caso inmediato.
+- **TD-AUTH-BOOTSTRAP-RESIDUAL (LOW, review B/C/D)** — el bootstrap admin (primer usuario creado queda
+  admin si no hay ninguno) quedó endurecido a `isNew` + `$setOnInsert` (cierra el HIGH de promover
+  existentes; B 8/D 8). Residuales aceptados, no-HIGH: (1) **race** de dos primeros logins de emails
+  distintos → ambos admin (nil en single-org: el operador hace el 1er login; full-atómico requeriría un
+  marker durable "bootstrap claimed"); (2) **ceremonia** — el modelo "1er login = admin" asume que el
+  primer login lo hace el operador (si la app queda pública antes, cualquier credencial IMAP válida
+  reclama admin) → documentar en el runbook del provisioner; (3) **audit persistido** — hoy hay warn
+  estructurado + counter Prometheus; un evento auditable en DB (no sólo logs) sería más robusto; (4)
+  **trustProxy** (B) — el rate-limit por IP del login sólo es confiable detrás de nginx/traefik que
+  pisa `X-Forwarded-For`; verificar que el API nunca se exponga directo.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
