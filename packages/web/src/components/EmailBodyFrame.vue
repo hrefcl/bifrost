@@ -10,7 +10,14 @@ import { ref, watch, onBeforeUnmount } from 'vue';
  *     ningún script del email se ejecuta aunque el sanitizador tuviera un bypass. `allow-same-origin`
  *     es necesario sólo para que el padre mida la altura (auto-resize); como no hay `allow-scripts`,
  *     no hay JS en el iframe que pueda abusar del mismo-origen. `allow-popups` + base target=_blank →
- *     los links abren en pestaña nueva. (Mismo patrón que lib/print-email.ts, revisado por B+D.)
+ *     los links abren en pestaña nueva; el reverse-tabnabbing lo cierra el BACKEND, que fuerza
+ *     rel="noopener noreferrer" en cada <a> (api/src/lib/sanitizeHtml.ts). El mismo patrón sandbox
+ *     (sin allow-scripts) lo usa lib/print-email.ts al imprimir (InboxView.printEmail).
+ *
+ *  ⚠️ INVARIANTE DE SEGURIDAD: NUNCA agregar `allow-scripts` junto con `allow-same-origin`. Esa
+ *     combinación deja que el contenido del iframe se quite el sandbox a sí mismo → bypass total
+ *     (MDN lo marca explícito). Si alguna vez hace falta correr JS del email, usar un ORIGEN
+ *     separado (sandbox domain), no relajar estos flags.
  */
 const props = defineProps<{ html: string }>();
 const frame = ref<HTMLIFrameElement | null>(null);
@@ -37,10 +44,16 @@ function srcdoc(html: string): string {
 
 let ro: ResizeObserver | null = null;
 
+// Techo de altura del iframe. Sin esto, un email malicioso con `height:500000px` infla el panel a
+// una tira infinita SIN click (DoS de layout, hallazgo C). Pasado el techo, el iframe scrollea
+// internamente (overflow-y:auto vía clase) en vez de empujar toda la UI.
+const MAX_PX = 24000;
+
 function resize() {
   const doc = frame.value?.contentWindow?.document;
   if (!doc?.documentElement) return;
-  height.value = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight) + 8;
+  const measured = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight) + 8;
+  height.value = Math.min(measured, MAX_PX);
 }
 function onLoad() {
   resize();
@@ -93,6 +106,8 @@ watch(
   width: 100%;
   border: 0;
   display: block;
-  overflow: hidden;
+  /* Normalmente la altura calza exacto (sin scroll); si se capea por MAX_PX, scrollea adentro. */
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 </style>

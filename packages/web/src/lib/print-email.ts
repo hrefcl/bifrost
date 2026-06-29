@@ -42,6 +42,7 @@ export function buildEmailPrintHtml(input: PrintEmailInput): string {
 <html>
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src * data: blob:; style-src 'unsafe-inline'; font-src * data:; script-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>${subject}</title>
 <style>
   body { font-family: 'Public Sans', system-ui, sans-serif; color: #111; margin: 32px; }
