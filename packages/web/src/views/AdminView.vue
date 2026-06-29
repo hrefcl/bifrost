@@ -339,6 +339,7 @@ interface UpdateStatus {
   latest: { build: number; sha: string; date: string } | null;
   updateAvailable: boolean;
   behind: number | null;
+  checkError: boolean;
   compareUrl: string | null;
   repoUrl: string;
 }
@@ -829,6 +830,18 @@ async function save() {
           <span>Estás en la última versión (build {{ update.current.build }})</span>
           <button class="ub-refresh" :disabled="checkingUpdate" @click="loadUpdate(true)">
             {{ checkingUpdate ? 'Buscando…' : 'Buscar ahora' }}
+          </button>
+        </div>
+        <div
+          v-else-if="update?.checkError"
+          class="update-banner update-ok"
+          data-testid="update-unknown"
+        >
+          <span
+            >No se pudo verificar la última versión (build actual {{ update.current.build }})</span
+          >
+          <button class="ub-refresh" :disabled="checkingUpdate" @click="loadUpdate(true)">
+            {{ checkingUpdate ? 'Buscando…' : 'Reintentar' }}
           </button>
         </div>
       </div>

@@ -21,8 +21,8 @@ function mockRuns(runNumber: number) {
 }
 
 describe('update-check', () => {
-  beforeEach(() => {
-    __resetUpdateCache();
+  beforeEach(async () => {
+    await __resetUpdateCache();
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -59,10 +59,11 @@ describe('update-check', () => {
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 
-  it('degrada a latest=null si GitHub falla (no rompe el admin)', async () => {
+  it('degrada a latest=null + checkError si GitHub falla (no rompe el admin)', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network down'));
     const st = await checkForUpdate(true);
     expect(st.latest).toBeNull();
     expect(st.updateAvailable).toBe(false);
+    expect(st.checkError).toBe(true);
   });
 });
