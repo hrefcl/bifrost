@@ -26,8 +26,16 @@ describe('assembleStackParams', () => {
     expect(get(p, 'S3Mode')).toBe('none'); // storage local
     expect(get(p, 'S3BucketName')).toBe('');
     expect(get(p, 'SshCidr')).toBe('0.0.0.0/0');
-    // ImageId NO se pasa (lo resuelve el template por SSM).
-    expect(p.map((x) => x.key)).not.toContain('ImageId');
+  });
+
+  it('pasa el ImageId (SSM) que matchea la arch de la instancia (Graviton vs x86)', () => {
+    // t3 (x86) → AMI amd64
+    const x86 = assembleStackParams({ ...baseAnswers, instanceType: 't3.large' });
+    expect(get(x86, 'ImageId')).toContain('/amd64/');
+    // t4g (Graviton) → AMI arm64 (el default del wizard)
+    const arm = assembleStackParams({ ...baseAnswers, instanceType: 't4g.large' });
+    expect(get(arm, 'ImageId')).toContain('/arm64/');
+    expect(get(arm, 'ImageId')).toContain('ubuntu/server/22.04');
   });
 
   it('con S3 (sin nombre) deriva el bucket del dominio', () => {

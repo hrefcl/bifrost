@@ -37,10 +37,13 @@ export function buildStackTemplate(): Record<string, unknown> {
       // CloudFormation resuelve el AMI Ubuntu más reciente EN EL DEPLOY desde el parámetro público de
       // Canonical (por región). Así el modo SIN-CLAVES no necesita resolver el AMI (no hay llamada AWS)
       // y siempre se usa la imagen parcheada al día. El CLI no necesita pasar ImageId.
+      // Default arm64 (Graviton) — coherente con el InstanceType default t4g. El wizard SIEMPRE pasa
+      // el ImageId que matchea la arch de la instancia elegida (ver assembleStackParams), así que un
+      // override a x86 (t3…) recibe el AMI amd64 correcto; este default sólo aplica a un deploy pelado.
       ImageId: {
         Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>',
         Default:
-          '/aws/service/canonical/ubuntu/server/22.04/stable/current/amd64/hvm/ebs-gp2/ami-id',
+          '/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id',
       },
       KeyName: { Type: 'AWS::EC2::KeyPair::KeyName' },
       EbsSizeGiB: { Type: 'Number', Default: 40, MinValue: 20 },

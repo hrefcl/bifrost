@@ -1,9 +1,16 @@
 import type { StackParameter } from '../aws/cloudformation.js';
+import { archForInstanceType, type CpuArch } from '../catalog/instance-types.js';
+
+/** Path SSM del AMI Ubuntu 22.04 más reciente para una arquitectura (CFN lo resuelve al deploy). */
+export function ubuntuAmiSsmPath(arch: CpuArch): string {
+  return `/aws/service/canonical/ubuntu/server/22.04/stable/current/${arch}/hvm/ebs-gp2/ami-id`;
+}
 
 /**
  * Núcleo PURO del wizard: arma los Parameters del stack a partir de las respuestas. La parte
  * error-prone (mapear respuestas → params CFN, derivar nombre de bucket, defaults) vive acá,
- * testeable sin AWS ni prompts. `ImageId` NO se pasa: usa el default del template (lo resuelve CFN).
+ * testeable sin AWS ni prompts. `ImageId` se pasa EXPLÍCITO según la arch de la instancia (Graviton
+ * arm64 vs x86 amd64) para no terminar con un mismatch instancia↔AMI.
  */
 export interface WizardAnswers {
   domain: string;
@@ -34,6 +41,7 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
   return [
     { key: 'DomainName', value: a.domain },
     { key: 'InstanceType', value: a.instanceType },
+    { key: 'ImageId', value: ubuntuAmiSsmPath(archForInstanceType(a.instanceType)) },
     { key: 'KeyName', value: a.keyName },
     { key: 'UserData', value: a.userData },
     { key: 'ExistingVpcId', value: a.existingVpcId ?? '' },
