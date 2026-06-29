@@ -904,13 +904,50 @@ function closeMenus() {
   showListMore.value = false;
   showThreadMore.value = false;
 }
+// Auto-refresh del buzón (estilo Gmail): cada POLL_MS sincroniza la carpeta actual con IMAP y
+// PREPENDE los correos nuevos SIN disrumpir (no toca selección/scroll/filtro). Pausa en tab oculto,
+// búsqueda o vistas virtuales. Best-effort: errores no rompen la vista.
+const POLL_MS = 45_000;
+let pollTimer: ReturnType<typeof setInterval> | null = null;
+async function pollNewMail() {
+  if (document.hidden || inSearch.value || searching.value || virtualView.value !== null) return;
+  const fid = selectedFolderId.value;
+  const acct = accountId();
+  if (!fid || !acct || loading.value || loadingMore.value) return;
+  try {
+    await api.post(`/accounts/${acct}/folders/${fid}/sync`);
+  } catch {
+    /* sync best-effort */
+  }
+  if (selectedFolderId.value !== fid) return; // cambió de carpeta durante el sync → descartar
+  const gen = removalGen;
+  try {
+    const params = {
+      limit: PAGE_LIMIT,
+      ...(listFilter.value !== 'all' ? { filter: listFilter.value } : {}),
+    };
+    const { data } = await api.get<Paginated<Email>>(`/accounts/${acct}/folders/${fid}/emails`, {
+      params,
+    });
+    if (selectedFolderId.value !== fid) return;
+    const seen = new Set(emails.value.map((e) => e.id));
+    const fresh = data.data.filter((e) => !seen.has(e.id) && (removedAt.get(e.id) ?? -1) <= gen);
+    if (fresh.length > 0) emails.value = [...fresh, ...emails.value]; // nuevos = más recientes → arriba
+    void refreshBadges();
+  } catch {
+    /* ignorar: se reintenta en el próximo tick */
+  }
+}
+
 onMounted(() => {
   void loadAccountsAndFolders();
   window.addEventListener('keydown', onKey);
   window.addEventListener('click', closeMenus);
+  pollTimer = setInterval(() => void pollNewMail(), POLL_MS);
 });
 onBeforeUnmount(() => {
   disposed = true; // descarta refreshBadges() en vuelo (no mutar tras desmontar).
+  if (pollTimer) clearInterval(pollTimer);
   window.removeEventListener('keydown', onKey);
   window.removeEventListener('click', closeMenus);
   if (badgeTimer) clearTimeout(badgeTimer);

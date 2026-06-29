@@ -11,6 +11,7 @@ import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
+import { externalizeDataImages } from '../services/signature-images.js';
 import { randomToken } from '../config/crypto.js';
 import type { LoginRequest, LoginResponse, RefreshResponse } from '@webmail6/shared';
 
@@ -172,7 +173,15 @@ export default function authRoutes(fastify: FastifyInstance) {
     // displayName, quedó inválido al crearse el usuario — no es asunto de este endpoint).
     const set: Record<string, unknown> = {};
     if (body.defaultSignature !== undefined) {
-      set['preferences.defaultSignature'] = sanitizeEmailHtml(body.defaultSignature);
+      // Externalizar imágenes data: (base64) → URL pública hosteada en el box ANTES de sanear. Gmail
+      // y otros clientes BLOQUEAN data: en correos recibidos (la foto se vería rota); Gmail mismo las
+      // sube a googleusercontent al pegar la firma — replicamos ese comportamiento.
+      const externalized = await externalizeDataImages(
+        request.user.userId,
+        body.defaultSignature,
+        env.FRONTEND_URL
+      );
+      set['preferences.defaultSignature'] = sanitizeEmailHtml(externalized);
     }
     if (body.autoIncludeSignature !== undefined) {
       set['preferences.autoIncludeSignature'] = body.autoIncludeSignature;
