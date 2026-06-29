@@ -332,8 +332,34 @@ async function loadApiBuild() {
   }
 }
 
+// Chequeo de actualización (estilo WordPress). Sólo lectura: muestra si hay un build más nuevo
+// publicado en GitHub. Aplicar la actualización (botón) es la Fase 2 (sidecar updater).
+interface UpdateStatus {
+  current: { version: string; build: string; sha: string };
+  latest: { build: number; sha: string; date: string } | null;
+  updateAvailable: boolean;
+  behind: number | null;
+  compareUrl: string | null;
+  repoUrl: string;
+}
+const update = ref<UpdateStatus | null>(null);
+const checkingUpdate = ref(false);
+async function loadUpdate(force = false) {
+  checkingUpdate.value = true;
+  try {
+    const { data } = await api.get<UpdateStatus>('/admin/update/check', {
+      params: force ? { force: 1 } : {},
+    });
+    update.value = data;
+  } catch {
+    update.value = null;
+  } finally {
+    checkingUpdate.value = false;
+  }
+}
+
 onMounted(async () => {
-  await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild()]);
+  await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild(), loadUpdate()]);
 });
 
 function choose(provider: ProviderType) {
@@ -767,6 +793,44 @@ async function save() {
             <span class="bi-build" data-testid="build-api">api {{ apiBuild }}</span>
           </template>
         </footer>
+
+        <!-- Actualización estilo WordPress (Fase 1: aviso de sólo lectura). Aplicar = Fase 2. -->
+        <div
+          v-if="update?.updateAvailable"
+          class="update-banner update-yes"
+          data-testid="update-available"
+        >
+          <AppIcon name="download" :size="18" />
+          <div class="ub-text">
+            <strong>Hay una actualización disponible</strong>
+            <span
+              >Última: build {{ update.latest?.build }} · tenés build {{ update.current.build }}
+              <template v-if="update.behind">({{ update.behind }} builds atrás)</template></span
+            >
+          </div>
+          <a
+            v-if="update.compareUrl"
+            :href="update.compareUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="ub-link"
+            >Ver cambios</a
+          >
+          <button class="ub-btn" disabled title="Disponible en la próxima versión (Fase 2)">
+            Actualizar (pronto)
+          </button>
+        </div>
+        <div
+          v-else-if="update && !update.updateAvailable && update.latest"
+          class="update-banner update-ok"
+          data-testid="update-current"
+        >
+          <AppIcon name="check" :size="16" />
+          <span>Estás en la última versión (build {{ update.current.build }})</span>
+          <button class="ub-refresh" :disabled="checkingUpdate" @click="loadUpdate(true)">
+            {{ checkingUpdate ? 'Buscando…' : 'Buscar ahora' }}
+          </button>
+        </div>
       </div>
     </div>
   </AppLayout>
@@ -805,6 +869,59 @@ async function save() {
 }
 .build-info .bi-sep {
   opacity: 0.4;
+}
+.update-banner {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.update-banner.update-yes {
+  background: color-mix(in srgb, var(--accent, #1b66ff) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent, #1b66ff) 35%, transparent);
+  color: var(--text, #1a1a1a);
+}
+.update-banner.update-ok {
+  background: var(--surface-2, #f6f7f9);
+  border: 1px solid var(--border, #e5e7eb);
+  color: var(--text-muted, #6b7280);
+}
+.update-banner .ub-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.3;
+}
+.update-banner .ub-text span {
+  opacity: 0.8;
+  font-size: 12px;
+}
+.update-banner .ub-link {
+  margin-left: auto;
+  color: var(--accent, #1b66ff);
+  font-weight: 500;
+  text-decoration: none;
+}
+.update-banner .ub-btn,
+.update-banner .ub-refresh {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  background: var(--accent, #1b66ff);
+  color: #fff;
+  font-size: 12px;
+  cursor: pointer;
+}
+.update-banner .ub-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.update-banner .ub-refresh {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text, #1a1a1a);
 }
 .admin-title {
   font-size: 22px;

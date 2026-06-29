@@ -5,6 +5,7 @@ import { getStorageConfigPublic, setStorageConfig } from '../services/storage/in
 import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js';
 import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
 import { loginOrRegister } from '../services/auth.js';
+import { checkForUpdate } from '../services/update-check.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
 import { Email } from '../models/Email.js';
@@ -104,6 +105,13 @@ export default function adminRoutes(fastify: FastifyInstance) {
   // Sondeo: confirma que el solicitante es admin (la UI lo usa para mostrar /admin).
   fastify.get('/whoami', () => {
     return { role: 'admin' as const };
+  });
+
+  // Chequeo de actualización (estilo WordPress): compara el build instalado con el último publicado
+  // en GitHub. Sólo lectura (Fase 1). `?force=1` salta el cache. Admin-only (preHandler de arriba).
+  fastify.get('/update/check', async (request) => {
+    const { force } = z.object({ force: z.enum(['1', 'true']).optional() }).parse(request.query);
+    return checkForUpdate(force !== undefined);
   });
 
   // Config del storage de adjuntos (wizard Paso 1). GET sin secretos.
