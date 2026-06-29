@@ -207,12 +207,19 @@ ningún merge con HIGH abierto o score <9):
   escapando chars sed-especiales sería defensa en profundidad, pero el cambio toca el bootstrap crítico
   (no testeable sin box) → diferido. (Re-auditoría 3-lentes, lente auditor hostil — cerrado por validación.)
 - **TD-PROVISION-CFN-CI (LOW, prevención)** — el template CloudFormation (`buildStackTemplate`) se
-  VALIDÓ una vez con **cfn-lint 1.46: 0 errores**, sólo 4 warnings W1030 (defaults vacíos de
+  VALIDÓ con **cfn-lint 1.46: 0 errores**, sólo 4 warnings W1030 (defaults vacíos de
   `ExistingSubnetId`/`S3BucketName`) confirmados FALSOS POSITIVOS (guardados por `Fn::If CreateNetwork`
-  y `Condition: CreateS3`; cfn-lint no modela Conditions al resolver defaults). Los 9 unit tests cubren
-  estructura pero NO validez contra el spec de CFN. Mejora: añadir un paso de CI que genere el template
-  y corra `cfn-lint` → atrapa regresiones estructurales del template antes de que rompan un deploy real.
-  (Verificación de auto-auditoría sesión 6: el artefacto mission-critical es desplegable.)
+  y `Condition: CreateS3`; cfn-lint no modela Conditions/Rules al resolver defaults). Los unit tests
+  cubren estructura pero NO validez contra el spec de CFN. Mejora: añadir un paso de CI que genere el
+  template y corra `cfn-lint` → atrapa regresiones estructurales antes de que rompan un deploy real.
+  (Auto-auditoría sesión 6: el artefacto mission-critical es desplegable.)
+- **TD-PROVISION-SUBNET-VPC-MEMBERSHIP (LOW, límite de CFN — documentado)** — la `Rule`
+  `SubnetRequiredWithExistingVpc` obliga a pasar ambos `ExistingVpcId`+`ExistingSubnetId` juntos, pero
+  NO valida que el subnet PERTENEZCA a esa VPC (una CFN Rule sólo asierta parámetros, sin lookups AWS).
+  No es fallo silencioso: el wizard lista subnets de la VPC elegida (imposible mismatch por CLI), y en
+  deploy standalone CloudFormation RECHAZA el launch si la subnet es de otra VPC (error menos elegante,
+  no silencioso). Pre-validarlo exigiría un custom resource Lambda → desproporcionado. (Hallazgo D 8/10
+  RESUELTO sobre el bug principal; este residual es límite intrínseco de CFN, no HIGH abierto.)
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 
