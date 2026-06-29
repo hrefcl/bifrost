@@ -78,7 +78,10 @@ jobs:
       # La auto-auditoría encontró 2 bugs reales así: la Rule subnet/VPC y el readiness sin signal a CFN.
       - name: Install artifact linters
         run: |
-          pipx install cfn-lint
+          # cfn-lint PINEADO (D): sin versión, un release futuro podría añadir reglas y romper PRs no
+          # relacionados de forma no determinista. Bumpear a conciencia (idealmente vía Dependabot).
+          pipx install cfn-lint==1.46.0
+          # shellcheck viene preinstalado en los runners ubuntu; el apt-get es fallback defensivo.
           shellcheck --version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y shellcheck)
       - name: Validate provisioning artifacts (CFN template + user-data)
         run: |
@@ -89,3 +92,11 @@ jobs:
           # shellcheck a severity=warning: los infos SC2015 (retry idiom seguro) / SC1091 (/etc/os-release)
           # no rompen; un warning/error real (var sin usar, quoting peligroso) sí.
           shellcheck --severity=warning artifacts/user-data.sh
+      # Si el lint falla, subir los artefactos generados para inspeccionar qué rompió (debug, D).
+      - name: Upload provisioning artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: provisioning-artifacts
+          path: artifacts/
+          if-no-files-found: ignore
