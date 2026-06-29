@@ -148,6 +148,52 @@ const displayedEmails = computed(() => {
   return listFilter.value === 'all' ? results : results.filter(matchesListFilter);
 });
 
+// Agrupado por CONVERSACIÓN (threadId). La lista viene date-desc → el primer email de cada hilo es el
+// más reciente (la fila visible). count/unread/adjuntos se agregan sobre los mensajes del hilo CARGADOS
+// (un mensaje de otra página se agrupa al cargarse; ver TD-THREADING-UI para grouping paginado).
+interface ThreadRow {
+  latest: Email;
+  emails: Email[];
+  count: number;
+  unread: boolean;
+  hasAttachments: boolean;
+}
+const displayedThreads = computed<ThreadRow[]>(() => {
+  const byKey = new Map<string, ThreadRow>();
+  const out: ThreadRow[] = [];
+  for (const e of displayedEmails.value) {
+    const key = e.threadId ?? e.id;
+    const row = byKey.get(key);
+    if (row) {
+      row.emails.push(e);
+      row.count++;
+      if (!e.flags.seen) row.unread = true;
+      if (e.hasAttachments) row.hasAttachments = true;
+    } else {
+      const r: ThreadRow = {
+        latest: e,
+        emails: [e],
+        count: 1,
+        unread: !e.flags.seen,
+        hasAttachments: e.hasAttachments,
+      };
+      byKey.set(key, r);
+      out.push(r);
+    }
+  }
+  return out;
+});
+
+/** Archivar/eliminar operan sobre TODO el hilo cargado (no dejar mensajes sueltos de la conversación). */
+function archiveThread(thread: ThreadRow, ev?: Event) {
+  ev?.stopPropagation();
+  for (const e of [...thread.emails]) archive(e);
+}
+async function deleteThread(thread: ThreadRow, ev?: Event) {
+  ev?.stopPropagation();
+  for (const e of [...thread.emails]) await deleteEmail(e);
+}
+
 // Token de cancelación: una búsqueda vieja no debe pisar la carpeta/búsqueda actual ni
 // reactivar el modo búsqueda tras salir (review B+D).
 let searchToken = 0;
@@ -1104,56 +1150,65 @@ onBeforeUnmount(() => {
             <div>{{ t('list.empty') }}</div>
           </div>
           <div
-            v-for="email in displayedEmails"
+            v-for="thread in displayedThreads"
             v-else
-            :key="email.id"
+            :key="thread.latest.threadId ?? thread.latest.id"
             class="row"
-            :class="{ selected: selected?.id === email.id, unread: !email.flags.seen }"
-            @click="openEmail(email)"
+            :class="{ selected: selected?.id === thread.latest.id, unread: thread.unread }"
+            @click="openEmail(thread.latest)"
           >
             <button
               class="star"
-              :class="{ on: email.flags.flagged }"
+              :class="{ on: thread.latest.flags.flagged }"
               :title="t('thread.star')"
-              @click="toggleStar(email, $event)"
+              @click="toggleStar(thread.latest, $event)"
             >
               <AppIcon
                 name="star"
                 :size="18"
-                :fill="email.flags.flagged ? 'var(--star)' : 'none'"
+                :fill="thread.latest.flags.flagged ? 'var(--star)' : 'none'"
               />
             </button>
-            <AppAvatar :name="email.from.name" :email="email.from.address" :size="30" />
-            <div class="row-from">{{ senderName(email) }}</div>
-            <div class="row-main">
-              <span class="row-subject">{{ email.subject || t('thread.noSubject') }}</span>
-              <span v-if="email.preview" class="row-preview"> — {{ email.preview }}</span>
+            <AppAvatar
+              :name="thread.latest.from.name"
+              :email="thread.latest.from.address"
+              :size="30"
+            />
+            <div class="row-from">
+              {{ senderName(thread.latest) }}
+              <span v-if="thread.count > 1" class="row-count">{{ thread.count }}</span>
             </div>
-            <AppIcon v-if="email.hasAttachments" name="paperclip" :size="15" class="row-clip" />
+            <div class="row-main">
+              <span class="row-subject">{{ thread.latest.subject || t('thread.noSubject') }}</span>
+              <span v-if="thread.latest.preview" class="row-preview">
+                — {{ thread.latest.preview }}</span
+              >
+            </div>
+            <AppIcon v-if="thread.hasAttachments" name="paperclip" :size="15" class="row-clip" />
             <div class="row-end">
               <button
-                v-if="isSnoozedNow(email)"
+                v-if="isSnoozedNow(thread.latest)"
                 class="icon-btn row-hover"
                 :title="t('thread.unsnooze')"
-                @click="doUnsnooze(email, $event)"
+                @click="doUnsnooze(thread.latest, $event)"
               >
                 <AppIcon name="clock" :size="17" :fill="'var(--accent)'" />
               </button>
               <button
                 class="icon-btn row-hover"
                 :title="t('thread.archive')"
-                @click="archive(email, $event)"
+                @click="archiveThread(thread, $event)"
               >
                 <AppIcon name="archive" :size="17" />
               </button>
               <button
                 class="icon-btn row-hover"
                 :title="t('thread.delete')"
-                @click="deleteEmail(email, $event)"
+                @click="deleteThread(thread, $event)"
               >
                 <AppIcon name="trash" :size="17" />
               </button>
-              <span class="row-date">{{ fmtDate(email.date) }}</span>
+              <span class="row-date">{{ fmtDate(thread.latest.date) }}</span>
             </div>
           </div>
           <button
@@ -1682,6 +1737,13 @@ onBeforeUnmount(() => {
   font-size: 13.5px;
   font-weight: 500;
   color: var(--text-1);
+}
+.row-count {
+  display: inline-block;
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 .row.unread .row-from,
 .row.unread .row-subject {
