@@ -186,6 +186,20 @@ ningún merge con HIGH abierto o score <9):
   CSP también en `print-email.ts`. **Residual LOW (largo plazo): origen-sandbox separado** para el
   render del email → elimina del todo el `allow-same-origin` (modelo Gmail con dominio aislado). No es
   HIGH: hoy no hay JS en el iframe que pueda abusar del mismo-origen.
+- **TD-EMAIL-SEND-EXTERNALIZE (MED, review B/C/D)** — hoy `externalizeDataImages` (data:image → URL
+  hosteada, para que Gmail no rompa la foto de la firma) corre SÓLO al guardar preferencias. Una firma
+  guardada ANTES de la feature sigue con `data:` hasta re-guardarla, y las imágenes pegadas en el
+  composer nunca se externalizan. **Fix (C 9/10 APPROVED, D 8/10):** externalizar también en `/send`
+  sobre el `bodyHtml` final (cuerpo+firma) — es la única autoridad última donde existe el HTML
+  ensamblado, replica a Gmail y **auto-cura firmas legacy** sin migración. Companion changes
+  OBLIGATORIOS: (1) **degradar explícito** — `try/catch`; si la subida falla, enviar el HTML original
+  (con data:) + log/métrica, NUNCA bloquear el correo ni stripear el `<img>`; (2) `baseUrl` =
+  `env.FRONTEND_URL` (ya existe, no derivar de headers); (3) mantener el externalize al guardar (preview
+  inmediato); (4) NO escribir-back la firma como side-effect del envío (race con PATCH concurrente) — sí
+  persistir las imágenes (assets dedup'd por sha256). Opcional: script one-shot de backfill (patrón
+  `admin-grant.ts`). Seguridad de la ruta pública `/api/signature-images/:id` (sin auth, semi-pública):
+  rate-limit + **cuota de almacenamiento por usuario** + considerar UUID en vez de ObjectId (anti
+  enumeración/IDOR). El usuario eligió el parche simple (re-guardar la firma) para el caso inmediato.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
