@@ -37,6 +37,19 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(t.Parameters.S3Mode).toMatchObject({ Default: 'none' });
   });
 
+  it('con userData lo EMBEBE (Fn::Base64 literal) y quita el parámetro UserData [bug deploy real]', () => {
+    const script = '#!/bin/bash\necho hola';
+    const emb = buildStackTemplate(script) as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+    };
+    // El parámetro UserData ya no existe (un String param de CFN tope a 4096; el script son ~5KB).
+    expect(emb.Parameters.UserData).toBeUndefined();
+    // El Instance lleva el script EMBEBIDO, no un Ref al parámetro.
+    expect(emb.Resources.Instance.Properties.UserData).toEqual({ 'Fn::Base64': script });
+    // Sin userData, mantiene el parámetro (template genérico).
+    expect((buildStackTemplate() as unknown as TplView).Parameters.UserData).toBeDefined();
+  });
+
   it('los defaults de InstanceType e ImageId son arch-consistentes (deploy pelado no rompe) [D]', () => {
     // Un deploy sin wizard usa ambos defaults juntos: deben ser la MISMA arch o la instancia no bootea.
     const instType = (t.Parameters.InstanceType as { Default: string }).Default;
@@ -161,5 +174,13 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(yaml).toContain('AWS::S3::Bucket');
     expect(yamlParse(yaml)).toEqual(buildStackTemplate());
     expect(() => JSON.parse(templateToJson())).not.toThrow();
+  });
+
+  it('la YAML NO usa anchors/aliases (CloudFormation los rechaza — bug hallado en deploy real)', () => {
+    const yaml = templateToYaml();
+    // El builder reutiliza referencias de objeto; sin aliasDuplicateObjects:false el serializador
+    // emite `&anchor`/`*alias` que CFN rechaza ("YAML aliases are not allowed").
+    expect(yaml).not.toMatch(/: &\w/); // ninguna línea define un anchor
+    expect(yaml).not.toMatch(/: \*\w/); // ninguna usa un alias
   });
 });

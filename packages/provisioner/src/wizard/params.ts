@@ -43,7 +43,8 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     { key: 'InstanceType', value: a.instanceType },
     { key: 'ImageId', value: ubuntuAmiSsmPath(archForInstanceType(a.instanceType)) },
     { key: 'KeyName', value: a.keyName },
-    { key: 'UserData', value: a.userData },
+    // UserData NO va como parámetro: se EMBEBE en el template (buildStackTemplate(userData)) porque un
+    // parámetro String de CFN tope a 4096 chars y el cloud-init son ~5KB. [bug del deploy real]
     { key: 'ExistingVpcId', value: a.existingVpcId ?? '' },
     { key: 'ExistingSubnetId', value: a.existingSubnetId ?? '' },
     { key: 'SshCidr', value: a.sshCidr ?? '0.0.0.0/0' },

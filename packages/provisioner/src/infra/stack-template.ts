@@ -15,7 +15,13 @@ import { stringify as yamlStringify } from 'yaml';
 /** Puertos abiertos: 22 (SSH, CIDR configurable) + correo/web (a internet). */
 const MAIL_PORTS = [25, 80, 443, 143, 465, 587, 993] as const;
 
-export function buildStackTemplate(): Record<string, unknown> {
+/**
+ * Construye el template CloudFormation. Si se pasa `userData`, lo EMBEBE en el Instance
+ * (`Fn::Base64` del literal) y omite el parámetro `UserData` — necesario porque un parámetro String
+ * de CFN tope a 4096 chars y el cloud-init real son ~5KB (bug hallado en el deploy real). Sin
+ * `userData`, deja el parámetro `UserData` (template genérico para validación/uso parametrizado).
+ */
+export function buildStackTemplate(userData?: string): Record<string, unknown> {
   const projectTags = [
     { Key: 'Project', Value: 'Bifrost' },
     { Key: 'ManagedBy', Value: 'bifrost-provision' },
@@ -28,7 +34,7 @@ export function buildStackTemplate(): Record<string, unknown> {
     ...MAIL_PORTS.map((p) => ({ IpProtocol: 'tcp', FromPort: p, ToPort: p, CidrIp: '0.0.0.0/0' })),
   ];
 
-  return {
+  const template: Record<string, unknown> = {
     AWSTemplateFormatVersion: '2010-09-09',
     Description: 'Bifrost all-in-one (docker-mailserver + webmail) — VPC opcional, EC2, EIP.',
     Parameters: {
@@ -401,13 +407,28 @@ export function buildStackTemplate(): Record<string, unknown> {
       },
     },
   };
+
+  // Si nos dan el cloud-init, lo EMBEBEMOS (literal) y quitamos el parámetro UserData: un parámetro
+  // String de CFN tope a 4096 chars y el script real son ~5KB. El template body sí admite el tamaño.
+  if (userData !== undefined) {
+    const params = template.Parameters as Record<string, unknown>;
+    delete params.UserData;
+    const resources = template.Resources as Record<string, { Properties: Record<string, unknown> }>;
+    resources.Instance.Properties.UserData = { 'Fn::Base64': userData };
+  }
+
+  return template;
 }
 
 export const MAIL_INGRESS_PORTS = MAIL_PORTS;
 
 /** El template como YAML de CloudFormation (el entregable que el CLI ofrece correr o entregar). */
 export function templateToYaml(template: Record<string, unknown> = buildStackTemplate()): string {
-  return yamlStringify(template);
+  // `aliasDuplicateObjects: false` es OBLIGATORIO: el builder reutiliza la MISMA referencia de objeto
+  // (p.ej. los project tags, o un `{ Ref: 'ElasticIP' }` compartido) en varios lugares, y por defecto
+  // el serializador YAML emite anchors/aliases (&x / *x) para esas repeticiones. CloudFormation NO
+  // acepta aliases YAML → "Template error: YAML aliases are not allowed". Esto duplica el contenido.
+  return yamlStringify(template, { aliasDuplicateObjects: false });
 }
 
 /** El template como JSON (lo que se pasa como `TemplateBody` a CreateStack). */

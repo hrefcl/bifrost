@@ -158,7 +158,7 @@ async function main(): Promise<void> {
   };
   const params = assembleStackParams(answers);
   const file = `bifrost-stack-${slug(domain)}.yaml`;
-  writeFileSync(file, templateToYaml(buildStackTemplate()));
+  writeFileSync(file, templateToYaml(buildStackTemplate(userData)));
   console.log(`\n✓ CloudFormation escrito en ./${file}`);
   if (pem !== null) {
     const pemFile = `${keyName}.pem`;

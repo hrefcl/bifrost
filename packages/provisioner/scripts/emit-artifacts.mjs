@@ -8,23 +8,24 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { templateToYaml } from '../dist/infra/stack-template.js';
+import { buildStackTemplate, templateToYaml } from '../dist/infra/stack-template.js';
 import { buildUserData } from '../dist/mailserver/user-data.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = process.argv[2] ?? join(here, '..', 'artifacts');
 mkdirSync(outDir, { recursive: true });
 
-writeFileSync(join(outDir, 'bifrost-stack.yaml'), templateToYaml());
-writeFileSync(
-  join(outDir, 'user-data.sh'),
-  buildUserData({
-    domain: 'example.com',
-    mailHostname: 'mail.example.com',
-    adminEmail: 'admin@example.com',
-    stackName: 'bifrost-example-com',
-    region: 'us-east-1',
-  })
-);
+const userData = buildUserData({
+  domain: 'example.com',
+  mailHostname: 'mail.example.com',
+  adminEmail: 'admin@example.com',
+  stackName: 'bifrost-example-com',
+  region: 'us-east-1',
+});
+
+// Validamos la forma REAL que se despliega: con el user-data EMBEBIDO (no el parámetro), igual que el
+// wizard/deploy → así cfn-lint valida exactamente lo que CloudFormation va a recibir.
+writeFileSync(join(outDir, 'bifrost-stack.yaml'), templateToYaml(buildStackTemplate(userData)));
+writeFileSync(join(outDir, 'user-data.sh'), userData);
 
 console.log(`Artefactos del turnkey emitidos en ${outDir} (bifrost-stack.yaml + user-data.sh)`);
