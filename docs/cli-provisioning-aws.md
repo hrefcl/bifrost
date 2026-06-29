@@ -228,3 +228,27 @@ docker-mailserver guarda el **maildir en filesystem (EBS)**. Hay tensión; opcio
 **Recomendación A→C:** v1 funcionando (A) para validar entregabilidad con AWS real cuanto antes,
 y la pasada de optimización de costo (tiering a S3) como fase dedicada. Confirmar con el PM antes
 de F-E3.
+
+---
+
+## Hallazgos B/C/D pendientes (revisión externa, 2026-06) — bloquean cierre de fase
+
+La auditoría real B(Codex)+D(Kimi) sobre el provisioner destapó ~9 HIGH que las auto-auditorías no
+vieron (no se había cruzado el contrato real de `deploy/example-mailserver/docker-compose.yml`).
+**CERRADOS:** secretos `.txt`+`*_FILE` en la API, longitud/hex de ENCRYPTION_KEY, tools+Docker
+firmado en user-data, DNS `webmail`, CreationPolicy+cfn-signal+readiness, EBS no-borra, IMDSv2,
+deployStack idempotente, catches acotados, poll timeout/rollback, bucket policy, SSH CIDR, S3 off,
+nginx↔servicio (api/web), SPF ~all, 465/143 publicados.
+
+**ABIERTOS (HIGH, son F-E5/F-E6 — "que el correo fluya de verdad"):**
+- **TLS del mail server (`mail.<dominio>`)**: Traefik sólo emite cert para `webmail.<dominio>` (su
+  router); `docker-mailserver` con `SSL_TYPE=letsencrypt` espera certs en layout certbot, NO el
+  `acme.json` de Traefik → IMAPS/SMTP quedarían sin cert válido. Requiere la integración
+  DMS↔Traefik (extracción de cert / router para `mail`). [B HIGH]
+- **Wiring webmail↔mailserver local**: el login del webmail default apunta a Gmail (465/secure) y la
+  UI no togglea STARTTLS; el README dice que "ya apunta" al mailserver pero no. Hay que prefijar el
+  login al `mail.<dominio>` local y/o exponer el toggle. [B HIGH]
+- **Cuentas + DKIM post-boot** (ya registrado): SSH al box → `setup email add` + `setup config dkim`
+  + publicar el TXT DKIM + verificar entregabilidad. [D MEDIUM]
+
+Estos requieren un box REAL (TLS/ACME, DKIM, SMTP) — no verificables sin AWS. Son el núcleo de F-E5.

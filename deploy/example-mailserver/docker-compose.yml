@@ -40,8 +40,10 @@ services:
     hostname: mail.example.com # ← tu hostname de correo
     restart: unless-stopped
     ports:
-      - '25:25' # SMTP
+      - '25:25' # SMTP (recepción)
+      - '465:465' # Submission implícito TLS (SMTPS) — el login del webmail usa 465/secure por default
       - '587:587' # Submission (STARTTLS)
+      - '143:143' # IMAP (STARTTLS)
       - '993:993' # IMAPS
     volumes:
       - ./maildata:/var/mail

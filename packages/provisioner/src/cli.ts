@@ -25,7 +25,7 @@ function printDns(domain: string, ip: string): void {
   console.log(`  A     ${host}        → ${ip}`);
   console.log(`  A     webmail.${domain} → ${ip}  (la UI web / TLS)`);
   console.log(`  MX    ${domain}      → ${host} (prioridad 10)`);
-  console.log(`  TXT   ${domain}      → "v=spf1 mx -all"`);
+  console.log(`  TXT   ${domain}      → "v=spf1 mx ~all"`);
   console.log(`  TXT   _dmarc.${domain} → "v=DMARC1; p=quarantine"`);
   console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
 }
