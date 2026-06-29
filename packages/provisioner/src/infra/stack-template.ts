@@ -60,6 +60,23 @@ export function buildStackTemplate(): Record<string, unknown> {
       // acá (el CLI imprime los registros para cargarlos a mano — seguro si la zona ya tiene records).
       HostedZoneId: { Type: 'String', Default: '' },
     },
+    // CloudFormation Rules: validan parámetros ANTES de crear recursos y rechazan el deploy con un
+    // mensaje claro. Protegen el path de despliegue STANDALONE (consola web / `aws cloudformation
+    // deploy` directo, sin el wizard): el wizard ya empareja VPC+subnet, pero un deploy a mano podría
+    // pasar ExistingVpcId sin ExistingSubnetId → CreateNetwork=false → el Fn::If del SubnetId caería en
+    // la rama `ExistingSubnetId` VACÍA → instancia sin subnet → deploy roto/confuso. [hallazgo D]
+    Rules: {
+      SubnetRequiredWithExistingVpc: {
+        RuleCondition: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'ExistingVpcId' }, ''] }] },
+        Assertions: [
+          {
+            Assert: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'ExistingSubnetId' }, ''] }] },
+            AssertDescription:
+              'Si especificás ExistingVpcId, también debés especificar ExistingSubnetId (la instancia necesita una subnet de esa VPC).',
+          },
+        ],
+      },
+    },
     Conditions: {
       // Si no se pasó una VPC existente, el stack crea toda la red.
       CreateNetwork: { 'Fn::Equals': [{ Ref: 'ExistingVpcId' }, ''] },

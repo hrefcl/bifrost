@@ -206,6 +206,13 @@ ningún merge con HIGH abierto o score <9):
   el sed. NO explotable: `validateDomain` restringe el dominio a `[a-z0-9-]`+puntos. Endurecer
   escapando chars sed-especiales sería defensa en profundidad, pero el cambio toca el bootstrap crítico
   (no testeable sin box) → diferido. (Re-auditoría 3-lentes, lente auditor hostil — cerrado por validación.)
+- **TD-PROVISION-CFN-CI (LOW, prevención)** — el template CloudFormation (`buildStackTemplate`) se
+  VALIDÓ una vez con **cfn-lint 1.46: 0 errores**, sólo 4 warnings W1030 (defaults vacíos de
+  `ExistingSubnetId`/`S3BucketName`) confirmados FALSOS POSITIVOS (guardados por `Fn::If CreateNetwork`
+  y `Condition: CreateS3`; cfn-lint no modela Conditions al resolver defaults). Los 9 unit tests cubren
+  estructura pero NO validez contra el spec de CFN. Mejora: añadir un paso de CI que genere el template
+  y corra `cfn-lint` → atrapa regresiones estructurales del template antes de que rompan un deploy real.
+  (Verificación de auto-auditoría sesión 6: el artefacto mission-critical es desplegable.)
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 

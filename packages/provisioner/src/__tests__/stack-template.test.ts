@@ -9,6 +9,7 @@ import {
 
 interface TplView {
   Parameters: Record<string, unknown>;
+  Rules: Record<string, { RuleCondition: unknown; Assertions: { Assert: unknown }[] }>;
   Conditions: Record<string, unknown>;
   Resources: Record<
     string,
@@ -48,6 +49,19 @@ describe('buildStackTemplate (CloudFormation)', () => {
     ]) {
       expect(t.Resources[r]?.Condition, r).toBe('CreateNetwork');
     }
+  });
+
+  it('Rule: exige ExistingSubnetId si se pasa ExistingVpcId (protege el deploy standalone) [D]', () => {
+    const rule = t.Rules.SubnetRequiredWithExistingVpc;
+    expect(rule).toBeDefined();
+    // Sólo aplica cuando ExistingVpcId NO está vacío...
+    expect(rule.RuleCondition).toEqual({
+      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'ExistingVpcId' }, ''] }],
+    });
+    // ...y entonces ASEGURA que ExistingSubnetId tampoco esté vacío (si no, deploy rechazado).
+    expect(rule.Assertions[0]?.Assert).toEqual({
+      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'ExistingSubnetId' }, ''] }],
+    });
   });
 
   it('VpcId/SubnetId son condicionales: usan la existente si se pasa, si no la creada', () => {
