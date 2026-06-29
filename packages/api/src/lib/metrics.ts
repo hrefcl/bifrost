@@ -1,5 +1,5 @@
 /** Contadores de proceso en memoria para /metrics (Prometheus text format). */
-export const counters = { requests: 0, errors5xx: 0 };
+export const counters = { requests: 0, errors5xx: 0, bootstrapAdminGrants: 0 };
 
 // Histograma de latencia de requests (segundos). Buckets cumulativos estilo Prometheus.
 const BUCKETS = [0.01, 0.05, 0.1, 0.3, 1, 3, 10];
@@ -49,6 +49,11 @@ export function renderMetrics(): string {
       '# HELP webmail_errors_5xx_total Total 5xx responses',
       '# TYPE webmail_errors_5xx_total counter',
       `webmail_errors_5xx_total ${String(counters.errors5xx)}`,
+      // Evento de seguridad: cuántas veces se otorgó admin por bootstrap (debería ser 0 ó 1 por
+      // instalación). Un valor >1 o creciente = anomalía → alertar.
+      '# HELP webmail_bootstrap_admin_grants_total Admin role granted via first-user bootstrap',
+      '# TYPE webmail_bootstrap_admin_grants_total counter',
+      `webmail_bootstrap_admin_grants_total ${String(counters.bootstrapAdminGrants)}`,
       ...histogramLines(),
     ].join('\n') + '\n'
   );

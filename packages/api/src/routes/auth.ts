@@ -9,6 +9,7 @@ import {
 } from '../services/auth.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
+import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
 import { externalizeDataImages } from '../services/signature-images.js';
@@ -79,7 +80,17 @@ export default function authRoutes(fastify: FastifyInstance) {
     { config: { requiresAuth: false, rateLimit: { max: loginMax, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const body = loginSchema.parse(request.body);
-      const { user, account } = await loginOrRegister(body);
+      const { user, account, bootstrappedAdmin } = await loginOrRegister(body);
+      if (bootstrappedAdmin) {
+        // Evento de seguridad: el sistema no tenía admin y este 1er usuario lo otorgó. Se audita (warn
+        // estructurado, sin credenciales) + métrica Prometheus (debería quedar en 1; >1 = anomalía a
+        // alertar) para que un grant inesperado no pase silencioso.
+        counters.bootstrapAdminGrants++;
+        request.log.warn(
+          { userId: user._id.toString(), email: user.primaryEmail, ip: request.ip },
+          'bootstrap admin otorgado: no existia admin, este usuario quedo admin'
+        );
+      }
       const accessToken = fastify.jwt.sign({ userId: user._id.toString() });
       const familyId = randomToken(16);
       const refreshToken = await createRefreshToken(

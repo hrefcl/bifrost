@@ -45,22 +45,26 @@ describe('bootstrap admin: el primer usuario que se autentica queda admin', () =
     const first = await loginOrRegister(creds('boss@aulion.app'));
     expect(first.isNew).toBe(true);
     expect(first.user.role).toBe('admin');
+    expect(first.bootstrappedAdmin).toBe(true);
 
     const second = await loginOrRegister(creds('staff@aulion.app'));
     expect(second.isNew).toBe(true);
     expect(second.user.role).toBe('user');
+    expect(second.bootstrappedAdmin).toBe(false);
 
     // Sólo un admin en el sistema.
     expect(await User.countDocuments({ role: 'admin' })).toBe(1);
   });
 
-  it('auto-cura: si el único usuario quedó como user (sin admin), su próximo login lo promueve', async () => {
-    // Simula el caso aulion: usuario creado por login directo, sin admin en el sistema.
+  it('seguridad: un usuario EXISTENTE sin admin en el sistema NO se auto-promueve (review D, anti-escalada)', async () => {
+    // Si se borraran todos los admins, el próximo login de un usuario YA creado NO debe volverlo admin
+    // (sería escalada silenciosa). La recuperación es el CLI explícito admin:grant.
     await User.create({ primaryEmail: 'legacy@aulion.app', displayName: 'legacy', role: 'user' });
     expect(await User.exists({ role: 'admin' })).toBeFalsy();
 
     const again = await loginOrRegister(creds('legacy@aulion.app'));
     expect(again.isNew).toBe(false);
-    expect(again.user.role).toBe('admin');
+    expect(again.user.role).toBe('user'); // sigue user
+    expect(again.bootstrappedAdmin).toBe(false);
   });
 });

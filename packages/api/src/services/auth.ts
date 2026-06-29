@@ -54,6 +54,8 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   user: IUser;
   account: IAccount;
   isNew: boolean;
+  /** true si este login disparó el bootstrap admin (no había admin → este usuario quedó admin). */
+  bootstrappedAdmin: boolean;
 }> {
   // Una cuenta DESHABILITADA por el admin no puede iniciar sesión (ni reactivarse sola en el
   // upsert de abajo). Se chequea ANTES de verificar IMAP para no exponer un oráculo de credenciales
@@ -79,13 +81,15 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   const before = await User.findOne({ primaryEmail: input.email }).lean();
   const isNew = !before;
 
-  // BOOTSTRAP ADMIN: si en TODA la instalación no hay ningún admin, el usuario que se autentica ahora
-  // queda admin. Garantiza que un deploy siempre tenga un admin por defecto sin paso manual (el
-  // operador self-hosted ES el primer usuario; patrón GitLab/Sentry) y auto-cura un sistema que quedó
-  // sin admin (p.ej. provisioning que creó la 1ª cuenta por login directo, no por el wizard de setup).
-  // Si ya hay admin, los siguientes quedan 'user'. Ventana de carrera (dos primeros logins simultáneos
-  // → ambos admin) es aceptable para un webmail self-hosted de una sola organización.
-  const bootstrapAdmin = !(await User.exists({ role: 'admin' }));
+  // BOOTSTRAP ADMIN: en una instalación SIN ningún admin, el PRIMER usuario que se CREA (sólo en
+  // INSERT, ver $setOnInsert abajo) queda admin → garantiza un admin por defecto sin paso manual (el
+  // operador self-hosted ES el primer usuario; patrón GitLab/Sentry). NO promovemos usuarios EXISTENTES
+  // (review D, HIGH): auto-promover a un usuario ya creado escondería un estado corrupto "quedé sin
+  // admin" y sería escalada silenciosa si se borraran todos los admins — la recuperación correcta es el
+  // CLI EXPLÍCITO `admin:grant`. Al ir el rol en $setOnInsert el grant es atómico por-email (un upsert
+  // concurrente del mismo email no lo duplica ni pisa). Si ya hay admin, los nuevos caen al default 'user'.
+  const noAdminYet = !(await User.exists({ role: 'admin' }));
+  const bootstrappedAdmin = isNew && noAdminYet;
   // `??` sólo cubría undefined: el form de login manda displayName:'' → quedaba vacío y el
   // usuario violaba `required` (rompía cualquier user.save() posterior). Normalizamos: vacío/
   // sólo-espacios cae al prefijo del email.
@@ -99,10 +103,10 @@ export async function loginOrRegister(input: LoginInput): Promise<{
         $setOnInsert: {
           primaryEmail: input.email,
           displayName,
+          // role admin SÓLO en el insert del primer usuario cuando no hay admin (atómico por-email).
+          ...(noAdminYet ? { role: 'admin' as const } : {}),
         },
-        // role:'admin' sólo si es el bootstrap (no hay admin aún) — promueve también a un usuario
-        // existente para auto-curar; si ya hay admin, no se toca el rol y el insert cae al default 'user'.
-        $set: { lastLoginAt: new Date(), ...(bootstrapAdmin ? { role: 'admin' as const } : {}) },
+        $set: { lastLoginAt: new Date() },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     )
@@ -149,7 +153,7 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   account.lastError = undefined;
   await account.save();
 
-  return { user, account, isNew };
+  return { user, account, isNew, bootstrappedAdmin };
 }
 
 /** Reintenta una operación una vez si choca con índice único (E11000) por carrera. */
