@@ -248,6 +248,12 @@ nginx↔servicio (api/web), SPF ~all, 465/143 publicados.
   compartido `./letsencrypt`) y extrae el cert — patrón soportado oficialmente por DMS. El challenge
   HTTP-01 va por el entrypoint `web` igual que el router `bifrost` del webmail (ya probado). Sólo falta
   confirmar la emisión real (IMAPS/SMTP STARTTLS) en un box con DNS+80/443 abiertos.
+  > Nota: D(Kimi) marcó esto NO-RESUELTO alegando que DMS exige layout certbot y que hace falta
+  > `traefik-certs-dumper`. **Falso positivo (conocimiento desactualizado)**: la doc oficial de DMS
+  > dice que *"Traefik's storage format is natively supported if the `acme.json` store is mounted
+  > into the container at `/etc/letsencrypt/acme.json`"* y `SSL_DOMAIN` selecciona el cert por FQDN.
+  > El mount `./letsencrypt:/etc/letsencrypt:ro` cumple esa ruta. `certs-dumper` era el workaround
+  > viejo, ya innecesario.
 - **Wiring webmail↔mailserver local** [B HIGH]: la UI del login ya **togglea TLS/STARTTLS** (IMAP+SMTP,
   con `tlsHint` i18n y e2e que lo verifica) y el compose **publica 465 (SMTPS) + 143 (IMAP STARTTLS)**.
   El default sigue siendo Gmail por ser un **webmail genérico** (reemplazo de Roundcube): el usuario

@@ -181,6 +181,10 @@ ningún merge con HIGH abierto o score <9):
   + feature-gate + default "none".
 - **TD-CI-PIN** — pin de GitHub Actions por SHA (requiere Dependabot); alinear `docker.yml`
   (`ubuntu-latest`→pin + `timeout-minutes`).
+- **TD-MAIL-STARTTLS-REQUIRED (LOW)** — el `secure=false` del login es STARTTLS *oportunista*, no
+  *requerido*; un MITM podría forzar downgrade a texto plano. Hardening: modo `requireTLS` explícito en
+  el cliente IMAP/SMTP de la API cuando `secure=false`. No-HIGH (B lo dejó como residual de pulido en
+  la re-validación de F-E). El cliente local al `mail.<dominio>` ya usa 465/993 (TLS directo) por def.
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 

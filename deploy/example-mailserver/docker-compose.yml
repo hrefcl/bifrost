@@ -36,7 +36,7 @@ services:
 
   # --- Servidor de correo (SMTP/IMAP) — el "backend" real ---------------------
   mailserver:
-    image: ghcr.io/docker-mailserver/docker-mailserver:latest
+    image: ghcr.io/docker-mailserver/docker-mailserver:15 # pin a major estable (no :latest → no major-bump sorpresa)
     hostname: mail.example.com # ← tu hostname de correo
     restart: unless-stopped
     ports:
