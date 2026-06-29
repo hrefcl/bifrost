@@ -28,10 +28,15 @@ describe('update-check', () => {
     vi.restoreAllMocks();
   });
 
-  it('consulta el último run y arma el estado (con build dev no hay update numérico)', async () => {
+  it('consulta el último run de MAIN/PUSH y arma el estado (con build dev no hay update numérico)', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockRuns(95));
     const st = await checkForUpdate(true);
     expect(fetchSpy).toHaveBeenCalledOnce();
+    // CRÍTICO: el query DEBE filtrar branch=main + event=push (si no, un build de PR daría falso update).
+    const calledUrl = String(fetchSpy.mock.calls[0]?.[0]);
+    expect(calledUrl).toContain('branch=main');
+    expect(calledUrl).toContain('event=push');
+    expect(calledUrl).toContain('status=success');
     expect(st.latest?.build).toBe(95);
     expect(st.latest?.sha).toBe('abcdef1'); // truncado a 7
     // build instalado = 'dev' (no numérico) → no se afirma update (evita falsos positivos en dev).
@@ -44,6 +49,13 @@ describe('update-check', () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockRuns(95));
     await checkForUpdate(true);
     await checkForUpdate(false);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+  });
+
+  it('piso de force: dos "buscar ahora" seguidos (<30s) hacen UN solo fetch (anti rate-limit)', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(mockRuns(95));
+    await checkForUpdate(true);
+    await checkForUpdate(true);
     expect(fetchSpy).toHaveBeenCalledOnce();
   });
 

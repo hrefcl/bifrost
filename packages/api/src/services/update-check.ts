@@ -14,6 +14,9 @@ const REPO = process.env.UPDATE_REPO ?? 'hrefcl/bifrost';
 const WORKFLOW = 'docker.yml';
 const TTL_MS = 10 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 8000;
+// Piso entre fetches reales aunque sea `force`: evita que spamear "Buscar ahora" agote el rate-limit
+// no autenticado de GitHub (60/h por IP). 30s tolera un re-chequeo manual sin quemar la cuota.
+const FORCE_FLOOR_MS = 30 * 1000;
 
 export interface LatestBuild {
   build: number;
@@ -35,7 +38,12 @@ export interface UpdateStatus {
 let cache: { at: number; data: LatestBuild | null } | null = null;
 
 async function fetchLatestBuild(): Promise<LatestBuild | null> {
-  const url = `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?status=success&per_page=1`;
+  // CRÍTICO: filtrar branch=main + event=push. docker.yml también corre en pull_request (los PRs
+  // buildean imágenes pero NO pushean `:latest`), y run_number es GLOBAL al workflow. Sin el filtro,
+  // el build de un PR/feature podría ser "el último run exitoso" → falso "actualización disponible"
+  // apuntando a una imagen que nunca se desplegó. `:latest` sólo lo pushea el push a main → ésa es la
+  // única fuente válida del "último build disponible".
+  const url = `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW}/runs?branch=main&event=push&status=success&per_page=1`;
   const res = await fetch(url, {
     headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'bifrost-update-check' },
     signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -49,16 +57,20 @@ async function fetchLatestBuild(): Promise<LatestBuild | null> {
   return { build: run.run_number, sha: run.head_sha.slice(0, 7), date: run.created_at };
 }
 
-/** Estado de actualización (cacheado). `force` salta el cache (botón "buscar ahora"). */
+/** Estado de actualización (cacheado). `force` salta el cache (botón "buscar ahora") pero respeta un
+ *  piso de FORCE_FLOOR_MS entre fetches reales para no agotar el rate-limit de GitHub. */
 export async function checkForUpdate(force = false): Promise<UpdateStatus> {
-  if (force || !cache || Date.now() - cache.at > TTL_MS) {
+  const age = cache ? Date.now() - cache.at : Infinity;
+  const shouldFetch = !cache || age > TTL_MS || (force && age > FORCE_FLOOR_MS);
+  if (shouldFetch) {
     try {
       cache = { at: Date.now(), data: await fetchLatestBuild() };
     } catch {
       cache = { at: Date.now(), data: null }; // red caída / timeout → degradar a "desconocido"
     }
   }
-  const latest = cache.data;
+  // shouldFetch incluye `!cache`, así que tras el bloque cache nunca es null (TS no lo infiere).
+  const latest = cache?.data ?? null;
   const currentBuild = Number(BUILD_INFO.build);
   const currentIsNumeric = Number.isFinite(currentBuild);
   const updateAvailable = latest !== null && currentIsNumeric && latest.build > currentBuild;
