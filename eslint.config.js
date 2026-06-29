@@ -53,6 +53,7 @@ export default tseslint.config(
       '**/test/**/*.ts',
       '**/e2e/**/*.ts',
       '**/demo/**/*.ts',
+      '**/scripts/**/*.{js,cjs,mjs}',
       '**/*.config.{js,cjs,mjs,ts,mts,cts}',
       'eslint.config.js',
     ],
