@@ -185,6 +185,21 @@ ningún merge con HIGH abierto o score <9):
   *requerido*; un MITM podría forzar downgrade a texto plano. Hardening: modo `requireTLS` explícito en
   el cliente IMAP/SMTP de la API cuando `secure=false`. No-HIGH (B lo dejó como residual de pulido en
   la re-validación de F-E). El cliente local al `mail.<dominio>` ya usa 465/993 (TLS directo) por def.
+- **TD-PROVISION-LE-RATELIMIT (MEDIUM, op)** — el compose usa el endpoint **producción** de Let's
+  Encrypt sin fallback a staging. Un loop de redespliegue (box recreado/EBS nuevo) quema el rate-limit
+  de LE (5 certs duplicados/semana/dominio) → sin TLS por hasta una semana. Mitigación: flag/​env para
+  usar `acme.caserver` staging en pruebas, o documentar el riesgo en el wizard. Riesgo real para un
+  turnkey donde el usuario podría reintentar. (Hallado en re-auditoría 3-lentes, lente operador-3AM.)
+- **TD-PROVISION-CLONE-PIN (MEDIUM, fiabilidad)** — el user-data hace `git clone --depth 1` de `main`
+  HEAD, no de un release tag → un `main` roto rompe TODA provisión nueva. Un turnkey debe fijar una
+  versión conocida-buena (alinea con el sistema de versionado+botón-update que pidió el PM). Hoy `main`
+  es la única ref (no hay releases), así que es forward-looking: añadir param `ref` al user-data y por
+  defecto el último tag de release cuando existan. (Re-auditoría 3-lentes, lente arquitecto/3AM.)
+- **TD-PROVISION-SED-ESCAPE (LOW, defensa en profundidad)** — los valores domain/mailHostname/
+  adminEmail se escapan para bash (`sh()`) pero se usan como **reemplazo en `sed`**; `/ & \` romperían
+  el sed. NO explotable: `validateDomain` restringe el dominio a `[a-z0-9-]`+puntos. Endurecer
+  escapando chars sed-especiales sería defensa en profundidad, pero el cambio toca el bootstrap crítico
+  (no testeable sin box) → diferido. (Re-auditoría 3-lentes, lente auditor hostil — cerrado por validación.)
 - **TD-INBOUND-ATTACH-PERF** — descarga de adjuntos entrantes re-fetchea+parsea el MIME completo
   por adjunto (tradeoff consciente de no persistir inbound; mitigado por cap de 25MB).
 
