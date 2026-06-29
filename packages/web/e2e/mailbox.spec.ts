@@ -326,8 +326,11 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Signature' }).click();
   await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
-  await page.locator('.ProseMirror').click();
-  await page.locator('.ProseMirror').fill('Saludos, Equipo A E2E');
+  // El editor de firma es un contenteditable CRUDO (.sig-editor), no TipTap: preserva el HTML pegado
+  // de un generador (Cleverty) tal cual, igual que Gmail. La firma se añade SERVER-SIDE al enviar
+  // (POST /drafts/:id/send) con el separador "-- ", no se inyecta en el editor del composer.
+  await page.locator('.sig-editor').click();
+  await page.locator('.sig-editor').fill('Saludos, Equipo A E2E');
   const patch = page.waitForResponse(
     (r) =>
       r.url().includes('/api/auth/me/preferences') &&
@@ -338,11 +341,11 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await patch;
   await expect(page.getByText('Saved')).toBeVisible();
 
-  // Componer nuevo → la firma debe auto-incluirse en el editor del cuerpo. Volvemos al inbox
-  // por el logo de la topbar (no hay link "Inbox" de texto en el shell nuevo).
-  await page.locator('.logo-slot').click();
-  await page.getByRole('button', { name: 'Compose' }).click();
-  await expect(page.locator('.ProseMirror')).toContainText('Saludos, Equipo A E2E', {
+  // Round-trip: recargar Ajustes → la firma persiste en el editor (se guardó de verdad).
+  await page.reload();
+  await page.getByRole('button', { name: 'Settings' }).click();
+  await page.getByRole('button', { name: 'Signature' }).click();
+  await expect(page.locator('.sig-editor')).toContainText('Saludos, Equipo A E2E', {
     timeout: 15_000,
   });
 });

@@ -40,6 +40,8 @@ import {
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
 import { Draft } from '../../models/Draft.js';
+import { User } from '../../models/User.js';
+import { Contact } from '../../models/Contact.js';
 import { recoverStuckDrafts } from '../drafts.js';
 
 describe('envío de drafts (F3.5)', () => {
@@ -266,5 +268,48 @@ describe('envío de drafts (F3.5)', () => {
     expect(n).toBe(1);
     const after = await Draft.findById(draft._id);
     expect(after?.status).toBe('failed');
+  });
+
+  it('firma: se añade SERVER-SIDE al enviar con separador "-- " (no en el draft)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'firma@test.com' });
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          'preferences.autoIncludeSignature': true,
+          'preferences.defaultSignature': '<table><tr><td>Saludos, ACME</td></tr></table>',
+        },
+      }
+    );
+    const draft = await makeDraft(user._id.toString(), account._id.toString());
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/drafts/${draft._id.toString()}/send`,
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(200);
+    // El RAW enviado lleva la firma (tabla preservada por el sanitizador) + el separador.
+    expect(h.lastRaw).toContain('Saludos, ACME');
+    expect(h.lastRaw).toMatch(/--/);
+    // El draft persistido NO se contamina con la firma (se agrega sólo en el envío).
+    const persisted = await Draft.findById(draft._id);
+    expect(persisted?.bodyHtml ?? '').not.toContain('Saludos, ACME');
+  });
+
+  it('auto-guarda al destinatario como contacto al enviar (estilo Gmail)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'sender@test.com' });
+    const draft = await makeDraft(user._id.toString(), account._id.toString(), [
+      { name: 'Cliente Uno', address: 'cliente1@externo.com' },
+    ]);
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/drafts/${draft._id.toString()}/send`,
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(200);
+    const contact = await Contact.findOne({ userId: user._id, email: 'cliente1@externo.com' });
+    expect(contact).not.toBeNull();
+    expect(contact?.fullName).toBe('Cliente Uno');
+    expect(contact?.source).toBe('auto');
   });
 });
