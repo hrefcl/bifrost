@@ -37,6 +37,9 @@ describe('buildUserData (cloud-init)', () => {
     // Un ref inválido debe avisar a CFN YA (signal_fail), no esperar al timeout del CreationPolicy: el
     // `|| { ... }` maneja el error y NO dispara el trap ERR, así que el signal va explícito. [B-MED]
     expect(s).toMatch(/check-ref-format[^\n]*\|\|[^\n]*signal_fail; exit 1/);
+    // Rechaza la forma totalmente-calificada refs/... ANTES del clone (clone --branch sólo acepta
+    // nombre corto); también señaliza a CFN. [B-MED v2]
+    expect(s).toMatch(/case "\$REF" in refs\/\*\)[^\n]*signal_fail; exit 1/);
     // Override: un release tag conocido-bueno → provisión reproducible, no main HEAD.
     const pinned = buildUserData({ ...base, ref: 'v1.2.0' });
     expect(pinned).toContain('REF="v1.2.0"');

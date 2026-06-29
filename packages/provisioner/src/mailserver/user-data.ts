@@ -82,6 +82,9 @@ install -d -m 0750 /opt/bifrost
 # ERR NO dispara aquí → hay que llamar signal_fail explícito para avisarle a CFN ya (sin esto, CFN
 # caería recién por timeout del CreationPolicy, 15 min). [B-MED]
 REF="${sh(ref)}"
+# Rechazar la forma TOTALMENTE CALIFICADA (refs/tags/…, refs/heads/…): pasa check-ref-format pero
+# 'clone --branch' sólo acepta el nombre CORTO (main, v1.2.0, release/1.2). Fail-fast con aviso a CFN.
+case "$REF" in refs/*) echo "ERROR: ref no soportado (usá nombre corto, no refs/...): $REF" >&2; signal_fail; exit 1;; esac
 git check-ref-format --allow-onelevel "$REF" || { echo "ERROR: ref de git inválido (usá nombre corto de branch/tag, no refs/...): $REF" >&2; signal_fail; exit 1; }
 # --branch fija el ref (release conocido-bueno o branch); --depth 1 = clon superficial.
 git clone --depth 1 --branch "$REF" "${sh(repo)}" /opt/bifrost
