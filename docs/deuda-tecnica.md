@@ -234,6 +234,18 @@ ningún merge con HIGH abierto o score <9):
   (~30s, avisar en UI), migraciones de DB que un update pudiera requerir, y que el updater NO pueda ser
   usado para correr imágenes arbitrarias (validar el repo/tag origen). Topología del box: stack
   docker-compose en `/opt/bifrost/deploy/example-mailserver`, imágenes `ghcr.io/hrefcl/bifrost/{web,api}`.
+- **TD-THREADING-UI / backfill (review B/C/D)** — el threading (write-side + endpoint /emails/thread/:id
+  + inbox agrupado) ya está (B 7.5/C 7/D 6). Pendientes: (1) **backfill (HIGH de C)** — los emails
+  sincronizados ANTES de la feature no tienen `references` guardado ni threadId; el sync sólo enhebra
+  UIDs nuevos → el inbox histórico queda plano hasta re-sincronizar. Fix operativo: borrar Email del
+  accountId y re-sync (IMAP es la fuente de verdad) o un script de re-fetch de headers; (2) **pane
+  apilado** — hoy abrir un hilo muestra el mensaje más reciente; falta la vista Gmail de toda la
+  conversación apilada (cargar GET /emails/thread/:id, colapsar viejos); (3) **marcar-leído por hilo**
+  (hoy sólo el mensaje abierto); (4) **grouping paginado** — colapsa sobre lo cargado; un mensaje de
+  otra página agrupa al cargarse → para escala, colección `Thread` denormalizada + cursor por max-date
+  del hilo (MED de C); (5) **normalización de Message-ID** (MED de C) — hoy se conservan `<>` y no se
+  lowercasea el dominio; un cliente no-compliant podría no joinear; (6) **fallback por Subject**
+  (Re:/Fwd: normalizado) para mensajes sin References/In-Reply-To (decisión de scope, JWZ lo hace).
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
