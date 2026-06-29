@@ -67,6 +67,10 @@ describe('buildUserData (cloud-init)', () => {
     // cfn-signal de éxito (0) y trap de fracaso (1) con el stack/region pasados.
     expect(s).toContain('cfn-signal -e 0 --stack "$STACK" --resource Instance --region "$REGION"');
     expect(s).toContain('cfn-signal -e 1');
+    // Readiness FUNCIONAL: no basta "contenedor Up"; el webmail debe responder 200 por Traefik (si no,
+    // un Traefik roto daba falso CREATE_COMPLETE). [hallazgo del primer deploy real]
+    expect(s).toContain('/api/health');
+    expect(s).toMatch(/code" = "200" \]|"\$\{?code\}?" = "200"/);
     expect(s).toContain('bifrost-acme-com');
     expect(s).toContain('STORAGE_PROVIDER=local');
     expect(s).not.toContain('STORAGE_PROVIDER=s3');

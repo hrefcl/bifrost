@@ -115,14 +115,31 @@ echo "STORAGE_PROVIDER=local" > .env   # S3 aún no cableado a la app (ver doc)
 docker compose pull
 docker compose up -d
 
-# Readiness mínima: dar unos segundos y verificar que NINGÚN contenedor murió al arrancar (atrapa
-# crashes inmediatos como un secreto inválido). Si alguno salió, el trap señaliza FRACASO a CFN.
+# Readiness 1/2 — ningún contenedor murió al arrancar (atrapa crashes inmediatos: secreto inválido,
+# mount roto, etc.). Si alguno salió, señaliza FRACASO a CFN.
 sleep 20
 if docker compose ps --status=exited --quiet | grep -q .; then
   echo "ERROR: un contenedor salió al arrancar:" >&2
   docker compose ps >&2
   # signal_fail explícito: 'exit' NO dispara el trap ERR (sólo un comando que falla bajo set -e) → sin
   # esto, CFN no recibe el fracaso y cae recién por timeout del CreationPolicy (15 min). [shellcheck re-audit]
+  signal_fail
+  exit 1
+fi
+
+# Readiness 2/2 — FUNCIONAL: el webmail debe RESPONDER 200 por Traefik (no sólo "contenedor Up"). Un
+# contenedor puede estar Up pero inservible (p.ej. Traefik sin poder leer labels → 404 en todo) y eso
+# daba un FALSO CREATE_COMPLETE. Se cruza toda la cadena Traefik→web(nginx)→api por /api/health.
+# -k + --resolve a localhost: ignora el cert (el ACME puede tardar) y no depende del DNS externo.
+ok=
+for _ in $(seq 1 30); do
+  code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 --resolve "webmail.\${DOMAIN}:443:127.0.0.1" "https://webmail.\${DOMAIN}/api/health" 2>/dev/null || true)
+  if [ "$code" = "200" ]; then ok=1; break; fi
+  sleep 10
+done
+if [ -z "$ok" ]; then
+  echo "ERROR: el webmail no responde 200 por Traefik (último code: $code)" >&2
+  docker compose logs --tail=50 traefik web api >&2 || true
   signal_fail
   exit 1
 fi
