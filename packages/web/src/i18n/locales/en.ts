@@ -172,6 +172,8 @@ export default {
     unsnooze: 'Unsnooze',
     moveTo: 'Move to',
     print: 'Print',
+    showOriginal: 'Show original',
+    downloadEml: 'Download .eml',
     markUnread: 'Mark as unread',
     reply: 'Reply',
     replyAll: 'Reply all',
@@ -317,6 +319,8 @@ export default {
     snooze: 'Failed to snooze email',
     unsnooze: 'Failed to unsnooze email',
     print: 'Could not print email',
+    downloadEml: 'Could not download .eml',
+    showOriginal: 'Could not show original',
   },
   settings: {
     title: 'Settings',

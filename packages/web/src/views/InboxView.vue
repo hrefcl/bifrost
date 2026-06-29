@@ -822,6 +822,54 @@ function printEmail() {
   }
 }
 
+// Nombre de archivo seguro para el .eml (a partir del asunto).
+function emlFilename(email: Email): string {
+  const base = (email.subject || 'email')
+    .replace(/[^\w.\- ]+/g, '_')
+    .slice(0, 80)
+    .trim();
+  return `${base || 'email'}.eml`;
+}
+
+// Descarga el RAW RFC822 del mensaje como .eml.
+async function downloadEml() {
+  const email = selected.value;
+  if (!email) return;
+  try {
+    const { data } = await api.get<Blob>(`/emails/${email.id}/source`, { responseType: 'blob' });
+    const url = URL.createObjectURL(data);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = emlFilename(email);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } catch {
+    error.value = t('errors.downloadEml');
+  }
+}
+
+// "Mostrar original": el RAW RFC822 (headers + cuerpo MIME) en una pestaña nueva, como texto plano
+// (sandbox implícito: text/plain NO ejecuta nada del contenido del email).
+async function showOriginal() {
+  const email = selected.value;
+  if (!email) return;
+  try {
+    const { data } = await api.get<string>(`/emails/${email.id}/source`, { responseType: 'text' });
+    const blob = new Blob([data], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 60_000);
+  } catch {
+    error.value = t('errors.showOriginal');
+  }
+}
+
 // ---- Atajos de teclado estilo Gmail (no disparan mientras se escribe en un campo) ----
 function onKey(e: KeyboardEvent) {
   if (
@@ -1171,6 +1219,24 @@ onBeforeUnmount(() => {
                 "
               >
                 <AppIcon name="printer" :size="15" />{{ t('thread.print') }}
+              </button>
+              <button
+                class="label-menu-item"
+                @click="
+                  showThreadMore = false;
+                  showOriginal();
+                "
+              >
+                <AppIcon name="settings" :size="15" />{{ t('thread.showOriginal') }}
+              </button>
+              <button
+                class="label-menu-item"
+                @click="
+                  showThreadMore = false;
+                  downloadEml();
+                "
+              >
+                <AppIcon name="download" :size="15" />{{ t('thread.downloadEml') }}
               </button>
               <button
                 class="label-menu-item danger"

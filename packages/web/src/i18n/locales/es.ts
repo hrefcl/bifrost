@@ -172,6 +172,8 @@ export default {
     unsnooze: 'Recuperar',
     moveTo: 'Mover a',
     print: 'Imprimir',
+    showOriginal: 'Mostrar original',
+    downloadEml: 'Descargar .eml',
     markUnread: 'Marcar como no leído',
     reply: 'Responder',
     replyAll: 'Responder a todos',
@@ -322,6 +324,8 @@ export default {
     snooze: 'No se pudo posponer el correo',
     unsnooze: 'No se pudo recuperar el correo',
     print: 'No se pudo imprimir el correo',
+    downloadEml: 'No se pudo descargar el .eml',
+    showOriginal: 'No se pudo mostrar el original',
   },
   settings: {
     title: 'Ajustes',

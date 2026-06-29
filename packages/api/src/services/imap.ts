@@ -576,3 +576,29 @@ export async function fetchAndParseMessage(
     }
   });
 }
+
+/**
+ * RAW del mensaje (RFC822 completo: headers + cuerpo MIME). Lo usan "Descargar .eml" y "Mostrar
+ * original". Mismo fetch `{ source: true }` que el parseo, pero devuelve el buffer crudo sin tocar.
+ */
+export async function fetchMessageSource(
+  account: IAccount,
+  folderPath: string,
+  uid: number
+): Promise<Buffer> {
+  return withClient(account, async (client) => {
+    const lock = await client.getMailboxLock(folderPath);
+    try {
+      const msg = await client.fetchOne(uid, { source: true }, { uid: true });
+      if (!msg || !msg.source) {
+        throw Object.assign(new Error('Message not found on server'), { statusCode: 404 });
+      }
+      if (msg.source.length > MAX_MESSAGE_BYTES) {
+        throw Object.assign(new Error('Message too large to process'), { statusCode: 413 });
+      }
+      return msg.source;
+    } finally {
+      lock.release();
+    }
+  });
+}

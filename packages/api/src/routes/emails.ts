@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import {
   fetchAndParseMessage,
+  fetchMessageSource,
   setEmailSeen,
   setEmailFlagged,
   moveEmailToTrash,
@@ -213,6 +214,20 @@ export default function emailRoutes(fastify: FastifyInstance) {
     }
 
     return response;
+  });
+
+  // RAW del mensaje (RFC822). Lo usan "Descargar .eml" y "Mostrar original" en el front. Se entrega
+  // como message/rfc822 (octet-stream a efectos del browser) → el front lo baja como .eml o lo muestra.
+  fastify.get('/:emailId/source', async (request, reply) => {
+    const { emailId } = request.params as { emailId: string };
+    objectIdSchema.parse(emailId);
+    const { email, account } = await requireOwnedEmail(request.user.userId, emailId);
+    const folderPath = await resolveFolderPath(email);
+    const source = await fetchMessageSource(account, folderPath, email.uid);
+    void reply
+      .header('Content-Type', 'message/rfc822')
+      .header('Content-Disposition', `attachment; filename="email-${emailId}.eml"`)
+      .send(source);
   });
 
   fastify.get('/:emailId/attachments', async (request) => {
