@@ -21,6 +21,8 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('download.docker.com/linux/ubuntu/gpg');
     expect(s).toContain('docker-compose-plugin');
     expect(s).not.toContain('get.docker.com'); // ya no se usa el instalador sin checksum
+    // Compat API 1.24 para Traefik v3 con Docker 29+ (si no, Traefik no lee labels → 404). [deploy real]
+    expect(s).toContain('DOCKER_MIN_API_VERSION=1.24');
     expect(s).toContain('git clone');
     expect(s).toContain('deploy/example-mailserver'); // REUSA la plantilla existente
     expect(s).toContain('docker compose up -d');

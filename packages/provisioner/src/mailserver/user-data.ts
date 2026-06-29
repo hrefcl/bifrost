@@ -70,6 +70,13 @@ chmod a+r /etc/apt/keyrings/docker.asc
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list
 apt_retry update
 apt_retry install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+# Docker Engine 29+ subió su API MÍNIMA a 1.40, pero el provider docker de Traefik v3 pinea la API
+# 1.24 → el daemon rechaza sus requests ("client version 1.24 is too old") y Traefik no lee NINGÚN
+# label → 404 en todo + sin emisión de cert ACME. Restaurar la compat con API 1.24 en el daemon es el
+# fix documentado. [bug hallado en el primer deploy real a AWS]
+mkdir -p /etc/systemd/system/docker.service.d
+printf '[Service]\nEnvironment="DOCKER_MIN_API_VERSION=1.24"\n' > /etc/systemd/system/docker.service.d/min-api.conf
+systemctl daemon-reload
 systemctl enable --now docker
 # Esperar a que el daemon esté listo antes de usarlo (race de arranque del servicio).
 for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
