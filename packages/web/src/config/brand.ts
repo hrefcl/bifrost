@@ -13,8 +13,6 @@ import { reactive } from 'vue';
 export interface Brand {
   /** Nombre de la plataforma mostrado en logo, login, título de pestaña, etc. */
   name: string;
-  /** Versión mostrada junto al nombre (sufijo del wordmark). */
-  version: string;
   /** Color de acento (HEX). Alimenta el token CSS `--accent` y derivados. */
   accent: string;
   /** Eslogan/pie mostrado bajo el logo en el login. */
@@ -41,7 +39,6 @@ function envAccent(value: string | undefined, fallback: string): string {
 /** Defaults por env (capa build-time). Se conservan como fallback de la capa runtime. */
 const defaults: Brand = {
   name: envOr(import.meta.env.VITE_BRAND_NAME, 'Bifrost'),
-  version: envOr(import.meta.env.VITE_BRAND_VERSION, '6.0'),
   accent: envAccent(import.meta.env.VITE_BRAND_ACCENT, '#1b66ff'),
   tagline: envOr(import.meta.env.VITE_BRAND_TAGLINE, 'IMAP & JMAP'),
   logoUrl: null,
@@ -98,5 +95,5 @@ export function applyBrand(b: Brand = brand): void {
   root.style.setProperty('--accent', b.accent);
   root.style.setProperty('--accent-700', `color-mix(in srgb, ${b.accent} 82%, #000)`);
   root.style.setProperty('--accent-300', `color-mix(in srgb, ${b.accent} 52%, #fff)`);
-  document.title = `${b.name} ${b.version}`;
+  document.title = b.name;
 }

@@ -196,7 +196,7 @@ function switchLocale(l: Locale) {
         </div>
       </form>
 
-      <p class="login-foot">{{ brand.name }} {{ brand.version }} · {{ brand.tagline }}</p>
+      <p class="login-foot">{{ brand.name }} · {{ brand.tagline }}</p>
     </div>
   </div>
 </template>

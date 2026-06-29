@@ -27,9 +27,6 @@ withDefaults(defineProps<{ size?: number; wordmark?: boolean }>(), {
     </div>
     <span v-if="wordmark" class="wordmark" :style="{ fontSize: size * 0.5 + 'px' }">
       {{ brand.name }}
-      <span v-if="!brand.logoUrl" class="version" :style="{ fontSize: size * 0.34 + 'px' }">{{
-        brand.version
-      }}</span>
     </span>
   </div>
 </template>
@@ -60,11 +57,5 @@ withDefaults(defineProps<{ size?: number; wordmark?: boolean }>(), {
   letter-spacing: -0.02em;
   color: var(--text-1);
   white-space: nowrap;
-}
-.version {
-  color: var(--accent);
-  font-weight: 600;
-  vertical-align: middle;
-  margin-left: 1px;
 }
 </style>
