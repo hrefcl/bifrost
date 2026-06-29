@@ -36,6 +36,13 @@ describe('assembleStackParams', () => {
     expect(get(p, 'S3BucketName')).toBe('bifrost-acme-com-data');
   });
 
+  it('sin hostedZoneId → HostedZoneId vacío (no gestiona DNS); con id lo pasa', () => {
+    expect(get(assembleStackParams(baseAnswers), 'HostedZoneId')).toBe('');
+    expect(get(assembleStackParams({ ...baseAnswers, hostedZoneId: 'Z123' }), 'HostedZoneId')).toBe(
+      'Z123'
+    );
+  });
+
   it('con VPC existente elegida la pasa', () => {
     const p = assembleStackParams({
       ...baseAnswers,

@@ -17,6 +17,8 @@ export interface WizardAnswers {
   existingVpcId?: string;
   existingSubnetId?: string;
   sshCidr?: string;
+  /** Zona Route53 para gestionar el DNS desde el stack (opt-in). Vacío = no tocar DNS. */
+  hostedZoneId?: string;
 }
 
 /** Nombre de bucket derivado del dominio (S3: minúsculas, sin puntos consecutivos, único-ish). */
@@ -39,5 +41,6 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     { key: 'SshCidr', value: a.sshCidr ?? '0.0.0.0/0' },
     { key: 'S3Mode', value: a.useS3 ? 'create' : 'none' },
     { key: 'S3BucketName', value: a.useS3 ? (a.s3BucketName ?? deriveBucketName(a.domain)) : '' },
+    { key: 'HostedZoneId', value: a.hostedZoneId ?? '' },
   ];
 }

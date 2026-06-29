@@ -56,12 +56,17 @@ export function buildStackTemplate(): Record<string, unknown> {
       S3Mode: { Type: 'String', Default: 'none', AllowedValues: ['create', 'none'] },
       // Nombre del bucket a crear (debe ser globalmente único; el CLI lo deriva del dominio).
       S3BucketName: { Type: 'String', Default: '' },
+      // Zona Route53 para gestionar el DNS (A/MX/SPF/DMARC) desde el stack. Vacío = NO gestionar DNS
+      // acá (el CLI imprime los registros para cargarlos a mano — seguro si la zona ya tiene records).
+      HostedZoneId: { Type: 'String', Default: '' },
     },
     Conditions: {
       // Si no se pasó una VPC existente, el stack crea toda la red.
       CreateNetwork: { 'Fn::Equals': [{ Ref: 'ExistingVpcId' }, ''] },
       // Crear el repositorio de datos cifrado en S3 (+ KMS + rol IAM para que el box lo acceda).
       CreateS3: { 'Fn::Equals': [{ Ref: 'S3Mode' }, 'create'] },
+      // Gestionar el DNS desde el stack sólo si se dio una zona (opt-in; el default es no tocar DNS).
+      ManageDns: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
     },
     Resources: {
       VPC: {
@@ -293,6 +298,43 @@ export function buildStackTemplate(): Record<string, unknown> {
         Type: 'AWS::IAM::InstanceProfile',
         Condition: 'CreateS3',
         Properties: { Roles: [{ Ref: 'S3Role' }] },
+      },
+
+      // ---- DNS (condición ManageDns: sólo si se dio una zona Route53) ----
+      // A → mail.dominio, MX → mail, SPF y DMARC. El DKIM NO va acá (la clave se genera en el box al
+      // boot; su registro se agrega después). Un grupo de records = un solo recurso.
+      DnsRecords: {
+        Type: 'AWS::Route53::RecordSetGroup',
+        Condition: 'ManageDns',
+        Properties: {
+          HostedZoneId: { Ref: 'HostedZoneId' },
+          RecordSets: [
+            {
+              Name: { 'Fn::Sub': 'mail.${DomainName}' },
+              Type: 'A',
+              TTL: '300',
+              ResourceRecords: [{ Ref: 'ElasticIP' }],
+            },
+            {
+              Name: { Ref: 'DomainName' },
+              Type: 'MX',
+              TTL: '300',
+              ResourceRecords: [{ 'Fn::Sub': '10 mail.${DomainName}' }],
+            },
+            {
+              Name: { Ref: 'DomainName' },
+              Type: 'TXT',
+              TTL: '300',
+              ResourceRecords: ['"v=spf1 mx -all"'],
+            },
+            {
+              Name: { 'Fn::Sub': '_dmarc.${DomainName}' },
+              Type: 'TXT',
+              TTL: '300',
+              ResourceRecords: ['"v=DMARC1; p=quarantine"'],
+            },
+          ],
+        },
       },
     },
     Outputs: {

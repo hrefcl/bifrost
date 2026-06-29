@@ -3,7 +3,9 @@ import { input, confirm, select, number } from '@inquirer/prompts';
 import { writeFileSync } from 'node:fs';
 import { EC2Client } from '@aws-sdk/client-ec2';
 import { CloudFormationClient } from '@aws-sdk/client-cloudformation';
+import { Route53Client } from '@aws-sdk/client-route-53';
 import { listVpcs, listSubnets } from './aws/vpc.js';
+import { listPublicHostedZones, matchHostedZone } from './aws/route53.js';
 import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
 import { buildStackTemplate, templateToYaml, templateToJson } from './infra/stack-template.js';
@@ -61,6 +63,7 @@ async function main(): Promise<void> {
   let existingSubnetId = '';
   let keyName = '';
   let pem: string | null = null;
+  let hostedZoneId = '';
 
   if (connect) {
     const ec2 = new EC2Client({ region });
@@ -95,11 +98,29 @@ async function main(): Promise<void> {
     });
     const kp = await ensureKeyPair(ec2, { name: keyName, domain });
     pem = kp.privateKeyPem;
+
+    // DNS: si detecto una zona Route53 del dominio, ofrezco gestionar los registros desde el stack.
+    const zones = await listPublicHostedZones(new Route53Client({ region }));
+    const m = matchHostedZone(zones, domain);
+    const zone = m.exact ?? m.parent;
+    if (zone) {
+      const manage = await confirm({
+        message: `Detecté la zona Route53 ${zone.name} (${zone.id}). ¿Creo los registros DNS (A/MX/SPF/DMARC) desde el stack? OJO: si tu zona YA tiene MX/TXT en el dominio puede chocar.`,
+        default: false,
+      });
+      if (manage) hostedZoneId = zone.id;
+    }
   } else {
     keyName = await input({
       message:
         'Nombre de un key pair SSH EXISTENTE en tu cuenta (creá uno en la consola si no tenés)',
     });
+    const hz = await input({
+      message:
+        'Hosted zone Route53 para gestionar el DNS desde el stack — pegá su Id (Enter para omitir y cargar el DNS a mano)',
+      default: '',
+    });
+    hostedZoneId = hz.trim();
   }
 
   // Armar user-data + parámetros + template, y escribir el YAML (el entregable).
@@ -117,6 +138,7 @@ async function main(): Promise<void> {
     useS3,
     existingVpcId: orUndef(existingVpcId),
     existingSubnetId: orUndef(existingSubnetId),
+    hostedZoneId: orUndef(hostedZoneId),
   };
   const params = assembleStackParams(answers);
   const file = `bifrost-stack-${slug(domain)}.yaml`;
@@ -165,7 +187,12 @@ async function main(): Promise<void> {
       if (status === 'CREATE_COMPLETE' || status === 'UPDATE_COMPLETE') {
         const out = await getStackOutputs(cfn, stackName);
         console.log(`\n✓ Listo. IP pública: ${out.PublicIp ?? '(ver en la consola)'}`);
-        printDns(domain, out.PublicIp ?? 'TU_IP');
+        if (hostedZoneId !== '') {
+          console.log('  Los registros DNS (A/MX/SPF/DMARC) se crearon en tu zona Route53.');
+          console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
+        } else {
+          printDns(domain, out.PublicIp ?? 'TU_IP');
+        }
       } else {
         console.log(`\n✗ El stack terminó en ${status}. Revisá los eventos en la consola web.`);
       }

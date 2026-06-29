@@ -101,6 +101,20 @@ describe('buildStackTemplate (CloudFormation)', () => {
     });
   });
 
+  it('gestiona DNS (A/MX/SPF/DMARC) bajo ManageDns; condicional a tener HostedZoneId', () => {
+    expect(t.Resources.DnsRecords?.Condition).toBe('ManageDns');
+    const records = t.Resources.DnsRecords?.Properties.RecordSets as {
+      Type: string;
+      Name: unknown;
+    }[];
+    const types = records.map((r) => r.Type);
+    expect(types).toContain('A');
+    expect(types).toContain('MX');
+    expect(types.filter((x) => x === 'TXT')).toHaveLength(2); // SPF + DMARC
+    // ManageDns es opt-in: por defecto HostedZoneId vacío → no se tocan DNS.
+    expect(t.Parameters.HostedZoneId).toMatchObject({ Default: '' });
+  });
+
   it('outputs exponen la IP pública y el instanceId; serializa a JSON (TemplateBody)', () => {
     expect(Object.keys(t.Outputs)).toEqual(
       expect.arrayContaining(['PublicIp', 'InstanceId', 'VpcId'])
