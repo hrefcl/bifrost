@@ -210,6 +210,19 @@ ningún merge con HIGH abierto o score <9):
   estructurado + counter Prometheus; un evento auditable en DB (no sólo logs) sería más robusto; (4)
   **trustProxy** (B) — el rate-limit por IP del login sólo es confiable detrás de nginx/traefik que
   pisa `X-Forwarded-For`; verificar que el API nunca se exponga directo.
+- **TD-SELFUPDATE-FASE2 (feature, requiere review B/C/D)** — auto-update estilo WordPress de 1 click.
+  La Fase 1 (aviso "hay build N nuevo" en el admin, sólo lectura vía la API de GitHub) ya está. La
+  Fase 2 = APLICAR la actualización (pull de las imágenes + recreate) desde el botón. Diseño propuesto
+  (NO darle el socket de Docker a la API — superficie enorme): un **sidecar updater** chico en el
+  compose (con el socket o el docker CLI) que ESCUCHA un pedido del admin (clave Redis / endpoint
+  interno / archivo en volumen compartido) y ejecuta `docker compose pull web api && up -d web api`
+  desde `/opt/bifrost/deploy/example-mailserver`. La API (admin) sólo SETEA el pedido; el updater
+  ejecuta (privilegio aislado). Consideraciones a revisar: auth del canal API→updater (que no lo
+  dispare cualquiera), versión objetivo (pinear el tag exacto, no `:latest` ciego → reproducible +
+  rollback), healthcheck post-update + rollback automático si el nuevo build no levanta, downtime
+  (~30s, avisar en UI), migraciones de DB que un update pudiera requerir, y que el updater NO pueda ser
+  usado para correr imágenes arbitrarias (validar el repo/tag origen). Topología del box: stack
+  docker-compose en `/opt/bifrost/deploy/example-mailserver`, imágenes `ghcr.io/hrefcl/bifrost/{web,api}`.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
