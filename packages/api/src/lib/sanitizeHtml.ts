@@ -1,9 +1,14 @@
 import sanitize from 'sanitize-html';
 
-// Valor CSS SEGURO: cualquier valor que NO contenga `url(`, `javascript:`, `expression(` ni `<`/`>`.
-// Esto neutraliza el ÚNICO vector real de los estilos inline (`background:url(javascript:…)`,
-// `expression()`) sin tener que enumerar valores válidos. Permite colores/tamaños/fuentes/rgb()/keywords.
-const SAFE_VALUE = /^(?!.*(?:url\s*\(|javascript:|expression\s*\(|<|>))[\s\S]*$/i;
+// Valor CSS SEGURO: rechaza cualquier valor que contenga un vector. Además de `url(`/`javascript:`/
+// `expression(`, BLOQUEA backslash `\` (escapes CSS tipo `\75 rl(` que reconstruyen `url(` y burlan
+// un regex ingenuo) y comentarios `/* */` (tokens partidos `url/**/(…)`), `@import` e `image-set(`.
+// Permite colores/tamaños/fuentes/keywords/rgb()/calc(). [hardening por review B]
+const SAFE_VALUE =
+  /^(?!.*(?:url\s*\(|image-set\s*\(|javascript:|expression\s*\(|@import|\\|\/\*|<|>))[\s\S]*$/i;
+
+// data: SÓLO imágenes RÁSTER (NO svg: un <img src=data:image/svg+xml> puede portar onload/scripts).
+const RASTER_DATA_IMG = /^data:image\/(png|jpe?g|gif|webp|bmp);/i;
 
 // Propiedades CSS permitidas en `style` (todas con el mismo guard SAFE_VALUE). Se EXCLUYE
 // position/top/left/right/bottom/z-index → evita clickjacking (overlays absolutos sobre la UI).
@@ -54,7 +59,6 @@ const STYLE_PROPS = [
   'display',
   'vertical-align',
   'box-shadow',
-  'opacity',
 ];
 const SAFE_STYLES: Record<string, RegExp[]> = Object.fromEntries(
   STYLE_PROPS.map((p) => [p, [SAFE_VALUE]])
@@ -113,8 +117,9 @@ export const defaultOptions: sanitize.IOptions = {
   transformTags: {
     a: sanitize.simpleTransform('a', { target: '_blank', rel: 'noopener noreferrer' }),
     img: (tagName, attribs) => {
-      // data: en <img> sólo si es imagen real; data:text/html (u otros) → se descarta el src.
-      if (attribs.src && /^data:/i.test(attribs.src) && !/^data:image\//i.test(attribs.src)) {
+      // data: en <img> sólo si es imagen RÁSTER (png/jpeg/gif/webp/bmp). Cualquier otro data:
+      // (text/html, image/svg+xml con scripts, etc.) → se descarta el src. [hardening review B]
+      if (attribs.src && /^data:/i.test(attribs.src) && !RASTER_DATA_IMG.test(attribs.src)) {
         const { src: _drop, ...rest } = attribs;
         return { tagName, attribs: rest };
       }
