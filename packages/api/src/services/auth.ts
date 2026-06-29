@@ -78,6 +78,14 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   // El filtro coincide con el índice único ({primaryEmail}); retry ante carrera.
   const before = await User.findOne({ primaryEmail: input.email }).lean();
   const isNew = !before;
+
+  // BOOTSTRAP ADMIN: si en TODA la instalación no hay ningún admin, el usuario que se autentica ahora
+  // queda admin. Garantiza que un deploy siempre tenga un admin por defecto sin paso manual (el
+  // operador self-hosted ES el primer usuario; patrón GitLab/Sentry) y auto-cura un sistema que quedó
+  // sin admin (p.ej. provisioning que creó la 1ª cuenta por login directo, no por el wizard de setup).
+  // Si ya hay admin, los siguientes quedan 'user'. Ventana de carrera (dos primeros logins simultáneos
+  // → ambos admin) es aceptable para un webmail self-hosted de una sola organización.
+  const bootstrapAdmin = !(await User.exists({ role: 'admin' }));
   // `??` sólo cubría undefined: el form de login manda displayName:'' → quedaba vacío y el
   // usuario violaba `required` (rompía cualquier user.save() posterior). Normalizamos: vacío/
   // sólo-espacios cae al prefijo del email.
@@ -92,7 +100,9 @@ export async function loginOrRegister(input: LoginInput): Promise<{
           primaryEmail: input.email,
           displayName,
         },
-        $set: { lastLoginAt: new Date() },
+        // role:'admin' sólo si es el bootstrap (no hay admin aún) — promueve también a un usuario
+        // existente para auto-curar; si ya hay admin, no se toca el rol y el insert cae al default 'user'.
+        $set: { lastLoginAt: new Date(), ...(bootstrapAdmin ? { role: 'admin' as const } : {}) },
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     )
