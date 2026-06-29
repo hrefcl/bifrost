@@ -59,6 +59,23 @@ describe('deployStack', () => {
     expect(action).toBe('updated');
     expect(cfn.commandCalls(CreateStackCommand)).toHaveLength(0);
   });
+
+  it('re-run sin cambios → "unchanged" (idempotente, no error)', async () => {
+    cfn.on(DescribeStacksCommand).resolves({ Stacks: [{ StackName: 'bifrost-acme' } as never] });
+    cfn.on(UpdateStackCommand).rejects(new Error('No updates are to be performed.'));
+    const action = await deployStack(
+      new CloudFormationClient({ region: 'us-east-1' }),
+      deployInput
+    );
+    expect(action).toBe('unchanged');
+  });
+
+  it('RE-LANZA errores que NO son "does not exist" (permisos), no los trata como inexistente', async () => {
+    cfn.on(DescribeStacksCommand).rejects(new Error('AccessDenied: not authorized'));
+    await expect(
+      deployStack(new CloudFormationClient({ region: 'us-east-1' }), deployInput)
+    ).rejects.toThrow(/AccessDenied/);
+  });
 });
 
 describe('getStackOutputs / status / delete', () => {

@@ -13,7 +13,7 @@ import { assembleStackParams, type WizardAnswers } from './wizard/params.js';
 import { deployStack, getStackStatus, getStackOutputs } from './aws/cloudformation.js';
 import { estimateMonthlyCost } from './cost.js';
 import { recommendInstance } from './catalog/instance-types.js';
-import { mailHostname } from './domain.js';
+import { mailHostname, validateDomain } from './domain.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const slug = (s: string): string => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -22,9 +22,10 @@ const orUndef = (s: string): string | undefined => (s === '' ? undefined : s);
 function printDns(domain: string, ip: string): void {
   const host = mailHostname(domain);
   console.log('\nCargá estos registros DNS (en tu zona del dominio):');
-  console.log(`  A     ${host}      → ${ip}`);
-  console.log(`  MX    ${domain}    → ${host} (prioridad 10)`);
-  console.log(`  TXT   ${domain}    → "v=spf1 mx -all"`);
+  console.log(`  A     ${host}        → ${ip}`);
+  console.log(`  A     webmail.${domain} → ${ip}  (la UI web / TLS)`);
+  console.log(`  MX    ${domain}      → ${host} (prioridad 10)`);
+  console.log(`  TXT   ${domain}      → "v=spf1 mx -all"`);
   console.log(`  TXT   _dmarc.${domain} → "v=DMARC1; p=quarantine"`);
   console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
 }
@@ -44,13 +45,26 @@ async function main(): Promise<void> {
   console.log('Bifrost — wizard de instalación (genera un CloudFormation y lo corre)\n');
 
   const domain = await input({ message: 'Dominio de correo (ej. empresa.com)' });
+  if (!validateDomain(domain)) {
+    console.error(`Dominio inválido (FQDN): ${domain}`);
+    process.exit(1);
+  }
   const region = await input({ message: 'Región AWS', default: 'us-east-1' });
+  const stackName = `bifrost-${slug(domain)}`;
   const rec = recommendInstance();
   const instanceType = await input({ message: 'Tipo de EC2', default: rec.type });
   const useS3 = await confirm({
-    message: '¿Crear repositorio S3 cifrado (bajo costo / escalable)?',
-    default: true,
+    message:
+      '¿Crear bucket S3 cifrado? (la APP aún no lo usa — fase futura; crea recursos facturables)',
+    default: false,
   });
+  const sshCidr = await input({
+    message: 'CIDR permitido para SSH (recomendado TU_IP/32; Enter = 0.0.0.0/0 ABIERTO a internet)',
+    default: '0.0.0.0/0',
+  });
+  if (sshCidr === '0.0.0.0/0') {
+    console.log('⚠ SSH quedará ABIERTO a internet (0.0.0.0/0). Considerá restringir a tu IP/32.');
+  }
   const mailboxes = (await number({ message: '¿Cuántos buzones/empleados?', default: 50 })) ?? 50;
 
   const connect = await confirm({
@@ -128,7 +142,8 @@ async function main(): Promise<void> {
     domain,
     mailHostname: mailHostname(domain),
     adminEmail: `admin@${domain}`,
-    useS3,
+    stackName,
+    region,
   });
   const answers: WizardAnswers = {
     domain,
@@ -139,6 +154,7 @@ async function main(): Promise<void> {
     existingVpcId: orUndef(existingVpcId),
     existingSubnetId: orUndef(existingSubnetId),
     hostedZoneId: orUndef(hostedZoneId),
+    sshCidr,
   };
   const params = assembleStackParams(answers);
   const file = `bifrost-stack-${slug(domain)}.yaml`;
@@ -164,7 +180,6 @@ async function main(): Promise<void> {
       `(comercial a $7: ~$${String(mailboxes * 7)}/mes)`
   );
 
-  const stackName = `bifrost-${slug(domain)}`;
   if (connect) {
     const run = await confirm({
       message: '¿Corro el stack AHORA? (crea recursos REALES y factura)',
@@ -177,9 +192,16 @@ async function main(): Promise<void> {
         templateBody: templateToJson(buildStackTemplate()),
         params,
       });
-      console.log(`\nStack ${action}: ${stackName}. Esperando a que termine…`);
+      console.log(`\nStack ${action}: ${stackName}. Esperando (puede tardar ~10–15 min)…`);
+      // Polling con TIMEOUT (no colgar para siempre) y aviso de ROLLBACK.
+      const deadline = Date.now() + 30 * 60 * 1000; // 30 min
       let status = (await getStackStatus(cfn, stackName)) ?? 'UNKNOWN';
-      while (status.endsWith('IN_PROGRESS')) {
+      let rollbackWarned = false;
+      while (status.endsWith('IN_PROGRESS') && Date.now() < deadline) {
+        if (status.includes('ROLLBACK') && !rollbackWarned) {
+          console.log('  ⚠ ROLLBACK en curso — algo falló; CloudFormation está revirtiendo.');
+          rollbackWarned = true;
+        }
         await sleep(10_000);
         status = (await getStackStatus(cfn, stackName)) ?? 'UNKNOWN';
         console.log(`  estado: ${status}`);
@@ -188,11 +210,20 @@ async function main(): Promise<void> {
         const out = await getStackOutputs(cfn, stackName);
         console.log(`\n✓ Listo. IP pública: ${out.PublicIp ?? '(ver en la consola)'}`);
         if (hostedZoneId !== '') {
-          console.log('  Los registros DNS (A/MX/SPF/DMARC) se crearon en tu zona Route53.');
+          console.log(
+            '  Los registros DNS (A/MX/webmail/SPF/DMARC) se crearon en tu zona Route53.'
+          );
           console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
         } else {
           printDns(domain, out.PublicIp ?? 'TU_IP');
         }
+        console.log(
+          '\n⚠ AWS bloquea el puerto 25 SALIENTE por defecto en cuentas nuevas: vas a RECIBIR' +
+            ' correo pero NO ENVIAR hasta pedir el desbloqueo a soporte AWS.'
+        );
+        console.log('⚠ Falta crear los buzones y el DKIM en el servidor (SSH al box) — fase F-E5.');
+      } else if (status.endsWith('IN_PROGRESS')) {
+        console.log(`\n⏱ Timeout de espera; el stack sigue en ${status}. Seguí en la consola web.`);
       } else {
         console.log(`\n✗ El stack terminó en ${status}. Revisá los eventos en la consola web.`);
       }

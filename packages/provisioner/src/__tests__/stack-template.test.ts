@@ -77,17 +77,14 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(t.Resources.Instance?.Properties.UserData).toHaveProperty('Fn::Base64');
   });
 
-  it('crea S3 cifrado + KMS + rol IAM bajo CreateS3; la instancia usa el perfil por rol', () => {
-    for (const r of [
-      'KmsKey',
-      'KmsAlias',
-      'S3Bucket',
-      'S3BucketPolicy',
-      'S3Role',
-      'InstanceProfile',
-    ]) {
+  it('S3/KMS + S3AccessPolicy son condicionales; el rol/perfil IAM están SIEMPRE (para cfn-signal)', () => {
+    for (const r of ['KmsKey', 'KmsAlias', 'S3Bucket', 'S3BucketPolicy', 'S3AccessPolicy']) {
       expect(t.Resources[r]?.Condition, r).toBe('CreateS3');
     }
+    // El rol y el perfil NO son condicionales: la instancia siempre necesita el perfil para cfn-signal.
+    expect(t.Resources.InstanceRole?.Condition).toBeUndefined();
+    expect(t.Resources.InstanceProfile?.Condition).toBeUndefined();
+    expect(t.Resources.Instance?.Properties.IamInstanceProfile).toEqual({ Ref: 'InstanceProfile' });
     const enc = (
       t.Resources.S3Bucket?.Properties.BucketEncryption as {
         ServerSideEncryptionConfiguration: {
@@ -96,9 +93,22 @@ describe('buildStackTemplate (CloudFormation)', () => {
       }
     ).ServerSideEncryptionConfiguration[0]?.ServerSideEncryptionByDefault.SSEAlgorithm;
     expect(enc).toBe('aws:kms');
-    expect(t.Resources.Instance?.Properties.IamInstanceProfile).toEqual({
-      'Fn::If': ['CreateS3', { Ref: 'InstanceProfile' }, { Ref: 'AWS::NoValue' }],
+  });
+
+  it('endurecimiento: IMDSv2 requerido, EBS NO se borra al terminar, CreationPolicy presente', () => {
+    expect(t.Resources.Instance?.Properties.MetadataOptions).toEqual({
+      HttpEndpoint: 'enabled',
+      HttpTokens: 'required',
     });
+    const ebs = (
+      t.Resources.Instance?.Properties.BlockDeviceMappings as {
+        Ebs: { DeleteOnTermination: boolean };
+      }[]
+    )[0]?.Ebs;
+    expect(ebs?.DeleteOnTermination).toBe(false); // no destruir los buzones al terminar
+    expect(
+      (t.Resources.Instance as unknown as { CreationPolicy?: unknown }).CreationPolicy
+    ).toBeTruthy();
   });
 
   it('gestiona DNS (A/MX/SPF/DMARC) bajo ManageDns; condicional a tener HostedZoneId', () => {

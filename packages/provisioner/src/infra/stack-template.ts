@@ -134,12 +134,17 @@ export function buildStackTemplate(): Record<string, unknown> {
       },
       Instance: {
         Type: 'AWS::EC2::Instance',
+        // CreationPolicy: CREATE_COMPLETE sólo cuando el user-data señaliza éxito (cfn-signal). Sin
+        // esto, el stack reporta éxito aunque el bootstrap del mailserver falle (falso OK).
+        CreationPolicy: { ResourceSignal: { Count: 1, Timeout: 'PT15M' } },
         Properties: {
           ImageId: { Ref: 'ImageId' },
           InstanceType: { Ref: 'InstanceType' },
           KeyName: { Ref: 'KeyName' },
           SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
           SecurityGroupIds: [{ Ref: 'SecurityGroup' }],
+          // IMDSv2 obligatorio (HttpTokens required) — cierra el SSRF a credenciales de IMDSv1.
+          MetadataOptions: { HttpEndpoint: 'enabled', HttpTokens: 'required' },
           BlockDeviceMappings: [
             {
               DeviceName: '/dev/sda1',
@@ -147,15 +152,15 @@ export function buildStackTemplate(): Record<string, unknown> {
                 VolumeSize: { Ref: 'EbsSizeGiB' },
                 VolumeType: 'gp3',
                 Encrypted: true,
-                DeleteOnTermination: true,
+                // FALSE a propósito: el maildir/datos viven en este volumen. Borrarlo al terminar la
+                // instancia destruiría TODOS los buzones. (Teardown deja el volumen; se borra a mano.)
+                DeleteOnTermination: false,
               },
             },
           ],
           UserData: { 'Fn::Base64': { Ref: 'UserData' } },
-          // Perfil IAM SÓLO si hay S3: da acceso al bucket+CMK por ROL (sin claves estáticas).
-          IamInstanceProfile: {
-            'Fn::If': ['CreateS3', { Ref: 'InstanceProfile' }, { Ref: 'AWS::NoValue' }],
-          },
+          // Perfil IAM SIEMPRE presente: la base permite cfn-signal; con S3 suma acceso bucket+CMK.
+          IamInstanceProfile: { Ref: 'InstanceProfile' },
           Tags: [...projectTags, { Key: 'Name', Value: { Ref: 'DomainName' } }],
         },
       },
@@ -242,21 +247,15 @@ export function buildStackTemplate(): Record<string, unknown> {
                 ],
                 Condition: { Bool: { 'aws:SecureTransport': 'false' } },
               },
-              {
-                Sid: 'DenyUnencryptedPut',
-                Effect: 'Deny',
-                Principal: '*',
-                Action: 's3:PutObject',
-                Resource: { 'Fn::Sub': '${S3Bucket.Arn}/*' },
-                Condition: { StringNotEquals: { 's3:x-amz-server-side-encryption': 'aws:kms' } },
-              },
+              // NOTA: no se deniega el PUT sin header de cifrado — el bucket ya tiene default
+              // encryption SSE-KMS (todo objeto queda cifrado en reposo). Denegar por el header
+              // rompería clientes que confían en el default encryption (hallazgo B/D).
             ],
           },
         },
       },
-      S3Role: {
+      InstanceRole: {
         Type: 'AWS::IAM::Role',
-        Condition: 'CreateS3',
         Properties: {
           AssumeRolePolicyDocument: {
             Version: '2012-10-17',
@@ -268,24 +267,20 @@ export function buildStackTemplate(): Record<string, unknown> {
               },
             ],
           },
+          // Base SIEMPRE: sólo cfn-signal sobre ESTE stack (mínimo privilegio).
           Policies: [
             {
-              PolicyName: 'bifrost-s3-kms',
+              PolicyName: 'bifrost-base',
               PolicyDocument: {
                 Version: '2012-10-17',
                 Statement: [
                   {
                     Effect: 'Allow',
-                    Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
-                    Resource: [
-                      { 'Fn::GetAtt': ['S3Bucket', 'Arn'] },
-                      { 'Fn::Sub': '${S3Bucket.Arn}/*' },
-                    ],
-                  },
-                  {
-                    Effect: 'Allow',
-                    Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey'],
-                    Resource: { 'Fn::GetAtt': ['KmsKey', 'Arn'] },
+                    Action: 'cloudformation:SignalResource',
+                    Resource: {
+                      'Fn::Sub':
+                        'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*',
+                    },
                   },
                 ],
               },
@@ -294,10 +289,36 @@ export function buildStackTemplate(): Record<string, unknown> {
           Tags: projectTags,
         },
       },
+      // Acceso al bucket+CMK SÓLO si hay S3 (policy condicional adjunta al mismo rol).
+      S3AccessPolicy: {
+        Type: 'AWS::IAM::Policy',
+        Condition: 'CreateS3',
+        Properties: {
+          PolicyName: 'bifrost-s3-kms',
+          Roles: [{ Ref: 'InstanceRole' }],
+          PolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
+                Resource: [
+                  { 'Fn::GetAtt': ['S3Bucket', 'Arn'] },
+                  { 'Fn::Sub': '${S3Bucket.Arn}/*' },
+                ],
+              },
+              {
+                Effect: 'Allow',
+                Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey'],
+                Resource: { 'Fn::GetAtt': ['KmsKey', 'Arn'] },
+              },
+            ],
+          },
+        },
+      },
       InstanceProfile: {
         Type: 'AWS::IAM::InstanceProfile',
-        Condition: 'CreateS3',
-        Properties: { Roles: [{ Ref: 'S3Role' }] },
+        Properties: { Roles: [{ Ref: 'InstanceRole' }] },
       },
 
       // ---- DNS (condición ManageDns: sólo si se dio una zona Route53) ----
@@ -311,6 +332,13 @@ export function buildStackTemplate(): Record<string, unknown> {
           RecordSets: [
             {
               Name: { 'Fn::Sub': 'mail.${DomainName}' },
+              Type: 'A',
+              TTL: '300',
+              ResourceRecords: [{ Ref: 'ElasticIP' }],
+            },
+            {
+              // webmail.<dominio> → la UI web (Traefik/Bifrost lo usan para front + TLS).
+              Name: { 'Fn::Sub': 'webmail.${DomainName}' },
               Type: 'A',
               TTL: '300',
               ResourceRecords: [{ Ref: 'ElasticIP' }],

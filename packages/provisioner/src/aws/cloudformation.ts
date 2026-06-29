@@ -16,13 +16,19 @@ function toCfnParams(params: StackParameter[]): { ParameterKey: string; Paramete
   return params.map((p) => ({ ParameterKey: p.key, ParameterValue: p.value }));
 }
 
+/** True si el mensaje de error de CloudFormation indica que el stack no existe (vs otro error). */
+function isDoesNotExist(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return /does not exist/i.test(msg);
+}
+
 export async function stackExists(cfn: CloudFormationClient, stackName: string): Promise<boolean> {
   try {
     const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
     return (res.Stacks ?? []).length > 0;
-  } catch {
-    // ValidationError "Stack does not exist" → no existe.
-    return false;
+  } catch (err) {
+    if (isDoesNotExist(err)) return false;
+    throw err; // permisos/throttling/red NO deben interpretarse como "no existe"
   }
 }
 
@@ -41,17 +47,25 @@ export interface DeployStackInput {
 export async function deployStack(
   cfn: CloudFormationClient,
   input: DeployStackInput
-): Promise<'created' | 'updated'> {
+): Promise<'created' | 'updated' | 'unchanged'> {
   if (await stackExists(cfn, input.stackName)) {
-    await cfn.send(
-      new UpdateStackCommand({
-        StackName: input.stackName,
-        TemplateBody: input.templateBody,
-        Parameters: toCfnParams(input.params),
-        Capabilities: ['CAPABILITY_NAMED_IAM'],
-      })
-    );
-    return 'updated';
+    try {
+      await cfn.send(
+        new UpdateStackCommand({
+          StackName: input.stackName,
+          TemplateBody: input.templateBody,
+          Parameters: toCfnParams(input.params),
+          Capabilities: ['CAPABILITY_NAMED_IAM'],
+        })
+      );
+      return 'updated';
+    } catch (err) {
+      // UpdateStack sin diferencias tira ValidationError "No updates are to be performed" — eso es
+      // un re-run idempotente, NO un fallo. Cualquier otro error sí se propaga.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (/No updates are to be performed/i.test(msg)) return 'unchanged';
+      throw err;
+    }
   }
   await cfn.send(
     new CreateStackCommand({
@@ -87,7 +101,13 @@ export async function getStackOutputs(
   cfn: CloudFormationClient,
   stackName: string
 ): Promise<Record<string, string | undefined>> {
-  const res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+  let res;
+  try {
+    res = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+  } catch (err) {
+    if (isDoesNotExist(err)) return {}; // stack borrado (p.ej. OnFailure: DELETE) → sin outputs
+    throw err;
+  }
   const out: Record<string, string> = {};
   for (const o of res.Stacks?.[0]?.Outputs ?? []) {
     if (o.OutputKey && o.OutputValue) out[o.OutputKey] = o.OutputValue;
