@@ -50,7 +50,10 @@ services:
       - ./mailstate:/var/mail-state
       - ./maillogs:/var/log/mail
       - ./config:/tmp/docker-mailserver
-      - ./letsencrypt:/etc/letsencrypt:ro
+      # NO :ro — DMS con SSL_TYPE=letsencrypt EXTRAE el cert del acme.json de Traefik y lo ESCRIBE en
+      # /etc/letsencrypt/live/<dominio>/; con el montaje read-only crashea en loop ("Read-only file
+      # system" al crear live/). Comparte el volumen con Traefik (que escribe acme.json). [deploy real]
+      - ./letsencrypt:/etc/letsencrypt
       - /etc/localtime:/etc/localtime:ro
     environment:
       - OVERRIDE_HOSTNAME=mail.example.com
