@@ -210,6 +210,17 @@ ningún merge con HIGH abierto o score <9):
   estructurado + counter Prometheus; un evento auditable en DB (no sólo logs) sería más robusto; (4)
   **trustProxy** (B) — el rate-limit por IP del login sólo es confiable detrás de nginx/traefik que
   pisa `X-Forwarded-For`; verificar que el API nunca se exponga directo.
+- **TD-SELFUPDATE-SCALE (LOW/escala, review C 7.5/D 6)** — el chequeo de actualización (Fase 1) ya tiene
+  cache L1+L2 (Redis compartido) + TTL-corto-en-fallo + REPO validado. Residuales para escala 10x /
+  resiliencia, NO bloqueantes para single-box: (1) **token GitHub opcional** (`UPDATE_GH_TOKEN` PAT →
+  5000/h en vez de 60/h no-auth) — el fix de raíz del rate-limit si hay MUCHAS réplicas/instalaciones
+  tras un mismo IP; (2) el **piso de force es por-réplica** (in-memory) → un admin clickeando "Buscar
+  ahora" en round-robin puede pegarle a N réplicas; un lock NX en Redis lo haría cluster-wide; (3)
+  respetar `X-RateLimit-Reset`/`Retry-After` para backoff real (hoy reintenta cada 60s); (4) `WORKFLOW
+  = 'docker.yml'` hardcodeado → si renombran el archivo, 404 silencioso y todas las instalaciones dejan
+  de chequear sin alerta → env-config `UPDATE_WORKFLOW` + log.warn en 404 persistente; (5) subtleza: si
+  el job `smoke` falla con `build` OK (igual pusheó `:latest`), el run queda `conclusion=failure` → el
+  check sub-reporta (nunca falso-positivo) → consultar la conclusion del job `build`, no del run.
 - **TD-SELFUPDATE-FASE2 (feature, requiere review B/C/D)** — auto-update estilo WordPress de 1 click.
   La Fase 1 (aviso "hay build N nuevo" en el admin, sólo lectura vía la API de GitHub) ya está. La
   Fase 2 = APLICAR la actualización (pull de las imágenes + recreate) desde el botón. Diseño propuesto
