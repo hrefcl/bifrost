@@ -147,6 +147,20 @@ export default function emailRoutes(fastify: FastifyInstance) {
     return { data: emails.map(serializeEmail) };
   });
 
+  // Todos los mensajes de un hilo (conversación), de las cuentas del usuario, ordenados cronológico.
+  // Scopeado por accountId del usuario (multi-tenant). El threadId va URL-encoded por el cliente.
+  fastify.get('/thread/:threadId', async (request) => {
+    const { threadId } = request.params as { threadId: string };
+    if (!threadId.trim()) return { data: [] };
+    const accounts = await Account.find({ userId: request.user.userId }).select('_id');
+    const accountIds = accounts.map((a) => a._id);
+    if (accountIds.length === 0) return { data: [] };
+    const emails = await Email.find({ accountId: { $in: accountIds }, threadId })
+      .sort({ date: 1 })
+      .limit(200);
+    return { data: emails.map(serializeEmail) };
+  });
+
   fastify.get('/:emailId', async (request) => {
     const { emailId } = request.params as { emailId: string };
     objectIdSchema.parse(emailId);

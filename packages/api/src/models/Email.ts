@@ -91,6 +91,11 @@ EmailSchema.index({ accountId: 1, folderId: 1, uid: 1 }, { unique: true });
 // Índice ESR principal: Equality → Sort → Range
 EmailSchema.index({ accountId: 1, folderId: 1, date: -1, uid: -1 });
 EmailSchema.index({ accountId: 1, threadId: 1, date: -1 });
+// Threading (services/threading.ts): buscar emails conectados por su Message-ID, In-Reply-To o
+// References (multikey) dentro de una cuenta. Sin estos índices, el union de cada ingest sería un scan.
+EmailSchema.index({ accountId: 1, messageId: 1 });
+EmailSchema.index({ accountId: 1, inReplyTo: 1 });
+EmailSchema.index({ accountId: 1, references: 1 });
 EmailSchema.index({ accountId: 1, 'flags.seen': 1, folderId: 1 });
 EmailSchema.index({ accountId: 1, 'from.address': 1, date: -1 });
 // Pospuestos: buscar por usuario (cuenta) los que siguen en snooze (sirve a GET /emails/snoozed,

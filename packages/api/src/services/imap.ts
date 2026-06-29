@@ -8,6 +8,7 @@ import PostalMime from 'postal-mime';
 import type { IAccount } from '../models/Account.js';
 import { Folder } from '../models/Folder.js';
 import { Email } from '../models/Email.js';
+import { computeThreadId, parseReferences } from './threading.js';
 import { redis } from '../config/redis.js';
 import { createImapClient } from './mail-transport.js';
 
@@ -259,6 +260,9 @@ async function syncFolderHeadersInner(account: IAccount, folderId: string): Prom
         internalDate: true,
         envelope: true,
         bodyStructure: true,
+        // El ENVELOPE trae messageId + inReplyTo pero NO References (no es parte del ENVELOPE IMAP).
+        // Se pide el header explícito para el threading de conversaciones (ver services/threading.ts).
+        headers: ['references'],
       };
 
       // uidNext del servidor (próximo UID a asignar): se persiste como estado del folder.
@@ -498,6 +502,13 @@ async function upsertMessage(
       n.disposition === 'attachment' || n.type === 'application/octet-stream'
   );
 
+  // Threading: References viene del header pedido (msg.headers, sólo trae ese header → matchear los
+  // <...> alcanza). El threadId se calcula adoptando/mergeando el hilo de los emails ya conectados.
+  const messageId = env?.messageId ?? `unknown-${String(msg.uid)}`;
+  const inReplyTo = env?.inReplyTo ?? undefined;
+  const references = parseReferences(msg.headers?.toString('utf8'));
+  const threadId = await computeThreadId(account._id.toString(), messageId, inReplyTo, references);
+
   const doc = await Email.findOneAndUpdate(
     {
       accountId: account._id.toString(),
@@ -508,10 +519,10 @@ async function upsertMessage(
       accountId: account._id.toString(),
       folderId: folder._id.toString(),
       uid: msg.uid,
-      messageId: env?.messageId ?? `unknown-${String(msg.uid)}`,
-      inReplyTo: env?.inReplyTo,
-      references: undefined,
-      threadId: undefined,
+      messageId,
+      inReplyTo,
+      references,
+      threadId,
       from,
       replyTo,
       to,
