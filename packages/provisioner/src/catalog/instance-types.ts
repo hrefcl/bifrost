@@ -57,7 +57,9 @@ export function recommendInstance(): InstanceTypeInfo {
  * Arquitectura de CUALQUIER tipo de instancia (incluido un override x86 fuera del catálogo). Las
  * familias Graviton llevan el sufijo `g` en la familia (t4g, m6g, c7g, r6gd, c6gn…) → arm64; el
  * resto (t3, m5, c6i…) → amd64. Sirve para pasar el AMI SSM correcto y no terminar con un mismatch
- * instancia↔AMI (arm64 image en x86 host = la instancia no bootea).
+ * instancia↔AMI (arm64 image en x86 host = la instancia no bootea). Distingue bien g5 (x86, NVIDIA)
+ * de g5g (Graviton) y g4dn (x86) de t4g (Graviton). Único falso negativo conocido: `a1` (Graviton1,
+ * sin `g` en la familia) → se clasifica amd64; es una familia deprecada y el catálogo no la ofrece. [D]
  */
 export function archForInstanceType(type: string): CpuArch {
   return /^[a-z]+\d+g[a-z]*\./i.test(type) ? 'arm64' : 'amd64';

@@ -37,6 +37,14 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(t.Parameters.S3Mode).toMatchObject({ Default: 'none' });
   });
 
+  it('los defaults de InstanceType e ImageId son arch-consistentes (deploy pelado no rompe) [D]', () => {
+    // Un deploy sin wizard usa ambos defaults juntos: deben ser la MISMA arch o la instancia no bootea.
+    const instType = (t.Parameters.InstanceType as { Default: string }).Default;
+    const imageId = (t.Parameters.ImageId as { Default: string }).Default;
+    expect(instType).toMatch(/^t4g\./); // Graviton
+    expect(imageId).toContain('/arm64/'); // AMI arm64 → coincide con t4g
+  });
+
   it('crea TODA la red bajo la condición CreateNetwork (cuenta nueva sin VPC)', () => {
     for (const r of [
       'VPC',

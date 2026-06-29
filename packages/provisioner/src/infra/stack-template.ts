@@ -33,7 +33,10 @@ export function buildStackTemplate(): Record<string, unknown> {
     Description: 'Bifrost all-in-one (docker-mailserver + webmail) — VPC opcional, EC2, EIP.',
     Parameters: {
       DomainName: { Type: 'String', Description: 'Dominio de correo (ej. empresa.com)' },
-      InstanceType: { Type: 'String', Default: 't3.large' },
+      // Default Graviton t4g.large → DEBE coincidir con la arch del ImageId default (arm64). Un deploy
+      // "pelado" (sin wizard) usa ambos defaults juntos; si divergen (p.ej. t3 x86 + AMI arm64) la
+      // instancia NO bootea. El wizard pasa InstanceType+ImageId emparejados por arch. [hallazgo D]
+      InstanceType: { Type: 'String', Default: 't4g.large' },
       // CloudFormation resuelve el AMI Ubuntu más reciente EN EL DEPLOY desde el parámetro público de
       // Canonical (por región). Así el modo SIN-CLAVES no necesita resolver el AMI (no hay llamada AWS)
       // y siempre se usa la imagen parcheada al día. El CLI no necesita pasar ImageId.
