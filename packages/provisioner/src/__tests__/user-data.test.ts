@@ -34,6 +34,9 @@ describe('buildUserData (cloud-init)', () => {
     // El clone usa la var validada; fast-fail de formato antes de clonar (mensaje claro vs git críptico).
     expect(s).toContain('git check-ref-format --allow-onelevel "$REF"');
     expect(s).toContain('git clone --depth 1 --branch "$REF"');
+    // Un ref inválido debe avisar a CFN YA (signal_fail), no esperar al timeout del CreationPolicy: el
+    // `|| { ... }` maneja el error y NO dispara el trap ERR, así que el signal va explícito. [B-MED]
+    expect(s).toMatch(/check-ref-format[^\n]*\|\|[^\n]*signal_fail; exit 1/);
     // Override: un release tag conocido-bueno → provisión reproducible, no main HEAD.
     const pinned = buildUserData({ ...base, ref: 'v1.2.0' });
     expect(pinned).toContain('REF="v1.2.0"');

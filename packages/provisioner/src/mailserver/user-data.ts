@@ -76,10 +76,13 @@ for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
-# REF = branch o tag de release (NO un SHA suelto: --branch sólo resuelve nombres de ref). Validar el
-# FORMATO antes de clonar da un fallo claro (vs un error críptico de git) → el trap ERR lo señaliza.
+# REF = NOMBRE CORTO de branch o tag de release (p.ej. main, v1.2.0). NO un SHA suelto ni un ref
+# completo (refs/tags/...): --branch sólo resuelve nombres cortos. Validar el FORMATO antes de clonar
+# da un fallo claro (vs error críptico de git). OJO: el '|| { ... }' MANEJA el error, así que el trap
+# ERR NO dispara aquí → hay que llamar signal_fail explícito para avisarle a CFN ya (sin esto, CFN
+# caería recién por timeout del CreationPolicy, 15 min). [B-MED]
 REF="${sh(ref)}"
-git check-ref-format --allow-onelevel "$REF" || { echo "ERROR: ref de git inválido: $REF" >&2; exit 1; }
+git check-ref-format --allow-onelevel "$REF" || { echo "ERROR: ref de git inválido (usá nombre corto de branch/tag, no refs/...): $REF" >&2; signal_fail; exit 1; }
 # --branch fija el ref (release conocido-bueno o branch); --depth 1 = clon superficial.
 git clone --depth 1 --branch "$REF" "${sh(repo)}" /opt/bifrost
 cd /opt/bifrost/deploy/example-mailserver
