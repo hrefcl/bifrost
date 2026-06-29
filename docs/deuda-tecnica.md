@@ -196,10 +196,10 @@ ningún merge con HIGH abierto o score <9):
   (escapado anti-inyección), default `main`. Tests en `user-data.test.ts`. **Pendiente (cuando exista
   el sistema de releases que pidió el PM):** que el wizard pase el ÚLTIMO TAG de release en vez de
   `main` → provisión reproducible. Hoy default `main` = sin cambio de comportamiento (no hay releases).
-  Revisión B 8/10 0-HIGH: fast-fail con `git check-ref-format` + `signal_fail` explícito (un ref
-  inválido avisa a CFN YA, no por timeout de 15 min del CreationPolicy). Edge cubierto en doc/test:
-  `ref` debe ser NOMBRE CORTO (main/v1.2.0), NO `refs/tags/...` (pasa check-ref-format pero
-  `clone --branch` lo rechaza). Reproducibilidad fuerte (B-LOW): los tags no son inmutables → para
+  Revisión B **9.5/10 0-HIGH (APPROVED)**: fast-fail con `git check-ref-format` + `signal_fail` explícito
+  (un ref inválido avisa a CFN YA, no por timeout de 15 min del CreationPolicy) + guard
+  `case "$REF" in refs/*)` que rechaza la forma totalmente-calificada ANTES del clone (permite nombres
+  cortos con slash como `release/1.2`). D 8/10 APPROVE; C TEAM_UNAVAILABLE (z.ai 529). Reproducibilidad fuerte (B-LOW): los tags no son inmutables → para
   garantía dura, proteger el tag o verificar tag/commit firmado.
 - **TD-PROVISION-SED-ESCAPE (LOW, defensa en profundidad)** — los valores domain/mailHostname/
   adminEmail se escapan para bash (`sh()`) pero se usan como **reemplazo en `sed`**; `/ & \` romperían
