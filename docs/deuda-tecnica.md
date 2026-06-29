@@ -175,14 +175,17 @@ ningún merge con HIGH abierto o score <9):
 - **TD-IMG-PRIVACY (MEDIUM)** — `autoLoadImages`/`blockRemoteContentUnknown` existen en
   `UserPreferences` pero NO se enforcan → imágenes remotas siempre cargan (tracking pixels).
   Enforcement = sanear `img src` según preferencia + toggle "cargar imágenes" en la UI.
-- **TD-EMAIL-IFRAME-SANDBOX — HECHO (iframe sandbox implementado)** — al permitir HTML rico (firmas/newsletters),
-  `sanitizeEmailHtml` ahora acepta `style` con un guard regex (`SAFE_VALUE` bloquea url(/javascript:/
-  expression(/escapes `\`/comentarios `/*`) + atributos de tabla + data:image ráster. Los bypasses
-  concretos están cerrados (21 tests, B 6→re-validando, D 4→8 APRUEBA), pero la defensa por regex
-  negativo es **frágil por diseño** (un protocolo/función CSS no listado podría pasar). El render del
-  cuerpo es `v-html` + CSP `script-src 'self'`. Mejora robusta: renderizar el email en un **iframe
-  sandbox** (`sandbox` sin `allow-scripts`, srcdoc) — aísla el HTML del email del DOM de la app, como
-  ya hace `lib/print-email.ts`. Cierra la categoría entera de mXSS/CSS-redress sin depender del regex.
+- **TD-EMAIL-IFRAME-SANDBOX — HECHO + endurecido (review B/C/D)** — el cuerpo del email se renderiza en
+  un **iframe sandbox** (`EmailBodyFrame.vue`, `sandbox` sin `allow-scripts`, srcdoc) → aísla el HTML
+  del email del DOM de la app y cierra la categoría entera de mXSS/CSS-redress sin depender del regex
+  del sanitizador. Review C 8/10 (sin HIGH): cero ejecución de JS confirmada. Cierres del review:
+  CSP en el srcdoc (`script-src 'none'` + `base-uri/object-src/form-action 'none'`); altura capeada a
+  24000px con scroll interno (evita DoS de layout por `height:500000px`); invariante documentado
+  (NUNCA `allow-scripts` + `allow-same-origin`); reverse-tabnabbing ya cerrado en backend
+  (`sanitizeHtml` fuerza `rel=noopener noreferrer`); CSRF-GET descartado (no hay GET que mute estado);
+  CSP también en `print-email.ts`. **Residual LOW (largo plazo): origen-sandbox separado** para el
+  render del email → elimina del todo el `allow-same-origin` (modelo Gmail con dominio aislado). No es
+  HIGH: hoy no hay JS en el iframe que pueda abusar del mismo-origen.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
