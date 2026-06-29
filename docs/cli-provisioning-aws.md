@@ -231,7 +231,14 @@ de F-E3.
 
 ---
 
-## Hallazgos B/C/D pendientes (revisión externa, 2026-06) — bloquean cierre de fase
+## Hallazgos B/C/D (revisión externa, 2026-06) — RESUELTOS · deploy APPROVED 9/10
+
+> **Cierre (re-validación B/Codex):** deploy **9/10, 0 HIGH abiertos → APPROVED**. Los 2 HIGH de B
+> (TLS de `mail.<dominio>` vía router Traefik→acme.json de DMS; wiring del login con toggle
+> TLS/STARTTLS + 465/143) quedan RESUELTOS a nivel config. D(Kimi) marcó el TLS NO-RESUELTO →
+> **falso positivo refutado** con docs oficiales de DMS. C(z) TEAM_UNAVAILABLE (z.ai 529). Sólo
+> resta verificación en box real (emisión ACME, DKIM, entregabilidad SMTP) = **F-E5**, que corre el PM.
+
 
 La auditoría real B(Codex)+D(Kimi) sobre el provisioner destapó ~9 HIGH que las auto-auditorías no
 vieron (no se había cruzado el contrato real de `deploy/example-mailserver/docker-compose.yml`).
