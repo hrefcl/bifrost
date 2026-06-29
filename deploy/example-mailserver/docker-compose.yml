@@ -58,10 +58,20 @@ services:
       - ENABLE_OPENDKIM=1
       - ENABLE_OPENDMARC=1
       - ENABLE_POLICYD_SPF=1
-      - SSL_TYPE=letsencrypt
+      - SSL_TYPE=letsencrypt # DMS lee el cert del ./letsencrypt/acme.json de Traefik (montado arriba)
+      - SSL_DOMAIN=mail.example.com # ← el FQDN cuyo cert busca en acme.json
       - ONE_DIR=1
       - PERMIT_DOCKER=network
     cap_add: [NET_ADMIN, SYS_PTRACE]
+    labels:
+      # Router "de emisión": sin un router que demande Host(mail.<dominio>), Traefik NO pide ese
+      # cert y DMS se queda sin TLS (hallazgo HIGH de B). Esto fuerza la emisión ACME del host; el
+      # servicio es un placeholder (lo que importa es disparar el challenge para mail.<dominio>).
+      - traefik.enable=true
+      - traefik.http.routers.mailcert.rule=Host(`mail.example.com`)
+      - traefik.http.routers.mailcert.entrypoints=websecure
+      - traefik.http.routers.mailcert.tls.certresolver=letsencrypt
+      - traefik.http.services.mailcert.loadbalancer.server.port=8080
     networks: [mailnet]
 
   # --- Datos de Bifrost -------------------------------------------------------

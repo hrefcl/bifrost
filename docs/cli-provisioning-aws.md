@@ -240,15 +240,24 @@ firmado en user-data, DNS `webmail`, CreationPolicy+cfn-signal+readiness, EBS no
 deployStack idempotente, catches acotados, poll timeout/rollback, bucket policy, SSH CIDR, S3 off,
 nginx↔servicio (api/web), SPF ~all, 465/143 publicados.
 
-**ABIERTOS (HIGH, son F-E5/F-E6 — "que el correo fluya de verdad"):**
-- **TLS del mail server (`mail.<dominio>`)**: Traefik sólo emite cert para `webmail.<dominio>` (su
-  router); `docker-mailserver` con `SSL_TYPE=letsencrypt` espera certs en layout certbot, NO el
-  `acme.json` de Traefik → IMAPS/SMTP quedarían sin cert válido. Requiere la integración
-  DMS↔Traefik (extracción de cert / router para `mail`). [B HIGH]
-- **Wiring webmail↔mailserver local**: el login del webmail default apunta a Gmail (465/secure) y la
-  UI no togglea STARTTLS; el README dice que "ya apunta" al mailserver pero no. Hay que prefijar el
-  login al `mail.<dominio>` local y/o exponer el toggle. [B HIGH]
-- **Cuentas + DKIM post-boot** (ya registrado): SSH al box → `setup email add` + `setup config dkim`
-  + publicar el TXT DKIM + verificar entregabilidad. [D MEDIUM]
+**RESUELTOS A NIVEL CONFIG (pendiente verificación en box real — F-E5):**
+- **TLS del mail server (`mail.<dominio>`)** [B HIGH]: se añadió un **router Traefik `mailcert`** en el
+  servicio `mailserver` (`Host(mail.<dominio>)` + `tls.certresolver=letsencrypt`) que **fuerza la
+  emisión ACME** de ese FQDN. `docker-mailserver` con `SSL_TYPE=letsencrypt` + `SSL_DOMAIN=mail.<dominio>`
+  **lee el `acme.json` de Traefik** (montado en `/etc/letsencrypt/acme.json:ro` vía el volumen
+  compartido `./letsencrypt`) y extrae el cert — patrón soportado oficialmente por DMS. El challenge
+  HTTP-01 va por el entrypoint `web` igual que el router `bifrost` del webmail (ya probado). Sólo falta
+  confirmar la emisión real (IMAPS/SMTP STARTTLS) en un box con DNS+80/443 abiertos.
+- **Wiring webmail↔mailserver local** [B HIGH]: la UI del login ya **togglea TLS/STARTTLS** (IMAP+SMTP,
+  con `tlsHint` i18n y e2e que lo verifica) y el compose **publica 465 (SMTPS) + 143 (IMAP STARTTLS)**.
+  El default sigue siendo Gmail por ser un **webmail genérico** (reemplazo de Roundcube): el usuario
+  escribe su servidor; prefijar el login al `mail.<dominio>` local es decisión de producto (build-time
+  brand/config), no un bug del wiring.
 
-Estos requieren un box REAL (TLS/ACME, DKIM, SMTP) — no verificables sin AWS. Son el núcleo de F-E5.
+**ABIERTO (MEDIUM, requiere box real — F-E5):**
+- **Cuentas + DKIM post-boot**: SSH al box → `setup email add` + `setup config dkim` + publicar el TXT
+  DKIM + verificar entregabilidad. [D MEDIUM]
+
+El TLS/ACME, DKIM y SMTP reales sólo se verifican con un box AWS — núcleo de F-E5. Los fixes de config
+están en su sitio siguiendo los patrones documentados/ya-probados; la verificación end-to-end la corre
+el PM al desplegar.
