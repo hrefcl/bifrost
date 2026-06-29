@@ -19,6 +19,12 @@ export interface UserDataInput {
   adminEmail: string;
   /** Repo a clonar (parametrizable para forks). */
   repoUrl?: string;
+  /**
+   * Ref de git a clonar (branch o tag). Default `main`. Un turnkey debería fijar el ÚLTIMO RELEASE
+   * conocido-bueno (no `main` HEAD) cuando el sistema de versionado los publique → así una provisión
+   * nueva nunca hereda un `main` roto. Cierra TD-PROVISION-CLONE-PIN.
+   */
+  ref?: string;
   /** Nombre del stack CloudFormation (para cfn-signal). */
   stackName: string;
   /** Región AWS (para cfn-signal). */
@@ -32,6 +38,7 @@ function sh(value: string): string {
 
 export function buildUserData(input: UserDataInput): string {
   const repo = input.repoUrl ?? 'https://github.com/hrefcl/bifrost.git';
+  const ref = input.ref ?? 'main';
   return `#!/bin/bash
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
@@ -69,7 +76,8 @@ for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
-git clone --depth 1 "${sh(repo)}" /opt/bifrost
+# --branch fija el ref (release tag conocido-bueno o branch); --depth 1 = clon superficial.
+git clone --depth 1 --branch "${sh(ref)}" "${sh(repo)}" /opt/bifrost
 cd /opt/bifrost/deploy/example-mailserver
 
 # 5) Parametrizar dominio / hostname / email de Let's Encrypt. El sed convierte también

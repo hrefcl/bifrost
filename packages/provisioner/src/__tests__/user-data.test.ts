@@ -27,6 +27,19 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('mail.acme.com');
   });
 
+  it('clona el ref pedido (release tag) y por defecto main — TD-PROVISION-CLONE-PIN', () => {
+    // Default: main (no behavior change cuando aún no hay releases).
+    expect(buildUserData(base)).toContain('git clone --depth 1 --branch "main"');
+    // Override: un release tag conocido-bueno → provisión reproducible, no main HEAD.
+    const pinned = buildUserData({ ...base, ref: 'v1.2.0' });
+    expect(pinned).toContain('git clone --depth 1 --branch "v1.2.0"');
+    expect(pinned).not.toContain('--branch "main"');
+    // El ref se escapa para bash (no inyección por comillas/backtick).
+    const evil = buildUserData({ ...base, ref: 'x"; rm -rf /' });
+    expect(evil).toContain('\\"'); // la comilla queda escapada dentro de "..."
+    expect(evil).not.toContain('--branch "x"; rm -rf /"');
+  });
+
   it('genera los secretos con los NOMBRES EXACTOS del compose (.txt) y sin claves AWS', () => {
     const s = buildUserData(base);
     expect(s).toContain('secrets/jwt_secret.txt');

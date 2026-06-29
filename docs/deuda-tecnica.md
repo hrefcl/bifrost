@@ -190,11 +190,12 @@ ningún merge con HIGH abierto o score <9):
   de LE (5 certs duplicados/semana/dominio) → sin TLS por hasta una semana. Mitigación: flag/​env para
   usar `acme.caserver` staging en pruebas, o documentar el riesgo en el wizard. Riesgo real para un
   turnkey donde el usuario podría reintentar. (Hallado en re-auditoría 3-lentes, lente operador-3AM.)
-- **TD-PROVISION-CLONE-PIN (MEDIUM, fiabilidad)** — el user-data hace `git clone --depth 1` de `main`
-  HEAD, no de un release tag → un `main` roto rompe TODA provisión nueva. Un turnkey debe fijar una
-  versión conocida-buena (alinea con el sistema de versionado+botón-update que pidió el PM). Hoy `main`
-  es la única ref (no hay releases), así que es forward-looking: añadir param `ref` al user-data y por
-  defecto el último tag de release cuando existan. (Re-auditoría 3-lentes, lente arquitecto/3AM.)
+- **TD-PROVISION-CLONE-PIN (MEDIUM → plumbing HECHO, falta cablear release)** — el user-data hacía
+  `git clone --depth 1` de `main` HEAD → un `main` roto rompía TODA provisión nueva. **Resuelto el
+  plumbing**: `buildUserData` acepta `ref` (branch o tag), emite `git clone --depth 1 --branch "<ref>"`
+  (escapado anti-inyección), default `main`. Tests en `user-data.test.ts`. **Pendiente (cuando exista
+  el sistema de releases que pidió el PM):** que el wizard pase el ÚLTIMO TAG de release en vez de
+  `main` → provisión reproducible. Hoy default `main` = sin cambio de comportamiento (no hay releases).
 - **TD-PROVISION-SED-ESCAPE (LOW, defensa en profundidad)** — los valores domain/mailHostname/
   adminEmail se escapan para bash (`sh()`) pero se usan como **reemplazo en `sed`**; `/ & \` romperían
   el sed. NO explotable: `validateDomain` restringe el dominio a `[a-z0-9-]`+puntos. Endurecer
