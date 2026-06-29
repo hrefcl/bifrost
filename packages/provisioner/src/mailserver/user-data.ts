@@ -76,8 +76,12 @@ for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
-# --branch fija el ref (release tag conocido-bueno o branch); --depth 1 = clon superficial.
-git clone --depth 1 --branch "${sh(ref)}" "${sh(repo)}" /opt/bifrost
+# REF = branch o tag de release (NO un SHA suelto: --branch sólo resuelve nombres de ref). Validar el
+# FORMATO antes de clonar da un fallo claro (vs un error críptico de git) → el trap ERR lo señaliza.
+REF="${sh(ref)}"
+git check-ref-format --allow-onelevel "$REF" || { echo "ERROR: ref de git inválido: $REF" >&2; exit 1; }
+# --branch fija el ref (release conocido-bueno o branch); --depth 1 = clon superficial.
+git clone --depth 1 --branch "$REF" "${sh(repo)}" /opt/bifrost
 cd /opt/bifrost/deploy/example-mailserver
 
 # 5) Parametrizar dominio / hostname / email de Let's Encrypt. El sed convierte también
