@@ -206,17 +206,15 @@ ningún merge con HIGH abierto o score <9):
   el sed. NO explotable: `validateDomain` restringe el dominio a `[a-z0-9-]`+puntos. Endurecer
   escapando chars sed-especiales sería defensa en profundidad, pero el cambio toca el bootstrap crítico
   (no testeable sin box) → diferido. (Re-auditoría 3-lentes, lente auditor hostil — cerrado por validación.)
-- **TD-PROVISION-CFN-CI (LOW, prevención)** — el template CloudFormation (`buildStackTemplate`) se
-  VALIDÓ con **cfn-lint 1.46: 0 errores**, sólo 4 warnings W1030 (defaults vacíos de
-  `ExistingSubnetId`/`S3BucketName`) confirmados FALSOS POSITIVOS (guardados por `Fn::If CreateNetwork`
-  y `Condition: CreateS3`; cfn-lint no modela Conditions/Rules al resolver defaults). Los unit tests
-  cubren estructura pero NO validez contra el spec de CFN. Mejora: añadir un paso de CI que genere el
-  template y corra `cfn-lint` → atrapa regresiones estructurales antes de que rompan un deploy real.
-  (Auto-auditoría sesión 6: el artefacto mission-critical es desplegable.) **+ el user-data bash** se
-  validó con `shellcheck --severity=warning` (0 warnings/errors) y `bash -n` (sintaxis OK); el CI
-  debería correr AMBOS (cfn-lint del template + shellcheck del user-data generado) para blindar las dos
-  mitades del turnkey. Infos shellcheck aceptados: SC2015 (idioma `cmd && break || sleep` de retry,
-  seguro porque break/return no fallan) y SC1091 (no sigue `/etc/os-release`, archivo del target).
+- **TD-PROVISION-CFN-CI — HECHO (gate de CI implementado)** — los artefactos del turnkey (template
+  CloudFormation + user-data bash) que genera el provisioner ahora se validan en **cada push** vía
+  `ci.yml`: `scripts/emit-artifacts.mjs` los emite y corre `cfn-lint --non-zero-exit-code error`
+  (sólo un ERROR de CFN-spec rompe; los W1030 falsos-positivos por defaults vacíos guardados por
+  `Fn::If`/`Condition` se muestran pero no rompen) + `shellcheck --severity=warning` (infos SC2015
+  [retry idiom seguro] / SC1091 [/etc/os-release] no rompen). Atrapa regresiones que romperían el
+  deploy real en AWS y que los unit tests NO ven (validez CFN-spec / sintaxis+semántica de shell) —
+  estas validaciones manuales encontraron 2 bugs reales (Rule subnet/VPC, readiness sin signal a CFN).
+  Verificado localmente con cfn-lint 1.46 + shellcheck 0.11 (`pnpm --filter provisioner emit-artifacts`).
 - **TD-PROVISION-SUBNET-VPC-MEMBERSHIP (LOW, límite de CFN — documentado)** — la `Rule`
   `SubnetRequiredWithExistingVpc` obliga a pasar ambos `ExistingVpcId`+`ExistingSubnetId` juntos, pero
   NO valida que el subnet PERTENEZCA a esa VPC (una CFN Rule sólo asierta parámetros, sin lookups AWS).

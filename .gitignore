@@ -43,3 +43,6 @@ playwright-report/
 
 # Storage local de adjuntos (runtime)
 data/
+
+# Artefactos del turnkey emitidos para validar (cfn-lint/shellcheck) — generados, no se commitean
+artifacts/

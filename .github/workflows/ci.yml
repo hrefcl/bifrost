@@ -71,3 +71,21 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      # Gate de los artefactos del TURNKEY: valida el template CloudFormation (cfn-lint) y el user-data
+      # bash (shellcheck) que GENERA el provisioner. Atrapa regresiones que romperían el deploy real en
+      # AWS y que los unit tests NO ven (validez contra el spec de CFN / sintaxis+semántica de shell).
+      # La auto-auditoría encontró 2 bugs reales así: la Rule subnet/VPC y el readiness sin signal a CFN.
+      - name: Install artifact linters
+        run: |
+          pipx install cfn-lint
+          shellcheck --version >/dev/null 2>&1 || (sudo apt-get update && sudo apt-get install -y shellcheck)
+      - name: Validate provisioning artifacts (CFN template + user-data)
+        run: |
+          node packages/provisioner/scripts/emit-artifacts.mjs artifacts
+          # --non-zero-exit-code error: los W1030 (falsos positivos por defaults vacíos guardados por
+          # Fn::If/Condition) se MUESTRAN pero no rompen; sólo un ERROR real de CFN-spec falla el build.
+          cfn-lint --non-zero-exit-code error artifacts/bifrost-stack.yaml
+          # shellcheck a severity=warning: los infos SC2015 (retry idiom seguro) / SC1091 (/etc/os-release)
+          # no rompen; un warning/error real (var sin usar, quoting peligroso) sí.
+          shellcheck --severity=warning artifacts/user-data.sh
