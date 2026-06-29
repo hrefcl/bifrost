@@ -211,6 +211,26 @@ packages/provisioner/
 Cada fase: typecheck+lint+test (mocks) verdes + review B/C/D antes de avanzar. La prueba con AWS
 real la corre el PM al final de F-E5.
 
+### 7.bis — Envío SALIENTE en AWS: el bloqueo del puerto 25 (verificado en el primer deploy real)
+
+**Hecho de AWS, no del turnkey:** AWS **bloquea el puerto 25 saliente** por defecto en EC2 (anti-spam).
+El box **RECIBE** correo sin problema (inbound 25 abierto), pero **NO ENVÍA** directo a otros MX hasta
+resolverlo. Dos caminos (el CLI lo imprime al terminar y debe explicarse al cliente final):
+
+1. **Desbloqueo del puerto 25** — formulario de soporte AWS (24-48h). Envío directo self-hosted puro.
+2. **Relay por Amazon SES** (recomendado, inmediato) — configurar `RELAY_HOST=email-smtp.<region>.
+   amazonaws.com`, `RELAY_PORT=587`, `RELAY_USER`/`RELAY_PASSWORD` (credenciales SMTP de SES, derivadas
+   de un usuario IAM con `ses:SendRawEmail`) en docker-mailserver. Probado en vivo: el mailserver
+   relayea por TLS a SES y SES acepta el mensaje. **OJO — SANDBOX:** una cuenta SES nueva sólo entrega
+   a destinatarios **verificados**; para enviar a **cualquiera** hay que pedir **production access**
+   (saca el sandbox; suele aprobarse rápido para bajo volumen). El dominio verificado en SES sirve como
+   REMITENTE; el sandbox limita el DESTINATARIO.
+
+**Deuda turnkey (TD-PROVISION-OUTBOUND-RELAY):** hacer el relay SES una **opción del wizard** (si el
+usuario da credenciales SES/SMTP → setea RELAY_* en el compose; si no → puerto 25 directo + aviso de
+desbloqueo). Y considerar emitir las credenciales SMTP de SES + el pedido de production access desde el
+propio flujo CloudFormation (con consentimiento explícito del cliente).
+
 ## 8. DECISIÓN ABIERTA — dónde vive el bulk del correo (clave para la tesis de costo)
 
 La misión (§0) exige que los **gigas y gigas de correo vivan en S3 barato**, no en EBS. Pero

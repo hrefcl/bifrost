@@ -218,8 +218,26 @@ async function main(): Promise<void> {
           printDns(domain, out.PublicIp ?? 'TU_IP');
         }
         console.log(
-          '\n⚠ AWS bloquea el puerto 25 SALIENTE por defecto en cuentas nuevas: vas a RECIBIR' +
-            ' correo pero NO ENVIAR hasta pedir el desbloqueo a soporte AWS.'
+          '\n⚠ ENVÍO SALIENTE en AWS (importante): AWS BLOQUEA el puerto 25 saliente por'
+        );
+        console.log(
+          '  defecto. Vas a RECIBIR correo, pero para ENVIAR a internet tenés 2 opciones:'
+        );
+        console.log(
+          '   1) Pedir a AWS el desbloqueo del puerto 25 (formulario de soporte, 24-48h) → envío'
+        );
+        console.log('      directo self-hosted.');
+        console.log(
+          '   2) RELAY por Amazon SES (recomendado, inmediato): configurá RELAY_HOST/USER/PASSWORD'
+        );
+        console.log(
+          '      en el mailserver con credenciales SMTP de SES. OJO: una cuenta SES nueva está en'
+        );
+        console.log(
+          '      SANDBOX → sólo entrega a destinatarios VERIFICADOS. Para enviar a CUALQUIERA hay que'
+        );
+        console.log(
+          '      pedir "production access" a SES (sale del sandbox; suele aprobarse para bajo volumen).'
         );
         console.log('⚠ Falta crear los buzones y el DKIM en el servidor (SSH al box) — fase F-E5.');
       } else if (status.endsWith('IN_PROGRESS')) {
