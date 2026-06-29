@@ -56,6 +56,28 @@ describe('admin role + requireAdmin (PR-A)', () => {
     await app.close();
   });
 
+  it('/api/admin/version: admin obtiene build/sha; un usuario normal 403 (no en /health público)', async () => {
+    const app = await buildTestApp();
+    const { user: normal } = await seedUserWithAccount({ email: 'norm-ver@test.com' });
+    const normal403 = await app.inject({
+      method: 'GET',
+      url: '/api/admin/version',
+      headers: authHeaders(app, normal._id.toString()),
+    });
+    expect(normal403.statusCode).toBe(403);
+
+    const { user: admin } = await seedUserWithAccount({ email: 'admin-ver@test.com' });
+    await User.updateOne({ _id: admin._id }, { $set: { role: 'admin' } });
+    const res = await app.inject({
+      method: 'GET',
+      url: '/api/admin/version',
+      headers: authHeaders(app, admin._id.toString()),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(JSON.parse(res.body)).toHaveProperty('build');
+    await app.close();
+  });
+
   it('requireAdmin consulta la DB: cambiar el rol en DB invalida el acceso aunque el token siga', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'demote@test.com' });

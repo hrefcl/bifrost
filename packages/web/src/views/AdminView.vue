@@ -320,13 +320,13 @@ async function loadStorage() {
 
 // Versión del SERVIDOR (imagen api desplegada). El front muestra su propio build (baked en el bundle)
 // + el del backend → si uno no avanzó tras un deploy, salta a la vista (mismatch = una capa quedó
-// cacheada/sin actualizar). Falla suave: si /health no trae versión, queda '—'.
+// cacheada/sin actualizar). Se lee de /admin/version (admin-only; NO de /health público, que no debe
+// filtrar build/sha → anti fingerprinting). Falla suave: si no responde, queda '—'.
 const apiBuild = ref<string | null>(null);
 async function loadApiBuild() {
   try {
-    const { data } = await api.get<{ version?: { build?: string; sha?: string } }>('/health');
-    if (data.version)
-      apiBuild.value = `build ${data.version.build ?? '—'} · ${data.version.sha ?? ''}`;
+    const { data } = await api.get<{ build?: string; sha?: string }>('/admin/version');
+    apiBuild.value = `build ${data.build ?? '—'} · ${data.sha ?? ''}`;
   } catch {
     apiBuild.value = null;
   }

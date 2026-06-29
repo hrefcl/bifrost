@@ -6,6 +6,7 @@ import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js'
 import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
 import { loginOrRegister } from '../services/auth.js';
 import { checkForUpdate } from '../services/update-check.js';
+import { BUILD_INFO } from '../lib/buildInfo.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
 import { Email } from '../models/Email.js';
@@ -106,6 +107,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.get('/whoami', () => {
     return { role: 'admin' as const };
   });
+
+  // Build de la imagen API (admin-only — NO en /health público para no facilitar fingerprinting).
+  fastify.get('/version', () => BUILD_INFO);
 
   // Chequeo de actualización (estilo WordPress): compara el build instalado con el último publicado
   // en GitHub. Sólo lectura (Fase 1). `?force=1` salta el cache. Admin-only (preHandler de arriba).

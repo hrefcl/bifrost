@@ -34,6 +34,8 @@ describe('health', () => {
     expect(body.status).toBe('ok');
     expect(body.services.mongodb).toBe('connected');
     expect(body.services.redis).toBe('connected');
+    // SEGURIDAD: /health es público → NO debe filtrar build/sha (anti fingerprinting de instalaciones).
+    expect(body.version).toBeUndefined();
   });
 
   // Failure-path: el liveness probe DEBE devolver 503 (no 200) ante una dependencia caída,

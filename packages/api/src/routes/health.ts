@@ -2,7 +2,6 @@ import type { FastifyInstance } from 'fastify';
 import mongoose from 'mongoose';
 import { redis } from '../config/redis.js';
 import { Account } from '../models/Account.js';
-import { BUILD_INFO } from '../lib/buildInfo.js';
 
 async function checkDeps(): Promise<{ mongoHealthy: boolean; redisHealthy: boolean }> {
   const mongoHealthy = mongoose.connection.readyState === mongoose.ConnectionStates.connected;
@@ -21,10 +20,12 @@ export default function healthRoutes(fastify: FastifyInstance) {
   fastify.get('/', { config: { requiresAuth: false } }, async (_request, reply) => {
     const { mongoHealthy, redisHealthy } = await checkDeps();
     const healthy = mongoHealthy && redisHealthy;
+    // NO se expone build/sha aquí: /health es PÚBLICO y la metadata de versión en un endpoint sin auth
+    // permite fingerprinting masivo de instalaciones (scan → lista de boxes en un build vulnerable).
+    // La versión vive en /api/admin/version (admin-only).
     void reply.code(healthy ? 200 : 503).send({
       status: healthy ? 'ok' : 'degraded',
       timestamp: new Date().toISOString(),
-      version: BUILD_INFO,
       services: {
         mongodb: mongoHealthy ? 'connected' : 'disconnected',
         redis: redisHealthy ? 'connected' : 'disconnected',
