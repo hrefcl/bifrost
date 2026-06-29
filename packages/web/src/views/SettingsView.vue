@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
-import RichTextEditor from '@/components/RichTextEditor.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/http';
@@ -34,10 +33,28 @@ const saving = ref(false);
 const saved = ref(false);
 const error = ref('');
 
+// Editor de firma = contenteditable CRUDO (no TipTap): al pegar la firma del generador (Cleverty,
+// etc.) el navegador inserta el HTML rico tal cual (tablas/img/estilos), igual que Gmail. El backend
+// lo sanea al guardar. TipTap lo habría destruido por su schema restrictivo.
+const sigEl = ref<HTMLDivElement | null>(null);
+function onSigInput() {
+  if (sigEl.value) signature.value = sigEl.value.innerHTML;
+}
+function fillSigEl() {
+  if (sigEl.value && sigEl.value.innerHTML !== signature.value) {
+    sigEl.value.innerHTML = signature.value;
+  }
+}
+// El contenteditable sólo existe cuando la sección 'signature' está activa → poblarlo al entrar.
+watch(section, (s) => {
+  if (s === 'signature') void nextTick(fillSigEl);
+});
+
 onMounted(() => {
   const prefs = auth.user?.preferences;
   signature.value = prefs?.defaultSignature ?? '';
   autoInclude.value = prefs?.autoIncludeSignature ?? true;
+  if (section.value === 'signature') void nextTick(fillSigEl);
 });
 
 function pickLocale(l: Locale) {
@@ -59,6 +76,7 @@ async function saveSignature() {
       auth.user.preferences.autoIncludeSignature = data.autoIncludeSignature;
     }
     signature.value = data.defaultSignature ?? '';
+    void nextTick(fillSigEl); // mostrar la versión SANEADA por el backend en el editor
     saved.value = true;
   } catch {
     error.value = t('settings.signature.error');
@@ -151,9 +169,15 @@ async function saveSignature() {
         <template v-else-if="section === 'signature'">
           <h2 class="section-h">{{ t('settings.signature.title') }}</h2>
           <p class="section-desc">{{ t('settings.signature.desc') }}</p>
-          <div class="editor-box">
-            <RichTextEditor v-model="signature" />
-          </div>
+          <div
+            ref="sigEl"
+            class="sig-editor"
+            contenteditable="true"
+            role="textbox"
+            aria-multiline="true"
+            @input="onSigInput"
+          ></div>
+          <p class="sig-hint">{{ t('settings.signature.htmlHint') }}</p>
           <label class="check-row">
             <input v-model="autoInclude" type="checkbox" />
             {{ t('settings.signature.autoInclude') }}
@@ -339,6 +363,28 @@ async function saveSignature() {
 .editor-box :deep(.ProseMirror) {
   min-height: 120px;
   outline: none;
+}
+/* Editor de firma: contenteditable crudo que preserva el HTML pegado (firmas ricas tipo Gmail). */
+.sig-editor {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  min-height: 130px;
+  outline: none;
+  overflow: auto;
+  background: var(--bg);
+  color: var(--text-1);
+}
+.sig-editor:focus {
+  border-color: var(--accent);
+}
+.sig-editor :deep(img) {
+  max-width: 100%;
+}
+.sig-hint {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 6px 0 14px;
 }
 .check-row {
   display: flex;

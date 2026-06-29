@@ -339,6 +339,8 @@ export default {
     signature: {
       title: 'Firma',
       desc: 'Se añade al final de tus mensajes.',
+      htmlHint:
+        'Pegá acá tu firma (Cmd/Ctrl+V). Si la copiaste de un generador de firmas, se pega con su diseño completo (logo, colores, redes) igual que en Gmail. Se añade con el separador «-- » al enviar.',
       autoInclude: 'Incluir automáticamente en correos nuevos',
       save: 'Guardar firma',
       saving: 'Guardando…',

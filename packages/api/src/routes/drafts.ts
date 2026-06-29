@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Draft } from '../models/Draft.js';
 import { Account } from '../models/Account.js';
+import { User } from '../models/User.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { sendDraft } from '../services/smtp.js';
 import { appendToSent } from '../services/imap.js';
@@ -313,6 +314,17 @@ export default function draftRoutes(fastify: FastifyInstance) {
       return reply
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Account not found' });
+    }
+
+    // Firma del usuario: se añade SERVER-SIDE al enviar (no al draft persistido) para preservar el
+    // HTML rico que el editor TipTap del composer filtraría. Separador estándar "-- " (RFC 3676) que
+    // marca el inicio de la firma. Se re-sanitiza el resultado (firma + cuerpo, ambos confiables).
+    const user = await User.findById(userId).lean();
+    const sig = user?.preferences.defaultSignature?.trim();
+    if (user?.preferences.autoIncludeSignature && sig) {
+      const sep = '<br><br><div data-bifrost-sig-sep="1">-- </div>';
+      claimed.bodyHtml = sanitizeEmailHtml(`${claimed.bodyHtml ?? ''}${sep}${sig}`);
+      claimed.bodyText = plainTextFromHtml(claimed.bodyHtml);
     }
 
     // Message-ID determinista, persistido ANTES de enviar (dedupe en reintentos).

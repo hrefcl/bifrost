@@ -8,7 +8,6 @@ import Placeholder from '@tiptap/extension-placeholder';
 import AppIcon from '@/components/AppIcon.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
-import { useAuthStore } from '@/stores/auth';
 import { useComposerStore } from '@/stores/composer';
 import type { Account, Draft, DraftAttachment, Email, EmailBody } from '@webmail6/shared';
 
@@ -17,7 +16,6 @@ import type { Account, Draft, DraftAttachment, Email, EmailBody } from '@webmail
  * Reemplaza la ruta /compose. Lee el contexto (nuevo / borrador / reply / forward) del store.
  */
 const draftStore = useDraftStore();
-const auth = useAuthStore();
 const composer = useComposerStore();
 const { t, locale } = useI18n();
 
@@ -188,10 +186,9 @@ onMounted(async () => {
       else if (ctx.replyAll) await prefillFromOriginal(ctx.replyAll, 'replyAll');
       else if (ctx.forward) await prefillFromOriginal(ctx.forward, 'forward');
 
-      const prefs = auth.user?.preferences;
-      if (prefs?.autoIncludeSignature && prefs.defaultSignature) {
-        form.value.bodyHtml = `<p></p>${prefs.defaultSignature}${form.value.bodyHtml}`;
-      }
+      // La firma YA NO se inyecta en el cuerpo: TipTap (schema restrictivo) destruiría el HTML rico
+      // (tablas/img/estilos de firmas tipo Cleverty). Se añade SERVER-SIDE al enviar (POST
+      // /drafts/:id/send) preservando el HTML fiel + el separador "-- ".
     }
   } catch {
     error.value = t('composer.errLoad');

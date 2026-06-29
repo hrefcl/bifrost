@@ -334,6 +334,8 @@ export default {
     signature: {
       title: 'Signature',
       desc: 'Added at the end of your messages.',
+      htmlHint:
+        'Paste your signature here (Cmd/Ctrl+V). If you copied it from a signature generator, it pastes with its full design (logo, colors, socials) just like Gmail. It is added with the «-- » separator when sending.',
       autoInclude: 'Include automatically in new emails',
       save: 'Save signature',
       saving: 'Saving...',
