@@ -20,6 +20,23 @@ export default function contactRoutes(fastify: FastifyInstance) {
     return contacts.map(serializeContact);
   });
 
+  // Autocomplete del composer (estilo Gmail): contactos cuyo nombre o email matchea `q`. Owner-bound,
+  // limitado. Escapa el regex de `q` para no inyectar (evita ReDoS/operadores). Devuelve {name,email}.
+  fastify.get('/search', async (request) => {
+    const q = ((request.query as { q?: string }).q ?? '').trim();
+    if (q.length < 1) return [];
+    const safe = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const rx = new RegExp(safe, 'i');
+    const contacts = await Contact.find({
+      userId: request.user.userId,
+      $or: [{ fullName: rx }, { email: rx }],
+    })
+      .sort({ usageCount: -1, sortName: 1 })
+      .limit(8)
+      .lean();
+    return contacts.map((c) => ({ name: c.fullName, email: c.email }));
+  });
+
   fastify.post('/', async (request) => {
     const body = contactBodySchema.parse(request.body);
     const contact = await Contact.create({

@@ -13,7 +13,7 @@ export interface IContact extends Document {
   notes?: string;
   isFrequent: boolean;
   usageCount: number;
-  source: 'local' | 'imported' | 'carddav';
+  source: 'local' | 'imported' | 'carddav' | 'auto';
   createdAt: Date;
   updatedAt: Date;
 }
@@ -31,7 +31,7 @@ const ContactSchema = new Schema<IContact>(
     notes: { type: String },
     isFrequent: { type: Boolean, default: false },
     usageCount: { type: Number, default: 0 },
-    source: { type: String, enum: ['local', 'imported', 'carddav'], default: 'local' },
+    source: { type: String, enum: ['local', 'imported', 'carddav', 'auto'], default: 'local' },
   },
   { timestamps: true }
 );

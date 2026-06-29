@@ -93,6 +93,74 @@ function setLink(): void {
   editor.value?.chain().focus().extendMarkRange('link').setLink({ href: url }).run();
 }
 
+// ---------- autocomplete de destinatarios (estilo Gmail) ----------
+type RecipField = 'to' | 'cc' | 'bcc';
+const acField = ref<RecipField | null>(null);
+const acItems = ref<{ name: string; email: string }[]>([]);
+const acIndex = ref(0);
+let acTimer: ReturnType<typeof setTimeout> | null = null;
+
+// Token actual = lo escrito después de la última coma del campo.
+function currentToken(field: RecipField): string {
+  const parts = form.value[field].split(',');
+  return (parts[parts.length - 1] ?? '').trim();
+}
+function onRecipInput(field: RecipField) {
+  if (acTimer) clearTimeout(acTimer);
+  const token = currentToken(field);
+  if (token.length < 1) {
+    acField.value = null;
+    acItems.value = [];
+    return;
+  }
+  acTimer = setTimeout(() => {
+    void (async () => {
+      try {
+        const { data } = await api.get<{ name: string; email: string }[]>('/contacts/search', {
+          params: { q: token },
+        });
+        // No sugerir un contacto ya escrito completo (email exacto).
+        acItems.value = data.filter((d) => d.email.toLowerCase() !== token.toLowerCase());
+        acField.value = acItems.value.length > 0 ? field : null;
+        acIndex.value = 0;
+      } catch {
+        acField.value = null;
+      }
+    })();
+  }, 180);
+}
+function pickContact(field: RecipField, item: { name: string; email: string }) {
+  const parts = form.value[field].split(',');
+  const formatted =
+    item.name && item.name !== item.email ? `${item.name} <${item.email}>` : item.email;
+  parts[parts.length - 1] = ` ${formatted}`;
+  form.value[field] = parts.join(',').replace(/^\s+/, '') + ', ';
+  acField.value = null;
+  acItems.value = [];
+}
+function acBlur() {
+  // Cerrar tras un tick para no matar el @mousedown del item (que ya hace prevent).
+  setTimeout(() => {
+    acField.value = null;
+  }, 120);
+}
+function onRecipKeydown(field: RecipField, e: KeyboardEvent) {
+  if (acField.value !== field || acItems.value.length === 0) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    acIndex.value = (acIndex.value + 1) % acItems.value.length;
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    acIndex.value = (acIndex.value - 1 + acItems.value.length) % acItems.value.length;
+  } else if (e.key === 'Enter' || e.key === 'Tab') {
+    // acIndex se mantiene en rango por construcción (módulo length).
+    e.preventDefault();
+    pickContact(field, acItems.value[acIndex.value]);
+  } else if (e.key === 'Escape') {
+    acField.value = null;
+  }
+}
+
 // ---------- carga / wiring ----------
 function composerState() {
   return { ...form.value, attachmentIds: attachments.value.map((a) => a.blobId) };
@@ -430,7 +498,30 @@ onBeforeUnmount(() => {
 
       <div class="cw-row">
         <span class="cw-key">{{ t('composer.to') }}</span>
-        <input v-model="form.to" type="text" :placeholder="t('composer.to')" class="cw-input" />
+        <div class="cw-ac-wrap">
+          <input
+            v-model="form.to"
+            type="text"
+            :placeholder="t('composer.to')"
+            class="cw-input"
+            autocomplete="off"
+            @input="onRecipInput('to')"
+            @keydown="onRecipKeydown('to', $event)"
+            @blur="acBlur"
+          />
+          <ul v-if="acField === 'to' && acItems.length" class="cw-ac">
+            <li
+              v-for="(item, i) in acItems"
+              :key="item.email"
+              class="cw-ac-item"
+              :class="{ sel: i === acIndex }"
+              @mousedown.prevent="pickContact('to', item)"
+            >
+              <span class="cw-ac-name">{{ item.name }}</span>
+              <span class="cw-ac-email">{{ item.email }}</span>
+            </li>
+          </ul>
+        </div>
         <button v-if="!ccVisible" type="button" class="cw-cc" @click="showCcManually = true">
           {{ t('composer.ccToggle') }}
         </button>
@@ -438,11 +529,57 @@ onBeforeUnmount(() => {
       <template v-if="ccVisible">
         <div class="cw-row">
           <span class="cw-key">{{ t('composer.cc') }}</span>
-          <input v-model="form.cc" type="text" :placeholder="t('composer.cc')" class="cw-input" />
+          <div class="cw-ac-wrap">
+            <input
+              v-model="form.cc"
+              type="text"
+              :placeholder="t('composer.cc')"
+              class="cw-input"
+              autocomplete="off"
+              @input="onRecipInput('cc')"
+              @keydown="onRecipKeydown('cc', $event)"
+              @blur="acBlur"
+            />
+            <ul v-if="acField === 'cc' && acItems.length" class="cw-ac">
+              <li
+                v-for="(item, i) in acItems"
+                :key="item.email"
+                class="cw-ac-item"
+                :class="{ sel: i === acIndex }"
+                @mousedown.prevent="pickContact('cc', item)"
+              >
+                <span class="cw-ac-name">{{ item.name }}</span>
+                <span class="cw-ac-email">{{ item.email }}</span>
+              </li>
+            </ul>
+          </div>
         </div>
         <div class="cw-row">
           <span class="cw-key">{{ t('composer.bcc') }}</span>
-          <input v-model="form.bcc" type="text" :placeholder="t('composer.bcc')" class="cw-input" />
+          <div class="cw-ac-wrap">
+            <input
+              v-model="form.bcc"
+              type="text"
+              :placeholder="t('composer.bcc')"
+              class="cw-input"
+              autocomplete="off"
+              @input="onRecipInput('bcc')"
+              @keydown="onRecipKeydown('bcc', $event)"
+              @blur="acBlur"
+            />
+            <ul v-if="acField === 'bcc' && acItems.length" class="cw-ac">
+              <li
+                v-for="(item, i) in acItems"
+                :key="item.email"
+                class="cw-ac-item"
+                :class="{ sel: i === acIndex }"
+                @mousedown.prevent="pickContact('bcc', item)"
+              >
+                <span class="cw-ac-name">{{ item.name }}</span>
+                <span class="cw-ac-email">{{ item.email }}</span>
+              </li>
+            </ul>
+          </div>
         </div>
       </template>
       <div class="cw-row">
@@ -619,6 +756,47 @@ onBeforeUnmount(() => {
   color: var(--text-3);
   width: 40px;
   flex-shrink: 0;
+}
+/* Autocomplete de destinatarios (estilo Gmail) */
+.cw-ac-wrap {
+  position: relative;
+  flex: 1;
+  display: flex;
+}
+.cw-ac {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 30;
+  margin: 2px 0 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow-lg);
+  max-height: 240px;
+  overflow-y: auto;
+}
+.cw-ac-item {
+  display: flex;
+  flex-direction: column;
+  padding: 7px 10px;
+  border-radius: 7px;
+  cursor: pointer;
+}
+.cw-ac-item.sel,
+.cw-ac-item:hover {
+  background: var(--accent-soft);
+}
+.cw-ac-name {
+  font-size: 13.5px;
+  color: var(--text-1);
+}
+.cw-ac-email {
+  font-size: 12px;
+  color: var(--text-3);
 }
 .cw-input {
   flex: 1;

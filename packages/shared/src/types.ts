@@ -274,7 +274,7 @@ export interface Contact {
   notes?: string;
   isFrequent: boolean;
   usageCount: number;
-  source: 'local' | 'imported' | 'carddav';
+  source: 'local' | 'imported' | 'carddav' | 'auto';
   createdAt: string;
   updatedAt: string;
 }

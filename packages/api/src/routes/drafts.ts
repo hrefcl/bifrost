@@ -6,6 +6,7 @@ import { User } from '../models/User.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { sendDraft } from '../services/smtp.js';
 import { appendToSent } from '../services/imap.js';
+import { autoSaveContacts } from '../services/contacts.js';
 import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
 import { providerForType } from '../services/storage/index.js';
@@ -353,6 +354,16 @@ export default function draftRoutes(fastify: FastifyInstance) {
         await appendToSent(account, result.raw);
       } catch (appendErr) {
         request.log.warn({ err: appendErr }, 'append to Sent failed');
+      }
+      // Auto-guardar destinatarios como contactos (estilo Gmail). Best-effort.
+      try {
+        await autoSaveContacts(userId, [
+          ...claimed.to,
+          ...(claimed.cc ?? []),
+          ...(claimed.bcc ?? []),
+        ]);
+      } catch (contactErr) {
+        request.log.warn({ err: contactErr }, 'auto-save contacts failed');
       }
       return { ok: true, messageId: result.messageId };
     } catch (err) {
