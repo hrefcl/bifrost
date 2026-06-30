@@ -173,7 +173,13 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
           SecurityGroupIds: [{ Ref: 'SecurityGroup' }],
           // IMDSv2 obligatorio (HttpTokens required) — cierra el SSRF a credenciales de IMDSv1.
-          MetadataOptions: { HttpEndpoint: 'enabled', HttpTokens: 'required' },
+          // HopLimit=2: la API corre en un CONTENEDOR Docker → alcanzar el IMDS suma un hop de red; con
+          // el default 1, las requests IMDSv2 desde el contenedor fallan y el S3-por-rol no autentica.
+          MetadataOptions: {
+            HttpEndpoint: 'enabled',
+            HttpTokens: 'required',
+            HttpPutResponseHopLimit: 2,
+          },
           BlockDeviceMappings: [
             {
               DeviceName: '/dev/sda1',
