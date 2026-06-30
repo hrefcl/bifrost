@@ -115,13 +115,11 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
         .code(400)
         .send({ statusCode: 400, error: 'Bad Request', message: 'to debe ser > from' });
     if (to.getTime() - from.getTime() > MAX_SLOT_WINDOW_DAYS * DAY) {
-      return reply
-        .code(400)
-        .send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: `ventana máx ${String(MAX_SLOT_WINDOW_DAYS)} días`,
-        });
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `ventana máx ${String(MAX_SLOT_WINDOW_DAYS)} días`,
+      });
     }
     if (parsed.data.tz !== undefined && !isValidZone(parsed.data.tz)) {
       return reply
@@ -232,23 +230,19 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
       });
     } catch {
       // withLock LANZA si Redis está caído → FAIL-CLOSED 503 (review B-HIGH#2). Nunca se degrada.
-      return reply
-        .code(503)
-        .send({
-          statusCode: 503,
-          error: 'Service Unavailable',
-          message: 'Intenta de nuevo en un momento',
-        });
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: 'Intenta de nuevo en un momento',
+      });
     }
     if (!result.ok) {
       // `conflict` (slot tomado) y `unavailable` (lock ocupado por otro booking del host) → 409: reintentar.
-      return reply
-        .code(409)
-        .send({
-          statusCode: 409,
-          error: 'Conflict',
-          message: 'Ese horario ya no está disponible, elige otro',
-        });
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Ese horario ya no está disponible, elige otro',
+      });
     }
     // El managementToken (raw) sólo se devuelve en creación nueva; en replay no se reexpone.
     return reply.code(201).send({
@@ -271,6 +265,52 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     const booking = await bookingByToken(token);
     if (!booking) return gone(reply);
     return serializeBooking(booking);
+  });
+
+  // Slots para REAGENDAR (autenticado por el token de gestión, no por enabled — review C-M9).
+  // Excluye el propio booking del cálculo de ocupados para que su hueco actual sea elegible.
+  fastify.get('/booking/:token/slots', PUBLIC, async (request, reply) => {
+    const { token } = request.params as { token: string };
+    const parsed = slotsQuery.safeParse(request.query);
+    if (!parsed.success)
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'from/to inválidos' });
+    const from = new Date(parsed.data.from);
+    const to = new Date(parsed.data.to);
+    if (to <= from || to.getTime() - from.getTime() > MAX_SLOT_WINDOW_DAYS * DAY)
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'ventana inválida' });
+    if (parsed.data.tz !== undefined && !isValidZone(parsed.data.tz))
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'tz inválida' });
+    const booking = await bookingByToken(token);
+    if (booking?.status !== 'confirmed') return gone(reply);
+    const ev = await EventType.findById(booking.eventTypeId);
+    if (!ev) return gone(reply);
+    const sched = await AvailabilitySchedule.findById(ev.availabilityScheduleId);
+    if (!sched) return gone(reply);
+    const schedule = resolveSchedule(sched);
+    const padFrom = new Date(from.getTime() - BUSY_PAD_MS);
+    const padTo = new Date(to.getTime() + BUSY_PAD_MS);
+    const [busy, counts] = await Promise.all([
+      buildBusy(booking.userId.toString(), padFrom, padTo, booking._id.toString()),
+      confirmedCountByDay(booking.userId.toString(), padFrom, padTo, schedule.timezone, [
+        booking._id.toString(),
+      ]),
+    ]);
+    const slots = generateSlots({
+      from,
+      to,
+      now: new Date(),
+      schedule,
+      params: slotParamsOf(ev),
+      busy,
+      confirmedCountByDay: counts,
+    });
+    return { slots: slots.map((d) => ({ start: d.toISOString() })) };
   });
 
   fastify.post('/booking/:token/cancel', PUBLIC, async (request, reply) => {

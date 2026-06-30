@@ -43,11 +43,39 @@ const router = createRouter({
       component: () => import('@/views/AdminView.vue'),
       meta: { requiresAdmin: true },
     },
+    // ── Páginas PÚBLICAS de agenda (invitados externos; también accesibles logueado para previsualizar) ──
+    {
+      path: '/u/:userSlug',
+      name: 'public-profile',
+      component: () => import('@/views/public/PublicProfileView.vue'),
+      meta: { guestOk: true },
+    },
+    {
+      path: '/meet/:userSlug',
+      name: 'public-meet',
+      component: () => import('@/views/public/PublicProfileView.vue'),
+      meta: { guestOk: true },
+    },
+    {
+      path: '/u/:userSlug/:eventSlug',
+      name: 'public-book',
+      component: () => import('@/views/public/PublicBookingView.vue'),
+      meta: { guestOk: true },
+    },
+    {
+      path: '/booking/:token',
+      name: 'public-manage',
+      component: () => import('@/views/public/PublicManageView.vue'),
+      meta: { guestOk: true },
+    },
   ],
 });
 
 router.beforeEach((to) => {
   const auth = useAuthStore();
+  // `guestOk`: páginas públicas de agenda accesibles por invitados Y por usuarios logueados (sin
+  // redirigir al inbox — review B: separar 'public' de 'guestOk').
+  if (to.meta.guestOk) return true;
   if (!to.meta.public && !auth.isAuthenticated) {
     return { name: 'login' };
   }
