@@ -8,7 +8,8 @@ import type { PublicSchedulingProfile } from '@webmail6/shared';
 const route = useRoute();
 const router = useRouter();
 const profile = ref<PublicSchedulingProfile | null>(null);
-const error = ref(false);
+const notFound = ref(false);
+const serverError = ref(false);
 const loading = ref(true);
 
 onMounted(async () => {
@@ -16,8 +17,11 @@ onMounted(async () => {
   try {
     const { data } = await api.get<PublicSchedulingProfile>(`/schedule/public/${slug}`);
     profile.value = data;
-  } catch {
-    error.value = true;
+  } catch (e) {
+    // 404 (no existe / agenda apagada) vs error real de servidor (review D-MED).
+    const status = (e as { response?: { status?: number } }).response?.status;
+    if (status === 404) notFound.value = true;
+    else serverError.value = true;
   } finally {
     loading.value = false;
   }
@@ -40,20 +44,28 @@ const locLabel: Record<string, string> = {
 <template>
   <PublicLayout>
     <div v-if="loading" class="muted">Cargando…</div>
-    <div v-else-if="error || !profile" class="notfound">
+    <div v-else-if="serverError" class="notfound">
+      <h2>Algo salió mal</h2>
+      <p class="muted">No pudimos cargar esta página. Intenta de nuevo en un momento.</p>
+    </div>
+    <div v-else-if="notFound || !profile" class="notfound">
       <h2>Página no encontrada</h2>
     </div>
     <div v-else class="profile">
       <h1>{{ profile.displayName }}</h1>
       <p class="muted">Agenda una reunión</p>
       <ul class="types">
-        <li v-for="ev in profile.eventTypes" :key="ev.slug" class="type" @click="book(ev.slug)">
-          <div>
-            <strong>{{ ev.title }}</strong>
-            <div class="muted">{{ ev.durationMinutes }} min · {{ locLabel[ev.location.type] }}</div>
-            <p v-if="ev.description" class="desc">{{ ev.description }}</p>
-          </div>
-          <span class="arrow">→</span>
+        <li v-for="ev in profile.eventTypes" :key="ev.slug">
+          <button type="button" class="type" @click="book(ev.slug)">
+            <span class="type__body">
+              <strong>{{ ev.title }}</strong>
+              <span class="muted block"
+                >{{ ev.durationMinutes }} min · {{ locLabel[ev.location.type] }}</span
+              >
+              <span v-if="ev.description" class="desc block">{{ ev.description }}</span>
+            </span>
+            <span class="arrow">→</span>
+          </button>
         </li>
       </ul>
       <p v-if="profile.eventTypes.length === 0" class="muted">
@@ -79,15 +91,28 @@ const locLabel: Record<string, string> = {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 12px;
+  width: 100%;
+  text-align: left;
   padding: 16px;
   background: var(--surface, #fff);
   border: 1px solid var(--border, #e5e5e5);
   border-radius: 12px;
   margin-bottom: 10px;
   cursor: pointer;
+  font: inherit;
+  color: inherit;
 }
-.type:hover {
+.type:hover,
+.type:focus-visible {
   border-color: var(--accent);
+  outline: none;
+}
+.type__body {
+  display: block;
+}
+.block {
+  display: block;
 }
 .desc {
   margin: 6px 0 0;

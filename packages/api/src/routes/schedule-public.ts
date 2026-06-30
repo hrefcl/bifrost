@@ -48,7 +48,10 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
       description: ev.description,
       durationMinutes: ev.durationMinutes,
       color: ev.color,
-      location: { type: ev.location.type, value: ev.location.value },
+      // Privacidad (review B-HIGH): NO exponer `location.value` (URL de videollamada, dirección,
+      // teléfono privado) en endpoints públicos pre-reserva. El invitado lo recibe DESPUÉS de reservar,
+      // vía el correo de confirmación y el snapshot del booking (gateado por token de gestión).
+      location: { type: ev.location.type },
       customQuestions: ev.customQuestions,
     };
   }

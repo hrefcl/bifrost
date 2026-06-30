@@ -12,6 +12,7 @@ const inviteeTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 const ev = ref<PublicEventType | null>(null);
 const loadErr = ref(false);
+const serverError = ref(false);
 const loading = ref(true);
 
 // step: 1=fecha, 2=hora, 3=datos, 4=confirmado
@@ -36,8 +37,12 @@ const dayLabel = computed(() =>
 const slots = ref<string[]>([]);
 const slotsLoading = ref(false);
 const selectedSlot = ref<string | null>(null);
+// Guarda anti-respuestas-fuera-de-orden (review B/D-MED): navegar días rápido podía pintar slots de un
+// día anterior bajo el label actual. Sólo aplicamos la última petición.
+let slotsReq = 0;
 
 async function loadSlots() {
+  const req = ++slotsReq;
   slotsLoading.value = true;
   slots.value = [];
   const from = new Date(selectedDay.value);
@@ -48,11 +53,12 @@ async function loadSlots() {
       `/schedule/public/${userSlug}/${eventSlug}/slots`,
       { params: { from: from.toISOString(), to: to.toISOString(), tz: inviteeTz } }
     );
+    if (req !== slotsReq) return;
     slots.value = data.slots.map((s) => s.start);
   } catch {
-    slots.value = [];
+    if (req === slotsReq) slots.value = [];
   } finally {
-    slotsLoading.value = false;
+    if (req === slotsReq) slotsLoading.value = false;
   }
 }
 
@@ -60,6 +66,7 @@ function changeDay(delta: number) {
   const next = dayOffset.value + delta;
   if (next < 0) return; // no se agenda en el pasado
   dayOffset.value = next;
+  selectedSlot.value = null; // un slot elegido en otro día no aplica al nuevo (review D-MED #5)
   void loadSlots();
 }
 
@@ -81,7 +88,9 @@ const idempotencyKey = ref('');
 const submitting = ref(false);
 const submitError = ref('');
 const confirmed = ref<Booking | null>(null);
-const manageToken = ref('');
+// `null` en replay idempotente: el backend NO reexpone el token de gestión (review B/D-MED). Mostramos
+// un fallback ("revisa tu correo") en vez de un enlace roto.
+const manageToken = ref<string | null>(null);
 
 const locLabel: Record<string, string> = {
   video: 'Videollamada',
@@ -119,7 +128,7 @@ async function submit() {
       .filter((a) => a.answer.length > 0),
   };
   try {
-    const { data } = await api.post<{ booking: Booking; managementToken: string }>(
+    const { data } = await api.post<{ booking: Booking; managementToken: string | null }>(
       `/schedule/public/${userSlug}/${eventSlug}/book`,
       payload,
       { headers: { 'Idempotency-Key': idempotencyKey.value } }
@@ -152,8 +161,10 @@ onMounted(async () => {
     const { data } = await api.get<PublicEventType>(`/schedule/public/${userSlug}/${eventSlug}`);
     ev.value = data;
     await loadSlots();
-  } catch {
-    loadErr.value = true;
+  } catch (e) {
+    const status = (e as { response?: { status?: number } }).response?.status;
+    if (status === 404) loadErr.value = true;
+    else serverError.value = true;
   } finally {
     loading.value = false;
   }
@@ -163,6 +174,10 @@ onMounted(async () => {
 <template>
   <PublicLayout>
     <div v-if="loading" class="muted">Cargando…</div>
+    <div v-else-if="serverError" class="notfound">
+      <h2>Algo salió mal</h2>
+      <p class="muted">Intenta de nuevo en un momento.</p>
+    </div>
     <div v-else-if="loadErr || !ev" class="notfound"><h2>Reunión no encontrada</h2></div>
     <div v-else class="book">
       <div class="head">
@@ -191,8 +206,10 @@ onMounted(async () => {
           <button
             v-for="s in slots"
             :key="s"
+            type="button"
             class="slot"
             :class="{ on: selectedSlot === s }"
+            :aria-pressed="selectedSlot === s"
             @click="pickSlot(s)"
           >
             {{ fmtTime(s) }}
@@ -202,8 +219,8 @@ onMounted(async () => {
       </section>
 
       <!-- Paso 3: datos del invitado -->
-      <section v-else-if="step === 3" class="formstep">
-        <button class="back" @click="step = 2">‹ Cambiar horario</button>
+      <form v-else-if="step === 3" class="formstep" @submit.prevent="submit">
+        <button type="button" class="back" @click="step = 2">‹ Cambiar horario</button>
         <p class="chosen">
           {{
             selectedDay.toLocaleDateString(undefined, {
@@ -214,18 +231,24 @@ onMounted(async () => {
           }}
           · {{ selectedSlot ? fmtTime(selectedSlot) : '' }}
         </p>
-        <label>Nombre *<input v-model="form.name" type="text" maxlength="200" /></label>
-        <label>Email *<input v-model="form.email" type="email" maxlength="320" /></label>
-        <label>Teléfono<input v-model="form.phone" type="tel" maxlength="64" /></label>
+        <label
+          >Nombre *<input v-model="form.name" type="text" autocomplete="name" maxlength="200"
+        /></label>
+        <label
+          >Email *<input v-model="form.email" type="email" autocomplete="email" maxlength="320"
+        /></label>
+        <label
+          >Teléfono<input v-model="form.phone" type="tel" autocomplete="tel" maxlength="64"
+        /></label>
         <label v-for="q in ev.customQuestions" :key="q.id">
           {{ q.label }}<span v-if="q.required"> *</span>
           <textarea v-model="answers[q.id]" maxlength="4096" rows="2" />
         </label>
         <p v-if="submitError" class="err">{{ submitError }}</p>
-        <button class="primary" :disabled="!canSubmit || submitting" @click="submit">
+        <button type="submit" class="primary" :disabled="!canSubmit || submitting">
           {{ submitting ? 'Confirmando…' : 'Confirmar reunión' }}
         </button>
-      </section>
+      </form>
 
       <!-- Paso 4: confirmado -->
       <section v-else class="done">
@@ -248,6 +271,9 @@ onMounted(async () => {
         <a v-if="manageUrl" :href="manageUrl" class="managelink"
           >Gestionar reserva (cancelar / reagendar)</a
         >
+        <p v-else class="muted">
+          Para cancelar o reagendar, usa el enlace del correo de confirmación.
+        </p>
       </section>
     </div>
   </PublicLayout>

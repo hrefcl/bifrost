@@ -1,12 +1,15 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/lib/http';
 import PublicLayout from '@/layouts/PublicLayout.vue';
 import type { Booking } from '@webmail6/shared';
 
 const route = useRoute();
-const token = String(route.params.token);
+const router = useRouter();
+// Token REACTIVO (review B-HIGH): al reagendar, el backend emite un token NUEVO y retira el viejo.
+// Mantenemos el token activo en estado y reescribimos la URL para que recargar siga funcionando.
+const token = ref(String(route.params.token));
 
 const booking = ref<Booking | null>(null);
 const loadErr = ref(false);
@@ -19,6 +22,8 @@ const rescheduling = ref(false);
 const dayOffset = ref(0);
 const slots = ref<string[]>([]);
 const slotsLoading = ref(false);
+// Guarda anti-respuestas-fuera-de-orden (review B/D-MED): sólo aplica la última petición de slots.
+let slotsReq = 0;
 
 const inviteeTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -48,7 +53,7 @@ const isActive = computed(() => booking.value?.status === 'confirmed');
 
 async function load() {
   try {
-    const { data } = await api.get<Booking>(`/schedule/public/booking/${token}`);
+    const { data } = await api.get<Booking>(`/schedule/public/booking/${token.value}`);
     booking.value = data;
   } catch {
     loadErr.value = true;
@@ -62,7 +67,7 @@ async function cancel() {
   busy.value = true;
   msg.value = '';
   try {
-    const { data } = await api.post<Booking>(`/schedule/public/booking/${token}/cancel`, {});
+    const { data } = await api.post<Booking>(`/schedule/public/booking/${token.value}/cancel`, {});
     booking.value = data;
     msg.value = 'Reunión cancelada.';
   } catch {
@@ -72,18 +77,16 @@ async function cancel() {
   }
 }
 
-// Para reagendar necesitamos los slots del mismo tipo: derivamos user/event del booking no expuestos,
-// así que usamos las rutas públicas con username/slug del snapshot no disponibles → se reusa el endpoint
-// de reschedule directamente con el startAt elegido. Los slots se piden vía el endpoint público del tipo.
 function startReschedule() {
   rescheduling.value = true;
+  dayOffset.value = 0; // siempre abrir en hoy (review D-LOW #11)
   void loadSlots();
 }
 
 async function loadSlots() {
-  // El booking público no expone userSlug/eventSlug; el endpoint de reschedule revalida el slot server-side
-  // (overlap + disponibilidad). Aquí ofrecemos elegir día/hora con los slots del propio tipo vía /slots,
-  // que el backend resuelve por el token de gestión.
+  // El booking público no expone userSlug/eventSlug; pedimos los slots por el token de gestión
+  // (GET /booking/:token/slots), que el backend resuelve excluyendo el propio booking del busy.
+  const req = ++slotsReq;
   slotsLoading.value = true;
   slots.value = [];
   const from = new Date(selectedDay.value);
@@ -91,14 +94,15 @@ async function loadSlots() {
   to.setDate(to.getDate() + 1);
   try {
     const { data } = await api.get<{ slots: { start: string }[] }>(
-      `/schedule/public/booking/${token}/slots`,
+      `/schedule/public/booking/${token.value}/slots`,
       { params: { from: from.toISOString(), to: to.toISOString(), tz: inviteeTz } }
     );
+    if (req !== slotsReq) return; // llegó una respuesta más nueva: descartar
     slots.value = data.slots.map((s) => s.start);
   } catch {
-    slots.value = [];
+    if (req === slotsReq) slots.value = [];
   } finally {
-    slotsLoading.value = false;
+    if (req === slotsReq) slotsLoading.value = false;
   }
 }
 
@@ -115,19 +119,28 @@ async function confirmReschedule(startAt: string) {
   msg.value = '';
   try {
     const { data } = await api.post<{ booking: Booking; managementToken: string }>(
-      `/schedule/public/booking/${token}/reschedule`,
+      `/schedule/public/booking/${token.value}/reschedule`,
       { startAt }
     );
     booking.value = data.booking;
+    // El reschedule retira el token viejo y emite uno NUEVO: adoptarlo y reescribir la URL (review B-HIGH)
+    // para que recargar/cancelar/volver a reagendar siga apuntando a la reserva vigente.
+    if (data.managementToken) {
+      token.value = data.managementToken;
+      void router.replace({ name: 'public-manage', params: { token: data.managementToken } });
+    }
     rescheduling.value = false;
     msg.value = 'Reunión reagendada. Revisa tu correo con los nuevos detalles.';
   } catch (e) {
     const status = (e as { response?: { status?: number } }).response?.status;
-    msg.value =
-      status === 409
-        ? 'Ese horario ya no está disponible. Elige otro.'
-        : 'No se pudo reagendar. Intenta de nuevo.';
-    if (status === 409) await loadSlots();
+    if (status === 409) {
+      msg.value = 'Ese horario ya no está disponible. Elige otro.';
+      await loadSlots();
+    } else if (status === 503) {
+      msg.value = 'Servicio ocupado, intenta de nuevo en un momento.';
+    } else {
+      msg.value = 'No se pudo reagendar. Intenta de nuevo.';
+    }
   } finally {
     busy.value = false;
   }
@@ -183,6 +196,7 @@ onMounted(load);
           <button
             v-for="s in slots"
             :key="s"
+            type="button"
             class="slot"
             :disabled="busy"
             @click="confirmReschedule(s)"

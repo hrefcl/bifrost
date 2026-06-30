@@ -251,7 +251,12 @@ export default {
     errInvalid:
       'Datos de S3 inválidos. Revisá los campos: endpoint (http/https, sin ruta), región (ej. us-east-1) y credenciales.',
     errSave: 'No se pudo guardar la configuración',
-    tabs: { accounts: 'Cuentas', branding: 'Marca', storage: 'Almacenamiento' },
+    tabs: {
+      accounts: 'Cuentas',
+      branding: 'Marca',
+      storage: 'Almacenamiento',
+      scheduling: 'Agenda',
+    },
     accounts: {
       title: 'Cuentas',
       desc: 'Crear, administrar y dar de baja cuentas de correo, y fijar su cuota de almacenamiento.',
@@ -403,6 +408,9 @@ export default {
     createSchedule: 'Crear horario laboral',
     timezone: 'Zona horaria',
     unavailable: 'No disponible',
+    addInterval: 'Agregar franja',
+    removeInterval: 'Quitar franja',
+    invalidInterval: 'La hora de fin debe ser posterior a la de inicio.',
     workHours: 'Horario laboral',
     confirmCancel: '¿Cancelar esta reunión?',
     noBookings: 'No tienes reservas.',

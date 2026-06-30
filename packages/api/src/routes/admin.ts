@@ -15,6 +15,10 @@ import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { Draft } from '../models/Draft.js';
 import { Contact } from '../models/Contact.js';
 import { CalendarEvent } from '../models/CalendarEvent.js';
+import { Booking, serializeBooking } from '../models/Booking.js';
+import { EventType } from '../models/EventType.js';
+import { getSchedulingSettings, setSchedulingSettings } from '../services/scheduling/settings.js';
+import { isValidZone } from '../lib/scheduling/time.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -170,6 +174,71 @@ export default function adminRoutes(fastify: FastifyInstance) {
     const body = brandingSchema.parse(request.body);
     const cfg = await setBranding(body, request.user.userId);
     return { ...toPublicBranding(cfg), updatedBy: cfg.updatedBy, updatedAt: cfg.updatedAt };
+  });
+
+  // ---- Agenda Inteligente (config de empresa + auditoría de reservas) ----
+  const schedulingSettingsSchema = z
+    .object({
+      enabled: z.boolean().optional(),
+      publicLinksEnabled: z.boolean().optional(),
+      defaults: z
+        .object({
+          timezone: z.string().refine(isValidZone, 'tz inválida').optional(),
+          durationMinutes: z.number().int().min(5).max(480).optional(),
+          dateRangeDays: z.number().int().min(1).max(365).optional(),
+        })
+        .strict()
+        .optional(),
+      maxEventTypesPerUser: z.number().int().min(1).max(100).optional(),
+      auditEnabled: z.boolean().optional(),
+    })
+    .strict();
+
+  fastify.get('/scheduling/settings', async () => {
+    return getSchedulingSettings();
+  });
+
+  fastify.patch('/scheduling/settings', async (request) => {
+    const body = schedulingSettingsSchema.parse(request.body);
+    return setSchedulingSettings(body);
+  });
+
+  // Auditoría de reservas (A2): lista global con filtros y paginación. Sólo lectura.
+  const auditQuery = z.object({
+    status: z.enum(['confirmed', 'cancelled', 'rescheduled']).optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    userId: objectId.optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+    skip: z.coerce.number().int().min(0).default(0),
+  });
+  fastify.get('/scheduling/bookings', async (request) => {
+    const q = auditQuery.parse(request.query);
+    const filter: Record<string, unknown> = {};
+    if (q.status) filter.status = q.status;
+    if (q.userId) filter.userId = q.userId;
+    if (q.from ?? q.to) {
+      const range: Record<string, Date> = {};
+      if (q.from) range.$gte = new Date(q.from);
+      if (q.to) range.$lte = new Date(q.to);
+      filter.startAt = range;
+    }
+    const [total, docs] = await Promise.all([
+      Booking.countDocuments(filter),
+      Booking.find(filter).sort({ startAt: -1 }).skip(q.skip).limit(q.limit),
+    ]);
+    return { total, limit: q.limit, skip: q.skip, bookings: docs.map(serializeBooking) };
+  });
+
+  // Resumen para el panel (A1): totales rápidos.
+  fastify.get('/scheduling/summary', async () => {
+    const [eventTypes, confirmed, cancelled, hostsWithUsername] = await Promise.all([
+      EventType.countDocuments({ active: true }),
+      Booking.countDocuments({ status: 'confirmed' }),
+      Booking.countDocuments({ status: 'cancelled' }),
+      User.countDocuments({ username: { $type: 'string' } }),
+    ]);
+    return { eventTypes, confirmed, cancelled, hostsWithUsername };
   });
 
   // ---- Gestión de cuentas (Roundcube administrable) ----

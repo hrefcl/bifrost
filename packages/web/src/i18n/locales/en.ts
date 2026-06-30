@@ -251,7 +251,12 @@ export default {
     errInvalid:
       'Invalid S3 data. Check the fields: endpoint (http/https, no path), region (e.g. us-east-1) and credentials.',
     errSave: 'Failed to save configuration',
-    tabs: { accounts: 'Accounts', branding: 'Branding', storage: 'Storage' },
+    tabs: {
+      accounts: 'Accounts',
+      branding: 'Branding',
+      storage: 'Storage',
+      scheduling: 'Scheduling',
+    },
     accounts: {
       title: 'Accounts',
       desc: 'Create, manage and remove mail accounts, and set their storage quota.',
@@ -398,6 +403,9 @@ export default {
     createSchedule: 'Create work hours',
     timezone: 'Timezone',
     unavailable: 'Unavailable',
+    addInterval: 'Add slot',
+    removeInterval: 'Remove slot',
+    invalidInterval: 'End time must be after start time.',
     workHours: 'Work hours',
     confirmCancel: 'Cancel this meeting?',
     noBookings: 'No bookings.',

@@ -39,8 +39,13 @@ export async function getSchedulingSettings(): Promise<SchedulingSettings> {
   };
 }
 
+/** Patch admite `defaults` PARCIAL (se mergea contra el actual) — no exige el objeto completo. */
+export type SchedulingSettingsPatch = Partial<Omit<SchedulingSettings, 'defaults'>> & {
+  defaults?: Partial<SchedulingSettings['defaults']>;
+};
+
 export async function setSchedulingSettings(
-  patch: Partial<SchedulingSettings>
+  patch: SchedulingSettingsPatch
 ): Promise<SchedulingSettings> {
   const current = await getSchedulingSettings();
   const value: SchedulingSettings = {

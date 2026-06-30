@@ -13,7 +13,8 @@ const tab = ref<Tab>('types');
 const loading = ref(false);
 const error = ref('');
 
-const publicBase = computed(() => `${window.location.host}/u/${store.username ?? '…'}`);
+// Incluye el protocolo para que el enlace copiado sea completo y compartible (review D-LOW #7).
+const publicBase = computed(() => `${window.location.origin}/u/${store.username ?? '…'}`);
 
 onMounted(async () => {
   loading.value = true;
@@ -125,6 +126,81 @@ function toggleDay(weekday: number, on: boolean) {
   if (on) rules.push({ weekday, intervals: [{ start: '09:00', end: '18:00' }] });
   void saveAvailability(rules);
 }
+
+/** Clona las reglas actuales (para editar sin mutar el store directamente). */
+function cloneRules(): WeeklyRule[] {
+  return (sched.value?.weeklyRules ?? []).map((w) => ({
+    weekday: w.weekday,
+    intervals: w.intervals.map((iv) => ({ start: iv.start, end: iv.end })),
+  }));
+}
+
+function setInterval(weekday: number, index: number, field: 'start' | 'end', value: string) {
+  const rules = cloneRules();
+  const rule = rules.find((w) => w.weekday === weekday);
+  const iv = rule?.intervals[index];
+  if (!iv) return;
+  iv[field] = value;
+  // Validación mínima en cliente (el backend revalida): end > start. Si no, no guardamos.
+  if (iv.end <= iv.start) {
+    availMsg.value = t('scheduling.invalidInterval');
+    return;
+  }
+  void saveAvailability(rules);
+}
+
+function addInterval(weekday: number) {
+  const rules = cloneRules();
+  let rule = rules.find((w) => w.weekday === weekday);
+  if (!rule) {
+    rule = { weekday, intervals: [] };
+    rules.push(rule);
+  }
+  // Por defecto, una tarde después del último intervalo (o 09–18 si está vacío).
+  const last = rule.intervals.at(-1);
+  rule.intervals.push(last ? { start: '14:00', end: '18:00' } : { start: '09:00', end: '18:00' });
+  void saveAvailability(rules);
+}
+
+function removeInterval(weekday: number, index: number) {
+  const rules = cloneRules();
+  const rule = rules.find((w) => w.weekday === weekday);
+  if (!rule) return;
+  rule.intervals.splice(index, 1);
+  // Si el día queda sin intervalos, se elimina la regla (día no disponible).
+  const cleaned = rules.filter((w) => w.intervals.length > 0);
+  void saveAvailability(cleaned);
+}
+
+async function saveTimezone(tz: string) {
+  if (!sched.value || !tz || tz === sched.value.timezone) return;
+  availMsg.value = '';
+  try {
+    await store.updateSchedule(sched.value.id, { timezone: tz });
+    availMsg.value = t('scheduling.saved');
+  } catch {
+    availMsg.value = t('scheduling.error');
+  }
+}
+// Lista acotada de zonas horarias comunes (el backend acepta cualquier IANA válida).
+const COMMON_TZ = [
+  'America/Santiago',
+  'America/Argentina/Buenos_Aires',
+  'America/Mexico_City',
+  'America/Bogota',
+  'America/Lima',
+  'America/Sao_Paulo',
+  'America/New_York',
+  'America/Los_Angeles',
+  'Europe/Madrid',
+  'Europe/London',
+  'UTC',
+];
+// Garantiza que la tz actual del horario aparezca en el select aunque no esté en la lista común.
+const tzOptions = computed(() => {
+  const tz = sched.value?.timezone;
+  return tz && !COMMON_TZ.includes(tz) ? [tz, ...COMMON_TZ] : COMMON_TZ;
+});
 async function ensureDefaultSchedule() {
   if (store.schedules.length === 0) {
     await store.createSchedule({
@@ -238,9 +314,15 @@ function fmt(iso: string, tz: string): string {
           </button>
         </div>
         <template v-else>
-          <p class="sched__tz">
-            {{ t('scheduling.timezone') }}: <strong>{{ sched.timezone }}</strong>
-          </p>
+          <label class="sched__tz">
+            {{ t('scheduling.timezone') }}:
+            <select
+              :value="sched.timezone"
+              @change="saveTimezone(($event.target as HTMLSelectElement).value)"
+            >
+              <option v-for="tz in tzOptions" :key="tz" :value="tz">{{ tz }}</option>
+            </select>
+          </label>
           <div v-for="wd in WEEKDAYS" :key="wd" class="day">
             <label class="day__name">
               <input
@@ -250,9 +332,32 @@ function fmt(iso: string, tz: string): string {
               />
               {{ t('scheduling.weekday_' + wd) }}
             </label>
-            <span v-if="rulesFor(wd).length" class="day__hours">
-              <span v-for="(iv, i) in rulesFor(wd)" :key="i">{{ iv.start }}–{{ iv.end }}</span>
-            </span>
+            <div v-if="rulesFor(wd).length" class="day__intervals">
+              <div v-for="(iv, i) in rulesFor(wd)" :key="i" class="iv">
+                <input
+                  type="time"
+                  :value="iv.start"
+                  @change="setInterval(wd, i, 'start', ($event.target as HTMLInputElement).value)"
+                />
+                <span>–</span>
+                <input
+                  type="time"
+                  :value="iv.end"
+                  @change="setInterval(wd, i, 'end', ($event.target as HTMLInputElement).value)"
+                />
+                <button
+                  type="button"
+                  class="iv__rm"
+                  :title="t('scheduling.removeInterval')"
+                  @click="removeInterval(wd, i)"
+                >
+                  ✕
+                </button>
+              </div>
+              <button type="button" class="iv__add" @click="addInterval(wd)">
+                + {{ t('scheduling.addInterval') }}
+              </button>
+            </div>
             <span v-else class="day__off">{{ t('scheduling.unavailable') }}</span>
           </div>
           <p class="sched__msg">{{ availMsg }}</p>
@@ -438,18 +543,62 @@ function fmt(iso: string, tz: string): string {
 .day {
   display: flex;
   gap: 12px;
-  align-items: center;
-  padding: 6px 0;
+  align-items: flex-start;
+  padding: 10px 0;
   border-bottom: 1px solid var(--border);
 }
 .day__name {
   width: 120px;
+  flex-shrink: 0;
+  padding-top: 6px;
 }
-.day__hours span {
-  margin-right: 8px;
+.day__intervals {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.iv {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.iv input[type='time'] {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+}
+.iv__rm {
+  background: none;
+  border: none;
+  color: var(--text-3);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 6px;
+}
+.iv__rm:hover {
+  color: #c0392b;
+}
+.iv__add {
+  align-self: flex-start;
+  background: none;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 4px 10px;
 }
 .day__off {
   color: var(--text-3);
+  padding-top: 6px;
+}
+.sched__tz select {
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  margin-left: 6px;
 }
 .bookings {
   list-style: none;

@@ -88,10 +88,25 @@ describe('Fase 3.4 — rutas públicas de agenda', () => {
     await seedHost();
     const r = await inj('GET', '/api/schedule/public/ana');
     expect(r.statusCode).toBe(200);
-    const body = JSON.parse(r.body) as { username: string; eventTypes: { slug: string }[] };
+    const body = JSON.parse(r.body) as {
+      username: string;
+      eventTypes: { slug: string; location: { type: string; value?: string } }[];
+    };
     expect(body.username).toBe('ana');
     expect(body.eventTypes.map((e) => e.slug)).toContain('30min');
     expect((await inj('GET', '/api/schedule/public/noexiste')).statusCode).toBe(404);
+    // Privacidad (review B-HIGH): el DTO público NO debe filtrar location.value (URL de videollamada).
+    const ev = body.eventTypes.find((e) => e.slug === '30min');
+    expect(ev?.location.type).toBe('video');
+    expect(ev?.location.value).toBeUndefined();
+  });
+
+  it('detalle público de un tipo tampoco expone location.value', async () => {
+    await seedHost();
+    const r = await inj('GET', '/api/schedule/public/ana/30min');
+    expect(r.statusCode).toBe(200);
+    const ev = JSON.parse(r.body) as { location: { type: string; value?: string } };
+    expect(ev.location.value).toBeUndefined();
   });
 
   it('gate: con scheduling deshabilitado, el perfil y book dan 404', async () => {
