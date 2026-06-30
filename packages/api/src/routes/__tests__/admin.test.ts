@@ -56,6 +56,81 @@ describe('admin role + requireAdmin (PR-A)', () => {
     await app.close();
   });
 
+  it('/api/admin/config/calendar (F5): defaults, deep-merge en PATCH, validación y gate admin', async () => {
+    const app = await buildTestApp();
+    const { user: normal } = await seedUserWithAccount({ email: 'norm-cal@test.com' });
+    const { user: admin } = await seedUserWithAccount({ email: 'admin-cal@test.com' });
+    await User.updateOne({ _id: admin._id }, { $set: { role: 'admin' } });
+    const A = authHeaders(app, admin._id.toString());
+
+    // gate admin
+    expect(
+      (
+        await app.inject({
+          method: 'GET',
+          url: '/api/admin/config/calendar',
+          headers: authHeaders(app, normal._id.toString()),
+        })
+      ).statusCode
+    ).toBe(403);
+
+    // GET → defaults
+    const def = await app.inject({ method: 'GET', url: '/api/admin/config/calendar', headers: A });
+    expect(def.statusCode).toBe(200);
+    expect(JSON.parse(def.body)).toMatchObject({ weekStart: 1, defaultView: 'week' });
+
+    // PATCH parcial → mergea (lo no enviado conserva default)
+    const patched = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/calendar',
+      headers: A,
+      payload: { defaultView: 'month', defaultDurationMin: 45 },
+    });
+    expect(patched.statusCode).toBe(200);
+    const body = JSON.parse(patched.body) as {
+      defaultView: string;
+      defaultDurationMin: number;
+      weekStart: number;
+    };
+    expect(body.defaultView).toBe('month');
+    expect(body.defaultDurationMin).toBe(45);
+    expect(body.weekStart).toBe(1); // intacto (deep-merge)
+
+    // segundo PATCH sólo de otra clave → NO pisa el defaultView previo (persistencia)
+    const p2 = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/calendar',
+      headers: A,
+      payload: { showWeekends: false },
+    });
+    expect(JSON.parse(p2.body).defaultView).toBe('month');
+
+    // validación: dayEnd <= dayStart → 400
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: '/api/admin/config/calendar',
+          headers: A,
+          payload: { dayStart: '20:00', dayEnd: '08:00' },
+        })
+      ).statusCode
+    ).toBe(400);
+
+    // validación: tz inválida → 400
+    expect(
+      (
+        await app.inject({
+          method: 'PATCH',
+          url: '/api/admin/config/calendar',
+          headers: A,
+          payload: { timezone: 'X/Y' },
+        })
+      ).statusCode
+    ).toBe(400);
+    await app.close();
+  });
+
   it('/api/admin/version: admin obtiene build/sha; un usuario normal 403 (no en /health público)', async () => {
     const app = await buildTestApp();
     const { user: normal } = await seedUserWithAccount({ email: 'norm-ver@test.com' });

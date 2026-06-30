@@ -18,6 +18,11 @@ import { CalendarEvent } from '../models/CalendarEvent.js';
 import { Booking, serializeBooking } from '../models/Booking.js';
 import { EventType } from '../models/EventType.js';
 import { getSchedulingSettings, setSchedulingSettings } from '../services/scheduling/settings.js';
+import {
+  getCalendarSettings,
+  setCalendarSettings,
+  CalendarSettingsError,
+} from '../services/calendar-settings.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
@@ -201,6 +206,40 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.patch('/scheduling/settings', async (request) => {
     const body = schedulingSettingsSchema.parse(request.body);
     return setSchedulingSettings(body);
+  });
+
+  // ───────── Preferencias de calendario (F5) ─────────
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const calendarSettingsSchema = z
+    .object({
+      timezone: z.string().refine(isValidZone, 'zona horaria inválida').optional(),
+      weekStart: z.union([z.literal(0), z.literal(1)]).optional(),
+      dayStart: z.string().regex(HHMM, 'hora inválida (HH:MM)').optional(),
+      dayEnd: z.string().regex(HHMM, 'hora inválida (HH:MM)').optional(),
+      defaultDurationMin: z.number().int().min(5).max(480).optional(),
+      defaultView: z.enum(['day', 'week', 'month']).optional(),
+      showWeekends: z.boolean().optional(),
+      autoInvite: z.boolean().optional(),
+      syncAgenda: z.boolean().optional(),
+    })
+    .strict();
+
+  fastify.get('/config/calendar', async () => {
+    return getCalendarSettings();
+  });
+
+  fastify.patch('/config/calendar', async (request, reply) => {
+    const patch = calendarSettingsSchema.parse(request.body);
+    // La validación del invariante (end>start sobre el merge) vive en el servicio, con su misma
+    // lectura de `current` → cierra el TOCTOU de dos PATCH concurrentes (review B-MED).
+    try {
+      return await setCalendarSettings(patch);
+    } catch (e) {
+      if (e instanceof CalendarSettingsError) {
+        return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: e.message });
+      }
+      throw e;
+    }
   });
 
   // Auditoría de reservas (A2): lista global con filtros y paginación. Sólo lectura.
