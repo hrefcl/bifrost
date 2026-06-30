@@ -299,17 +299,17 @@ const run = async () => {
   await page
     .getByRole('button', { name: 'Marca' })
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'admin-branding');
   await page
     .getByRole('button', { name: 'Agenda' })
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'admin-scheduling');
   await page
     .getByRole('button', { name: 'Almacenamiento' })
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'admin-storage');
   await shot(page, 'admin-accounts-dark', 'dark');
 
@@ -319,21 +319,21 @@ const run = async () => {
   await page
     .locator('[data-testid="sched-tab-availability"]')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'sched-availability');
   await page
     .locator('[data-testid="sched-tab-bookings"]')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'sched-bookings');
   await page
     .locator('[data-testid="sched-tab-availability"]')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await page
     .locator('[data-testid="sched-new-exception"]')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await shot(page, 'sched-exception-modal');
 
   // Público
@@ -342,7 +342,7 @@ const run = async () => {
   await page
     .locator('[data-testid="pub-eventtype-30min"]')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await page.waitForTimeout(400);
   await shot(page, 'pub-booking-calendar');
   await page.goto(`${BASE}/u/inexistente`, { waitUntil: 'networkidle' });
@@ -362,7 +362,7 @@ const run = async () => {
   await mp
     .locator('.admin-burger')
     .click()
-    .catch(() => {});
+    .catch(() => undefined);
   await mp.waitForTimeout(350);
   await shot(mp, 'admin-mobile-drawer');
   await mp.goto(`${BASE}/u/ana`, { waitUntil: 'networkidle' });
