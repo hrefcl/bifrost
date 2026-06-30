@@ -19,12 +19,13 @@ describe('scheduling queue (mock guard)', () => {
   });
 });
 
-describe('schedulingProcessor (stubs Fase 3.0)', () => {
-  it('lanza para nombres conocidos aún no implementados y para desconocidos', async () => {
-    // job mínimo: sólo `name` importa para el dispatch.
-    const mk = (name: string) => ({ name }) as unknown as Parameters<typeof schedulingProcessor>[0];
-    await expect(schedulingProcessor(mk('send-email'))).rejects.toThrow(/not implemented/);
-    await expect(schedulingProcessor(mk('reconcile'))).rejects.toThrow(/not implemented/);
+describe('schedulingProcessor (dispatch, Fase 3.4)', () => {
+  it('rechaza send-email sin datos y nombres desconocidos', async () => {
+    const mk = (name: string, data: unknown = {}) =>
+      ({ name, data }) as unknown as Parameters<typeof schedulingProcessor>[0];
+    // send-email sin bookingId/kind → rechaza (valida antes de tocar DB).
+    await expect(schedulingProcessor(mk('send-email'))).rejects.toThrow(/requeridos/);
+    // nombre desconocido → rechaza.
     await expect(schedulingProcessor(mk('bogus'))).rejects.toThrow(/unknown job name/);
   });
 });

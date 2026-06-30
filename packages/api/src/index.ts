@@ -9,7 +9,11 @@ import {
   reconcileEmailTextIndex,
 } from './db/reconcile-indexes.js';
 import { env, isSetupMode } from './config/env.js';
-import { startSchedulingWorker, closeScheduling } from './services/scheduling/queue.js';
+import {
+  startSchedulingWorker,
+  closeScheduling,
+  scheduleReconciler,
+} from './services/scheduling/queue.js';
 import { schedulingProcessor } from './services/scheduling/worker.js';
 
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
@@ -44,6 +48,9 @@ async function main() {
   // que encola el booking público (Fase 3.4). No-op en mock/test. Cableado aquí para cumplir el
   // contrato de ciclo de vida (review B HIGH de Fase 3.0). El cierre va en doShutdown.
   startSchedulingWorker(schedulingProcessor);
+  await scheduleReconciler().catch((err: unknown) => {
+    app.log.error(err);
+  });
 
   // Barridos periódicos: (a) revierte borradores colgados en 'sending' a 'failed';
   // (b) recolecta AttachmentBlobs huérfanos (subidas descartadas, drafts borrados/enviados).

@@ -57,6 +57,22 @@ export async function enqueue(
   await q.add(name, data, { ...DEFAULT_JOB_OPTS, ...opts });
 }
 
+/** Programa el job repetible `reconcile` (cada 2 min). No-op en mock/test. Llamar en el boot. */
+export async function scheduleReconciler(): Promise<void> {
+  const q = getQueue();
+  if (!q) return;
+  await q.add(
+    'reconcile',
+    {},
+    {
+      repeat: { every: 120_000 },
+      jobId: 'scheduling-reconcile',
+      removeOnComplete: true,
+      removeOnFail: 50,
+    }
+  );
+}
+
 let worker: Worker | null = null;
 
 /**
