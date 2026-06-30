@@ -20,13 +20,14 @@ describe('seedComplianceDocuments', () => {
     await mongoose.connection.db!.dropDatabase();
   });
 
-  it('siembra 7 documentos system con una versión publicada, soft (no bloquea)', async () => {
+  it('siembra 7 documentos system; Términos+Privacidad BLOQUEAN (modal en cuenta nueva), resto soft', async () => {
     const created = await seedComplianceDocuments();
     expect(created).toBe(7);
     const docs = await ComplianceDocument.find({ system: true }).lean();
     expect(docs).toHaveLength(7);
+    const blocking = new Set(['terms-of-service', 'privacy-policy']);
     for (const d of docs) {
-      expect(d.enforcement).toBe('soft');
+      expect(d.enforcement).toBe(blocking.has(d.key) ? 'block_full' : 'soft');
       expect(d.currentVersionNumber).toBe(1);
       expect(d.system).toBe(true);
     }
@@ -46,12 +47,18 @@ describe('seedComplianceDocuments', () => {
     expect(await ComplianceDocument.countDocuments()).toBe(7);
   });
 
-  it('el seed NO bloquea a ningún usuario (todo soft, enforcement none efectivo)', async () => {
+  it('el seed BLOQUEA en cuenta nueva: Términos+Privacidad fuerzan el modal (block_full), resto soft', async () => {
     await seedComplianceDocuments();
     const user = { id: new mongoose.Types.ObjectId(), role: 'user' as const };
     const res = await getPendingForUser('default', user);
-    expect(res.enforcement).toBe('none'); // ningún bloqueante
-    // Aparecen como soft informativos.
-    expect(res.documents.every((d) => d.blocking === false)).toBe(true);
+    // Hay bloqueante → el gate fuerza el modal (la queja del PM: cuenta nueva debe aceptar lo mínimo legal).
+    expect(res.enforcement).toBe('block_full');
+    const blockingKeys = res.documents
+      .filter((d) => d.blocking)
+      .map((d) => d.key)
+      .sort();
+    expect(blockingKeys).toEqual(['privacy-policy', 'terms-of-service']);
+    // Los informativos (no-legal-mínimo) NO bloquean.
+    expect(res.documents.find((d) => d.key === 'cookie-policy')?.blocking).toBe(false);
   });
 });
