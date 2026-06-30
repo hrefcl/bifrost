@@ -381,3 +381,18 @@ Tras B v3 APPROVE (9.1), una ronda hostil B(Codex)+D(Kimi) sobre el código nuev
 **Deuda LOW aceptada (no bloqueante, documentada):**
 - **TD-SCHED-LIMIT-RACE**: el chequeo de `maxEventTypesPerUser` (count + create) no es atómico; dos POST concurrentes podrían exceder el límite por 1. Es un soft-limit de plan/config, no un invariante de seguridad. Fix futuro si se quiere estricto: contador atómico/lock por usuario.
 - **TD-SCHED-SUMMARY-AUDIT**: `GET /admin/scheduling/summary` no está gateado por `auditEnabled` (sí lo está `/bookings`). Sólo expone agregados (conteos), es admin-only. Si el producto exige "ningún dato derivado de bookings con auditoría off", gatearlo también.
+
+---
+
+## Outbound / relay SES (post-incidente 2026-06-30 — ver docs/post-mortem-relay-saliente.md)
+
+Incidente real: el saliente del box aulion.app estuvo caído ~11h (relay SES no persistido → se perdió en
+un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`). Resuelto en el box
+(user-patches.sh puente) y de raíz en la rama `feat/ses-outbound` (env_file mailserver.env persistente).
+
+- **TD-OUTBOUND-MONITOR (P1)**: el corte fue SILENCIOSO (nadie se enteró 11h). Falta alerta cuando la cola
+  de postfix crece o el relay no resuelve (cron sobre `postqueue -p` o healthcheck del 587 saliente).
+- **TD-OUTBOUND-MAILFROM (P2)**: identidad SES de aulion.app sin custom MAIL FROM → SPF no alinea (DMARC
+  pasa por DKIM igual). El turnkey ya configura `bounce.<dominio>`; aplicarlo al box vivo.
+- **TD-SES-IAM-CLEANUP (P3)**: dos IAM users SES (`aulion-ses-smtp` + `bifrost-ses-smtp`), cruft de setups
+  manuales. Consolidar a uno (el turnkey usa nombre determinístico por dominio).
