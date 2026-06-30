@@ -136,6 +136,9 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
 openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
+# Secreto DEDICADO de la evidencia de compliance (HMAC). NO se deriva de JWT_SECRET (que rota →
+# invalidaría evidencia histórica). 64 chars hex ≥ 32 (lo que exige la API en producción).
+openssl rand -hex 32 > secrets/compliance_hmac_secret.txt
 ${
   input.s3Bucket
     ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.

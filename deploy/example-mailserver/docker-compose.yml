@@ -112,6 +112,9 @@ services:
       # docker secrets). NO commitees valores reales.
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      # Secreto DEDICADO para firmar la evidencia de compliance (HMAC). Obligatorio en producción; el
+      # provisioner lo genera en ./secrets/compliance_hmac_secret.txt. NO se deriva de JWT_SECRET.
+      COMPLIANCE_HMAC_SECRET_FILE: /run/secrets/compliance_hmac_secret
       FRONTEND_URL: https://webmail.example.com
       CORS_ORIGIN: https://webmail.example.com
       # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
@@ -124,7 +127,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-}
       S3_USE_INSTANCE_ROLE: ${S3_USE_INSTANCE_ROLE:-}
-    secrets: [jwt_secret, encryption_key]
+    secrets: [jwt_secret, encryption_key, compliance_hmac_secret]
     networks: [mailnet]
 
   # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
@@ -146,6 +149,8 @@ secrets:
     file: ./secrets/jwt_secret.txt
   encryption_key:
     file: ./secrets/encryption_key.txt
+  compliance_hmac_secret:
+    file: ./secrets/compliance_hmac_secret.txt
 
 volumes:
   mongo-data:

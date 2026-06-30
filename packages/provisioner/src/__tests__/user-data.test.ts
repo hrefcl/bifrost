@@ -134,6 +134,8 @@ describe('buildUserData (cloud-init)', () => {
     const s = buildUserData(base);
     expect(s).toContain('secrets/jwt_secret.txt');
     expect(s).toContain('secrets/encryption_key.txt');
+    // Secreto dedicado de la evidencia de compliance (lo exige la API en prod; nombre EXACTO del compose).
+    expect(s).toContain('secrets/compliance_hmac_secret.txt');
     expect(s).toContain('openssl rand');
     // NUNCA debe haber access keys de AWS embebidas.
     expect(s).not.toMatch(/AKIA[0-9A-Z]{16}/);

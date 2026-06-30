@@ -8,6 +8,18 @@ describe('resolveFileSecrets (docker secrets *_FILE)', () => {
   afterEach(() => {
     delete process.env.JWT_SECRET;
     delete process.env.JWT_SECRET_FILE;
+    delete process.env.COMPLIANCE_HMAC_SECRET;
+    delete process.env.COMPLIANCE_HMAC_SECRET_FILE;
+  });
+
+  it('carga COMPLIANCE_HMAC_SECRET desde su _FILE (firma de evidencia turnkey)', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sec-'));
+    const f = join(dir, 'chs');
+    writeFileSync(f, '  a-dedicated-compliance-secret-32+chars-xx  \n');
+    delete process.env.COMPLIANCE_HMAC_SECRET;
+    process.env.COMPLIANCE_HMAC_SECRET_FILE = f;
+    resolveFileSecrets();
+    expect(process.env.COMPLIANCE_HMAC_SECRET).toBe('a-dedicated-compliance-secret-32+chars-xx');
   });
 
   it('carga el secreto desde <VAR>_FILE (con trim) si <VAR> está vacío', () => {

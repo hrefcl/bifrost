@@ -6,6 +6,12 @@ dotenv.config();
 
 const CRITICAL_VARS = ['MONGODB_URI', 'REDIS_URL', 'JWT_SECRET', 'ENCRYPTION_KEY'] as const;
 
+// Secretos que pueden venir por archivo (docker secrets). Incluye los críticos + COMPLIANCE_HMAC_SECRET:
+// éste NO es crítico para el boot (en dev la API arranca sin él), pero en producción el firmado de la
+// evidencia de compliance lo EXIGE (≥32 chars) → el provisioner lo genera y lo monta como secret
+// (COMPLIANCE_HMAC_SECRET_FILE). Así la firma de evidencia queda turnkey, sin el valor en claro.
+const FILE_BACKED_VARS = [...CRITICAL_VARS, 'COMPLIANCE_HMAC_SECRET'] as const;
+
 /**
  * Soporte de docker-secrets (`<VAR>_FILE`): si está seteado `<VAR>_FILE` y `<VAR>` está vacío, lee
  * el secreto del archivo y lo carga en `<VAR>`. Es la convención estándar de Docker Compose secrets
@@ -13,7 +19,7 @@ const CRITICAL_VARS = ['MONGODB_URI', 'REDIS_URL', 'JWT_SECRET', 'ENCRYPTION_KEY
  * Debe correr ANTES de evaluar setup-mode / parsear el schema. Exportada para poder testearla.
  */
 export function resolveFileSecrets(): void {
-  for (const key of CRITICAL_VARS) {
+  for (const key of FILE_BACKED_VARS) {
     const filePath = process.env[`${key}_FILE`];
     const current = process.env[key];
     if (filePath && (!current || current.trim() === '')) {
