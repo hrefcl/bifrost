@@ -21,7 +21,9 @@ export interface IAvailabilitySchedule extends Document {
   updatedAt: Date;
 }
 
-const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/; // 00:00..23:59 (el fin-de-día 24:00 lo normaliza el motor 3.2)
+// 00:00..23:59 y además "24:00" como FIN-de-día (el motor 3.2 lo normaliza a 00:00 del día siguiente).
+// La capa de servicio (3.3) valida que sólo el END use 24:00 y que end>start.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
 const IntervalSchema = new Schema(
