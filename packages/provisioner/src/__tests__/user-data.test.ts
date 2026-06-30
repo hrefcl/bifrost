@@ -66,6 +66,15 @@ describe('buildUserData (cloud-init)', () => {
     // Aplica YA en el contenedor corriendo (sin esperar restart) y flushea la cola atascada.
     expect(s).toContain('user-patches.sh || true');
     expect(s).toContain('postqueue -f');
+    // HEALTH PROBE: AUTH a SES:587 (sin mandar correo) en cada tick del cron → un corte deja de ser
+    // SILENCIOSO. Loguea ALERTA con causa. Más alerta de cola atascada. (Cierra TD-OUTBOUND-MONITOR.)
+    expect(s).toContain('smtplib');
+    expect(s).toContain('.starttls()');
+    expect(s).toContain('ALERTA');
+    expect(s).toContain('/var/log/bifrost-ses.log');
+    // La clave del relay NO va por argv (no aparece en 'ps') — se pasa por ENV al python.
+    expect(s).toContain('RPWD="$RPASS" python3');
+    expect(s).not.toContain('sys.argv');
     // SEND-GATING: graceful si la credencial no está (relay sigue apagado), no rompe el boot.
     expect(s).toContain('relay apagado');
     // Timer pull-based (auto-activa + sobrevive reboot) y corrida al boot.

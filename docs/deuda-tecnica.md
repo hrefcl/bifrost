@@ -390,8 +390,10 @@ Incidente real: el saliente del box aulion.app estuvo caído ~11h (relay SES no 
 un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`). Resuelto en el box
 (user-patches.sh puente) y de raíz en la rama `feat/ses-outbound` (env_file mailserver.env persistente).
 
-- **TD-OUTBOUND-MONITOR (P1)**: el corte fue SILENCIOSO (nadie se enteró 11h). Falta alerta cuando la cola
-  de postfix crece o el relay no resuelve (cron sobre `postqueue -p` o healthcheck del 587 saliente).
+- **TD-OUTBOUND-MONITOR (P1) — RESUELTO** (rama feat/ses-outbound): el helper corre en cada tick del cron
+  un health-probe (AUTH a SES:587 sin mandar correo → valida puerto+TLS+creds) + alerta de cola atascada,
+  logueando ALERTA con causa en /var/log/bifrost-ses.log. Validado funcionalmente contra SES (OK con creds
+  buenas, 535 con malas). Pendiente menor: enrutar la alerta a una notificación (mail local al admin).
 - **TD-OUTBOUND-MAILFROM (P2)**: identidad SES de aulion.app sin custom MAIL FROM → SPF no alinea (DMARC
   pasa por DKIM igual). El turnkey ya configura `bounce.<dominio>`; aplicarlo al box vivo.
 - **TD-SES-IAM-CLEANUP (P3)**: dos IAM users SES (`aulion-ses-smtp` + `bifrost-ses-smtp`), cruft de setups

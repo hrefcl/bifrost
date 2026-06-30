@@ -198,6 +198,29 @@ if ! cmp -s config/user-patches.sh.new config/user-patches.sh 2>/dev/null; then
 else
   rm -f config/user-patches.sh.new
 fi
+
+# HEALTH PROBE del saliente (corre en cada tick del cron) → convierte un corte SILENCIOSO en detectable.
+# Hace AUTH a SES:587 SIN mandar correo (valida puerto 587 abierto + TLS + credenciales). La clave va por
+# ENV (no por argv → no aparece en 'ps'). Loguea OK o ALERTA con causa en /var/log/bifrost-ses.log.
+LOG=/var/log/bifrost-ses.log
+if RHOST="$RELAY" RUSR="$RUSER" RPWD="$RPASS" python3 - <<'PY' 2>>"$LOG"
+import smtplib, os, sys
+try:
+    s = smtplib.SMTP(os.environ["RHOST"], 587, timeout=15)
+    s.starttls(); s.login(os.environ["RUSR"], os.environ["RPWD"]); s.quit()
+except Exception as e:
+    print("probe-error:", e, file=sys.stderr); sys.exit(1)
+PY
+then
+  echo "$(date -Is) bifrost-ses: relay OK (AUTH a SES:587 exitoso)" >> "$LOG"
+else
+  echo "$(date -Is) bifrost-ses: ALERTA — el relay NO funciona (fallo AUTH/conexión a SES:587). El saliente externo NO sale. Revisá creds SES / puerto 587." >> "$LOG"
+fi
+# Alerta de cola: mail atascado = relay roto o SES rechazando. Cuenta entradas de cola (IDs hex).
+QN=$(docker compose exec -T mailserver postqueue -p 2>/dev/null | grep -cE '^[0-9A-F]{8,}' || true)
+if [ "\${QN:-0}" -gt 5 ]; then
+  echo "$(date -Is) bifrost-ses: ALERTA — $QN mensajes ATASCADOS en la cola de envío (revisá el relay)." >> "$LOG"
+fi
 ACT
 chmod 755 /usr/local/bin/bifrost-ses-activate
 # Timer pull-based: el box se auto-activa dentro de ~5 min de que la credencial aparezca en SSM, y
