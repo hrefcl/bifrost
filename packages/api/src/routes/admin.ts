@@ -212,7 +212,14 @@ export default function adminRoutes(fastify: FastifyInstance) {
     limit: z.coerce.number().int().min(1).max(200).default(50),
     skip: z.coerce.number().int().min(0).default(0),
   });
-  fastify.get('/scheduling/bookings', async (request) => {
+  fastify.get('/scheduling/bookings', async (request, reply) => {
+    // `auditEnabled` (review B-LOW): si el admin apagó la auditoría, el listado no se expone.
+    const settings = await getSchedulingSettings();
+    if (!settings.auditEnabled) {
+      return reply
+        .code(403)
+        .send({ statusCode: 403, error: 'Forbidden', message: 'Auditoría deshabilitada' });
+    }
     const q = auditQuery.parse(request.query);
     const filter: Record<string, unknown> = {};
     if (q.status) filter.status = q.status;

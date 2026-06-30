@@ -11,6 +11,7 @@ import { CalendarEvent } from '../models/CalendarEvent.js';
 import { User } from '../models/User.js';
 import { validateUsername, validateEventSlug } from '../lib/scheduling/slug.js';
 import { isValidZone } from '../lib/scheduling/time.js';
+import { getSchedulingSettings } from '../services/scheduling/settings.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i);
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
@@ -136,18 +137,31 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
     if (!slug.ok)
       return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: slug.reason });
     await assertOwnedSchedule(request.user.userId, body.availabilityScheduleId);
+    // Límite por usuario (review B-MED): si el admin lo configuró, contar tipos activos antes de crear.
+    const settings = await getSchedulingSettings();
+    if (settings.maxEventTypesPerUser !== undefined) {
+      const count = await EventType.countDocuments({
+        userId: request.user.userId,
+        active: true,
+      });
+      if (count >= settings.maxEventTypesPerUser) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: `Alcanzaste el máximo de ${String(settings.maxEventTypesPerUser)} tipos de reunión`,
+        });
+      }
+    }
     try {
       const ev = await EventType.create({ ...body, slug: slug.value, userId: request.user.userId });
       return serializeEventType(ev);
     } catch (err) {
       if (isDuplicateKey(err)) {
-        return reply
-          .code(409)
-          .send({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'Ya tienes un tipo con ese enlace',
-          });
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya tienes un tipo con ese enlace',
+        });
       }
       throw err;
     }
@@ -188,13 +202,11 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
       );
     } catch (err) {
       if (isDuplicateKey(err)) {
-        return reply
-          .code(409)
-          .send({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'Ya tienes un tipo con ese enlace',
-          });
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya tienes un tipo con ese enlace',
+        });
       }
       throw err;
     }
@@ -325,13 +337,11 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
       availabilityScheduleId: id,
     });
     if (inUse) {
-      return reply
-        .code(409)
-        .send({
-          statusCode: 409,
-          error: 'Conflict',
-          message: 'Un tipo de reunión usa este horario',
-        });
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Un tipo de reunión usa este horario',
+      });
     }
     const sched = await AvailabilitySchedule.findOne({ _id: id, userId: request.user.userId });
     if (!sched)

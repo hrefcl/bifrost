@@ -56,9 +56,11 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     };
   }
 
+  // Gate de DESCUBRIMIENTO + nueva reserva: requiere la feature activa Y los links públicos habilitados
+  // (review B-MED: `publicLinksEnabled` era no-op). La gestión por token NO usa este gate (sigue operativa).
   async function enabled(): Promise<boolean> {
     const s = await getSchedulingSettings();
-    return s.enabled;
+    return s.enabled && s.publicLinksEnabled;
   }
   const gone = (reply: import('fastify').FastifyReply, code = 404) =>
     reply.code(code).send({ statusCode: code, error: 'Not Found', message: 'No disponible' });

@@ -12,6 +12,7 @@ import { AvailabilitySchedule } from '../../models/AvailabilitySchedule.js';
 import { EventType } from '../../models/EventType.js';
 import { Booking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
+import { setSchedulingSettings } from '../../services/scheduling/settings.js';
 
 describe('Fase 3.3 — APIs host de agenda', () => {
   let app: FastifyInstance;
@@ -128,6 +129,19 @@ describe('Fase 3.3 — APIs host de agenda', () => {
       availabilityScheduleId: '0'.repeat(24),
     });
     expect(bad.statusCode).toBe(400);
+  });
+
+  it('event-types: respeta maxEventTypesPerUser (review B-MED) → 409 al exceder', async () => {
+    const { user } = await seedUserWithAccount({ email: 'a@test.com' });
+    const uid = user._id.toString();
+    const sched = await seedSchedule(uid);
+    await setSchedulingSettings({ maxEventTypesPerUser: 1 });
+    expect((await seedEventType(uid, sched.id, 'uno')).statusCode).toBe(200);
+    const second = await seedEventType(uid, sched.id, 'dos');
+    expect(second.statusCode).toBe(409);
+    // Al subir el límite, vuelve a permitir.
+    await setSchedulingSettings({ maxEventTypesPerUser: 5 });
+    expect((await seedEventType(uid, sched.id, 'dos')).statusCode).toBe(200);
   });
 
   it('event-types: DELETE es SOFT (active:false), no borra', async () => {

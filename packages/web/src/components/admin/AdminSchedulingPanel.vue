@@ -53,6 +53,9 @@ async function save() {
     });
     settings.value = data;
     saved.value = true;
+    // Reflejar de inmediato el toggle de auditoría (puede haber quedado habilitada/deshabilitada).
+    skip.value = 0;
+    await loadAudit();
   } catch {
     error.value = 'No se pudo guardar. Revisa los valores (zona horaria válida, rangos).';
   } finally {
@@ -65,6 +68,7 @@ const bookings = ref<Booking[]>([]);
 const auditTotal = ref(0);
 const auditStatus = ref<'' | 'confirmed' | 'cancelled' | 'rescheduled'>('');
 const auditLoading = ref(false);
+const auditDisabled = ref(false);
 const skip = ref(0);
 const LIMIT = 25;
 
@@ -79,7 +83,10 @@ async function loadAudit() {
     );
     bookings.value = data.bookings;
     auditTotal.value = data.total;
-  } catch {
+    auditDisabled.value = false;
+  } catch (e) {
+    // 403 = auditoría apagada en settings (no es un error real).
+    auditDisabled.value = (e as { response?: { status?: number } }).response?.status === 403;
     bookings.value = [];
   } finally {
     auditLoading.value = false;
@@ -205,14 +212,17 @@ onMounted(async () => {
       <section class="card">
         <div class="audit-head">
           <h2 class="h">Auditoría de reservas</h2>
-          <select v-model="auditStatus" class="in" @change="filterAudit">
+          <select v-model="auditStatus" class="in" :disabled="auditDisabled" @change="filterAudit">
             <option value="">Todas</option>
             <option value="confirmed">Confirmadas</option>
             <option value="cancelled">Canceladas</option>
             <option value="rescheduled">Reagendadas</option>
           </select>
         </div>
-        <div v-if="auditLoading" class="muted">Cargando…</div>
+        <p v-if="auditDisabled" class="muted">
+          La auditoría está deshabilitada en la configuración.
+        </p>
+        <div v-else-if="auditLoading" class="muted">Cargando…</div>
         <table v-else-if="bookings.length" class="tbl">
           <thead>
             <tr>

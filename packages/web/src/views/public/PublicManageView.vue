@@ -13,6 +13,7 @@ const token = ref(String(route.params.token));
 
 const booking = ref<Booking | null>(null);
 const loadErr = ref(false);
+const serverError = ref(false);
 const loading = ref(true);
 const busy = ref(false);
 const msg = ref('');
@@ -55,8 +56,10 @@ async function load() {
   try {
     const { data } = await api.get<Booking>(`/schedule/public/booking/${token.value}`);
     booking.value = data;
-  } catch {
-    loadErr.value = true;
+  } catch (e) {
+    const status = (e as { response?: { status?: number } }).response?.status;
+    if (status === 404 || status === 410) loadErr.value = true;
+    else serverError.value = true;
   } finally {
     loading.value = false;
   }
@@ -162,6 +165,10 @@ onMounted(load);
 <template>
   <PublicLayout>
     <div v-if="loading" class="muted">Cargando…</div>
+    <div v-else-if="serverError" class="notfound">
+      <h2>Algo salió mal</h2>
+      <p class="muted">No pudimos cargar tu reserva. Intenta de nuevo en un momento.</p>
+    </div>
     <div v-else-if="loadErr || !booking" class="notfound">
       <h2>Reserva no encontrada</h2>
       <p class="muted">El enlace puede haber expirado o ser inválido.</p>

@@ -123,6 +123,13 @@ describe('Fase 3.4 — rutas públicas de agenda', () => {
     ).toBe(404);
   });
 
+  it('gate: con publicLinksEnabled=false, el perfil da 404 (review B-MED)', async () => {
+    await seedHost();
+    await setSchedulingSettings({ enabled: true, publicLinksEnabled: false });
+    expect((await inj('GET', '/api/schedule/public/ana')).statusCode).toBe(404);
+    expect((await inj('GET', '/api/schedule/public/ana/30min/slots')).statusCode).toBe(404);
+  });
+
   it('slots: devuelve huecos; valida ventana y tz', async () => {
     await seedHost();
     const r = await inj(
