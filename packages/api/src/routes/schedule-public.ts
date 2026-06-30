@@ -65,6 +65,31 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
   const gone = (reply: import('fastify').FastifyReply, code = 404) =>
     reply.code(code).send({ statusCode: code, error: 'Not Found', message: 'No disponible' });
 
+  // Ventana de gestión por token (re-auditoría hostil B-MED): cierra dos abusos del token sin TTL:
+  //  (a) reagendar una reunión YA pasada al futuro (incluso con la feature apagada) → 410.
+  //  (b) cancelar/reagendar fuera de la anticipación mínima del host (`cancelMinNoticeMin`) → 409.
+  // `op`='reschedule' aplica además el guard de reunión pasada; 'cancel' sólo la política de anticipación.
+  const MIN_MS = 60_000;
+  function manageBlock(
+    startAt: Date,
+    cancelMinNoticeMin: number | undefined,
+    now: Date,
+    op: 'cancel' | 'reschedule'
+  ): { code: number; message: string } | null {
+    if (op === 'reschedule' && startAt.getTime() <= now.getTime()) {
+      return { code: 410, message: 'La reunión ya ocurrió' };
+    }
+    if (cancelMinNoticeMin !== undefined && cancelMinNoticeMin > 0) {
+      if (now.getTime() > startAt.getTime() - cancelMinNoticeMin * MIN_MS) {
+        return {
+          code: 409,
+          message: `Fuera de plazo: se requieren ${String(cancelMinNoticeMin)} min de anticipación`,
+        };
+      }
+    }
+    return null;
+  }
+
   // ───────── Perfil público ─────────
   fastify.get('/:userSlug', PUBLIC, async (request, reply) => {
     if (!(await enabled())) return gone(reply);
@@ -72,7 +97,12 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     const user = await User.findOne({ username: userSlug.toLowerCase() }).lean();
     if (!user) return gone(reply);
     // La página sólo existe si el host puede confirmar (cuenta primaria con SMTP) — decisión de producto.
-    const hasSmtp = await Account.exists({ userId: user._id, isPrimary: true });
+    // Excluye cuentas DESHABILITADAS (re-auditoría D-LOW): un host suspendido no debe recibir reservas.
+    const hasSmtp = await Account.exists({
+      userId: user._id,
+      isPrimary: true,
+      status: { $ne: 'disabled' },
+    });
     if (!hasSmtp) return gone(reply);
     const events = await EventType.find({ userId: user._id, active: true }).sort({ createdAt: 1 });
     const profile: PublicSchedulingProfile = {
@@ -196,8 +226,12 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     if (!ev) return gone(reply);
     const sched = await AvailabilitySchedule.findById(ev.availabilityScheduleId);
     if (!sched) return gone(reply);
-    const account = await Account.findOne({ userId: user._id, isPrimary: true }).select('_id');
-    if (!account) return gone(reply); // sin SMTP no se agenda
+    const account = await Account.findOne({
+      userId: user._id,
+      isPrimary: true,
+      status: { $ne: 'disabled' },
+    }).select('_id');
+    if (!account) return gone(reply); // sin SMTP activo no se agenda
 
     // Validar answers contra las preguntas del tipo (review C-12): ids válidos + requeridas respondidas.
     const validQ = new Map(ev.customQuestions.map((q) => [q.id, q]));
@@ -295,6 +329,10 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     if (booking?.status !== 'confirmed') return gone(reply);
     const ev = await EventType.findById(booking.eventTypeId);
     if (!ev) return gone(reply);
+    // No ofrecer slots de reagendado para una reunión ya pasada / fuera de plazo (review B-MED #4).
+    if (manageBlock(booking.startAt, ev.cancelMinNoticeMin, new Date(), 'reschedule')) {
+      return gone(reply, 410);
+    }
     const sched = await AvailabilitySchedule.findById(ev.availabilityScheduleId);
     if (!sched) return gone(reply);
     const schedule = resolveSchedule(sched);
@@ -324,6 +362,15 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     const booking = await bookingByToken(token);
     if (!booking) return gone(reply);
     if (booking.status === 'rescheduled') return gone(reply, 410); // token viejo de una reagendada
+    if (booking.status === 'confirmed') {
+      // Política de anticipación mínima del host (review B-MED). Una reserva ya cancelada es idempotente.
+      const ev = await EventType.findById(booking.eventTypeId).select('cancelMinNoticeMin');
+      const block = manageBlock(booking.startAt, ev?.cancelMinNoticeMin, new Date(), 'cancel');
+      if (block)
+        return reply
+          .code(block.code)
+          .send({ statusCode: block.code, error: 'Conflict', message: block.message });
+    }
     const updated = await cancelBooking(booking, 'invitee', body.reason);
     return serializeBooking(updated);
   });
@@ -336,6 +383,12 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     if (booking.status !== 'confirmed') return gone(reply, 410);
     const ev = await EventType.findById(booking.eventTypeId);
     if (!ev) return gone(reply);
+    // Guard de gestión: no reagendar una reunión pasada (review B-MED #4) ni fuera de la anticipación mínima.
+    const block = manageBlock(booking.startAt, ev.cancelMinNoticeMin, new Date(), 'reschedule');
+    if (block)
+      return reply
+        .code(block.code)
+        .send({ statusCode: block.code, error: 'Conflict', message: block.message });
     const sched = await AvailabilitySchedule.findById(ev.availabilityScheduleId);
     if (!sched) return gone(reply);
     const account = await Account.findOne({ userId: booking.userId, isPrimary: true }).select(

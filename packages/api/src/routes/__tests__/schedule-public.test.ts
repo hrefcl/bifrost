@@ -13,6 +13,7 @@ import { EventType } from '../../models/EventType.js';
 import { Booking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
 import { setSchedulingSettings } from '../../services/scheduling/settings.js';
+import { randomToken, hashToken } from '../../config/crypto.js';
 
 describe('Fase 3.4 — rutas públicas de agenda', () => {
   let app: FastifyInstance;
@@ -200,5 +201,67 @@ describe('Fase 3.4 — rutas públicas de agenda', () => {
     ).toBe(410);
     // sólo 1 confirmada
     expect(await Booking.countDocuments({ status: 'confirmed' })).toBe(1);
+  });
+
+  it('gestión: una reserva PASADA no se puede reagendar → 410 (re-auditoría hostil B-MED #4)', async () => {
+    const user = await seedHost();
+    const ev = await EventType.findOne({ userId: user._id, slug: '30min' });
+    const rawToken = randomToken(32);
+    // Inserta una reserva confirmada cuyo inicio YA pasó (token aún válido).
+    await Booking.create({
+      eventTypeId: ev?._id,
+      userId: user._id,
+      snapshot: {
+        timezone: 'America/Bogota',
+        durationMinutes: 30,
+        bufferBeforeMin: 0,
+        bufferAfterMin: 0,
+        minimumNoticeMin: 0,
+        title: 'Reunión 30 min',
+        location: { type: 'video' },
+      },
+      startAt: new Date('2020-01-01T15:00:00.000Z'),
+      endAt: new Date('2020-01-01T15:30:00.000Z'),
+      invitee: { name: 'Viejo', email: 'viejo@x.com', timezone: 'UTC' },
+      answers: [],
+      status: 'confirmed',
+      source: 'public',
+      managementTokenHash: hashToken(rawToken),
+      icsUid: `${randomToken(16)}@bifrost-agenda`,
+    });
+    // reschedule de una reunión pasada → 410; los slots de reagendado también → 410.
+    const r = await inj('POST', `/api/schedule/public/booking/${rawToken}/reschedule`, {
+      startAt: '2026-07-06T15:00:00.000Z',
+    });
+    expect(r.statusCode).toBe(410);
+    const s = await inj(
+      'GET',
+      `/api/schedule/public/booking/${rawToken}/slots?from=2026-07-06T00:00:00.000Z&to=2026-07-07T00:00:00.000Z`
+    );
+    expect(s.statusCode).toBe(410);
+  });
+
+  it('gestión: cancelMinNoticeMin bloquea cancel/reschedule fuera de plazo → 409 (B-MED)', async () => {
+    const user = await seedHost();
+    // Anticipación mínima enorme → cualquier reserva futura queda "fuera de plazo".
+    await EventType.updateOne(
+      { userId: user._id, slug: '30min' },
+      { $set: { cancelMinNoticeMin: 60 * 24 * 3650 } } // ~10 años
+    );
+    const booked = await inj('POST', '/api/schedule/public/ana/30min/book', {
+      startAt: '2026-07-06T14:00:00.000Z',
+      invitee: { name: 'Ana', email: 'ana2@x.com', timezone: 'UTC' },
+    });
+    const { managementToken } = JSON.parse(booked.body) as { managementToken: string };
+    expect(
+      (
+        await inj('POST', `/api/schedule/public/booking/${managementToken}/reschedule`, {
+          startAt: '2026-07-06T15:00:00.000Z',
+        })
+      ).statusCode
+    ).toBe(409);
+    expect(
+      (await inj('POST', `/api/schedule/public/booking/${managementToken}/cancel`, {})).statusCode
+    ).toBe(409);
   });
 });

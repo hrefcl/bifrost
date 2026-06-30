@@ -193,6 +193,29 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
     }
     if (body.availabilityScheduleId)
       await assertOwnedSchedule(request.user.userId, body.availabilityScheduleId);
+    // Reactivar (active:false→true) un tipo soft-borrado también consume cupo: evita evadir
+    // maxEventTypesPerUser reactivando en lugar de crear (re-auditoría hostil — bypass del límite).
+    if (body.active === true) {
+      const settings = await getSchedulingSettings();
+      if (settings.maxEventTypesPerUser !== undefined) {
+        const current = await EventType.findOne({ _id: id, userId: request.user.userId }).select(
+          'active'
+        );
+        if (current && !current.active) {
+          const count = await EventType.countDocuments({
+            userId: request.user.userId,
+            active: true,
+          });
+          if (count >= settings.maxEventTypesPerUser) {
+            return reply.code(409).send({
+              statusCode: 409,
+              error: 'Conflict',
+              message: `Alcanzaste el máximo de ${String(settings.maxEventTypesPerUser)} tipos de reunión`,
+            });
+          }
+        }
+      }
+    }
     let ev;
     try {
       ev = await EventType.findOneAndUpdate(

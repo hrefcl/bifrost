@@ -144,6 +144,20 @@ describe('Fase 3.3 — APIs host de agenda', () => {
     expect((await seedEventType(uid, sched.id, 'dos')).statusCode).toBe(200);
   });
 
+  it('event-types: reactivar (active:true) NO evade maxEventTypesPerUser → 409 (re-auditoría)', async () => {
+    const { user } = await seedUserWithAccount({ email: 'a@test.com' });
+    const uid = user._id.toString();
+    const sched = await seedSchedule(uid);
+    const a = JSON.parse((await seedEventType(uid, sched.id, 'uno')).body) as { id: string };
+    // soft-delete 'uno' → 0 activos; con límite 1 se crea 'dos' (1 activo).
+    await del(uid, `/api/schedule/event-types/${a.id}`);
+    await setSchedulingSettings({ maxEventTypesPerUser: 1 });
+    expect((await seedEventType(uid, sched.id, 'dos')).statusCode).toBe(200);
+    // Reactivar 'uno' llevaría a 2 activos > límite → 409 (no se puede evadir por la puerta de atrás).
+    const react = await patch(uid, `/api/schedule/event-types/${a.id}`, { active: true });
+    expect(react.statusCode).toBe(409);
+  });
+
   it('event-types: DELETE es SOFT (active:false), no borra', async () => {
     const { user } = await seedUserWithAccount({ email: 'a@test.com' });
     const uid = user._id.toString();
