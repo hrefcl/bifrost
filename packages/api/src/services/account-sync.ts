@@ -1,7 +1,6 @@
-import { randomUUID } from 'node:crypto';
 import { Account, type IAccount } from '../models/Account.js';
 import { Folder } from '../models/Folder.js';
-import { redis } from '../config/redis.js';
+import { withLock } from '../lib/withLock.js';
 import { listAndSyncFolders, syncFolderHeaders } from './imap.js';
 
 /**
@@ -14,48 +13,22 @@ import { listAndSyncFolders, syncFolderHeaders } from './imap.js';
  *    status nunca se actualizaba).
  */
 
-// TTL del lock: el HEARTBEAT lo renueva mientras el sync corre, así que basta con que supere el
-// intervalo de renovación. Si la instancia muere, deja de renovar y el lock expira → otra retoma.
-const LOCK_TTL_SECONDS = 120;
+// El lock distribuido se generalizó a `lib/withLock.ts` (reutilizado por la agenda — review B).
+// `withAccountLock` queda como wrapper fino con la clave por-cuenta; MISMA semántica que antes
+// (token único + heartbeat que renueva el TTL + release atómico Lua; `{skipped:true}` si otra
+// instancia lo tiene; TTL 120s).
 const lockKey = (accountId: string) => `sync:account:${accountId}`;
-// Release/extend ATÓMICOS por token: borra/extiende el lock SÓLO si seguimos siendo el dueño (el
-// valor sigue siendo nuestro token). Evita el bug clásico de borrar el lock de OTRA instancia que lo
-// tomó tras una expiración (review B+D).
-const RELEASE_LUA =
-  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end";
-const EXTEND_LUA =
-  "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) else return 0 end";
 
 /**
- * Ejecuta `fn` con el LOCK DISTRIBUIDO de la cuenta tomado (token único + release atómico + heartbeat
- * que renueva el TTL mientras corre). Si otra instancia ya lo tiene, devuelve `{skipped:true}` sin
- * correr `fn`. Lo usan TANTO el barrido de fondo COMO el sync manual, para que no se pisen
- * (multi-instancia) — review B+D.
+ * Ejecuta `fn` con el LOCK DISTRIBUIDO de la cuenta tomado. Si otra instancia ya lo tiene, devuelve
+ * `{skipped:true}` sin correr `fn`. Lo usan TANTO el barrido de fondo COMO el sync manual, para que
+ * no se pisen (multi-instancia) — review B+D.
  */
 export async function withAccountLock<T>(
   accountId: string,
   fn: () => Promise<T>
 ): Promise<{ skipped: true } | { skipped: false; result: T }> {
-  const key = lockKey(accountId);
-  const token = randomUUID();
-  const acquired = await redis.set(key, token, 'EX', LOCK_TTL_SECONDS, 'NX');
-  if (acquired !== 'OK') return { skipped: true };
-  // Heartbeat: extiende el TTL (sólo si seguimos siendo dueños) mientras `fn` corre, para que un sync
-  // más largo que el TTL no deje expirar el lock y entre otra instancia.
-  const renew = setInterval(
-    () => {
-      void redis.eval(EXTEND_LUA, 1, key, token, String(LOCK_TTL_SECONDS)).catch(() => undefined);
-    },
-    (LOCK_TTL_SECONDS * 1000) / 2
-  );
-  renew.unref();
-  try {
-    const result = await fn();
-    return { skipped: false, result };
-  } finally {
-    clearInterval(renew);
-    await redis.eval(RELEASE_LUA, 1, key, token).catch(() => undefined);
-  }
+  return withLock(lockKey(accountId), fn, { ttlSeconds: 120 });
 }
 
 export async function syncAccount(

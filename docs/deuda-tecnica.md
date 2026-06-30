@@ -365,3 +365,19 @@ UI está i18n).
 4. Cobertura e2e de Contacts/Calendar (hoy sin specs propios).
 
 Para verlo: `pnpm demo`.
+
+---
+
+## Agenda Inteligente — re-auditoría hostil (sesión calendar-scheduling)
+
+Tras B v3 APPROVE (9.1), una ronda hostil B(Codex)+D(Kimi) sobre el código nuevo. **0 HIGH.**
+
+**Resuelto en esta ronda (con test):**
+- Bypass de `maxEventTypesPerUser` por reactivación (`PATCH active:false→true`) → ahora revalida el cupo (409).
+- Token de gestión sin ventana: una reserva **pasada** podía reagendarse al futuro (incluso con feature off) → guard `manageBlock` → 410 en reschedule/slots-by-token de reuniones pasadas.
+- `cancelMinNoticeMin` configurado pero nunca aplicado → ahora se aplica en cancel/reschedule (409 fuera de plazo).
+- Cuenta primaria **deshabilitada** ya no recibe reservas (perfil/book filtran `status != disabled`).
+
+**Deuda LOW aceptada (no bloqueante, documentada):**
+- **TD-SCHED-LIMIT-RACE**: el chequeo de `maxEventTypesPerUser` (count + create) no es atómico; dos POST concurrentes podrían exceder el límite por 1. Es un soft-limit de plan/config, no un invariante de seguridad. Fix futuro si se quiere estricto: contador atómico/lock por usuario.
+- **TD-SCHED-SUMMARY-AUDIT**: `GET /admin/scheduling/summary` no está gateado por `auditEnabled` (sí lo está `/bookings`). Sólo expone agregados (conteos), es admin-only. Si el producto exige "ningún dato derivado de bookings con auditoría off", gatearlo también.

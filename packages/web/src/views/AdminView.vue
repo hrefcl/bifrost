@@ -4,6 +4,7 @@ import { AxiosError } from 'axios';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
+import AdminSchedulingPanel from '@/components/admin/AdminSchedulingPanel.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
@@ -15,7 +16,7 @@ import { BUILD_INFO } from '@/lib/buildInfo';
  *  - Almacenamiento: destino de los adjuntos (local / S3) — wizard preexistente.
  * Todo exige rol admin (verificado también en el backend).
  */
-type Tab = 'accounts' | 'branding' | 'storage';
+type Tab = 'accounts' | 'branding' | 'storage' | 'scheduling';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -451,7 +452,13 @@ async function save() {
           <button class="tab" :class="{ active: tab === 'storage' }" @click="tab = 'storage'">
             <AppIcon name="archive" :size="16" /> {{ t('admin.tabs.storage') }}
           </button>
+          <button class="tab" :class="{ active: tab === 'scheduling' }" @click="tab = 'scheduling'">
+            <AppIcon name="users" :size="16" /> {{ t('admin.tabs.scheduling') }}
+          </button>
         </nav>
+
+        <!-- ===================== AGENDA ===================== -->
+        <AdminSchedulingPanel v-if="tab === 'scheduling'" />
 
         <!-- ===================== CUENTAS ===================== -->
         <div v-if="tab === 'accounts'" class="card">

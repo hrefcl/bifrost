@@ -300,4 +300,83 @@ describe('admin role + requireAdmin (PR-A)', () => {
     expect(ok.statusCode).toBe(200);
     await app.close();
   });
+
+  // ───────── Agenda (Fase 3.7) ─────────
+  async function adminApp(email: string) {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    return { app, headers: authHeaders(app, user._id.toString()) };
+  }
+
+  it('scheduling/settings: GET default + PATCH parcial (defaults se mergea, no se exige completo)', async () => {
+    const { app, headers } = await adminApp('sched-cfg@test.com');
+    const get = await app.inject({ method: 'GET', url: '/api/admin/scheduling/settings', headers });
+    expect(get.statusCode).toBe(200);
+    const patch = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/scheduling/settings',
+      headers,
+      payload: { enabled: true, defaults: { durationMinutes: 45 } },
+    });
+    expect(patch.statusCode).toBe(200);
+    const body = JSON.parse(patch.body) as {
+      enabled: boolean;
+      defaults: { durationMinutes: number; timezone: string };
+    };
+    expect(body.enabled).toBe(true);
+    expect(body.defaults.durationMinutes).toBe(45);
+    expect(body.defaults.timezone).toBeTruthy(); // no se perdió el resto del objeto
+    await app.close();
+  });
+
+  it('scheduling/settings: PATCH con tz inválida → 400', async () => {
+    const { app, headers } = await adminApp('sched-tz@test.com');
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/scheduling/settings',
+      headers,
+      payload: { defaults: { timezone: 'Marte/Olympus' } },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('scheduling/bookings: 403 si auditEnabled=false, 200 si on (review B-LOW)', async () => {
+    const { app, headers } = await adminApp('sched-audit@test.com');
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/scheduling/settings',
+      headers,
+      payload: { auditEnabled: false },
+    });
+    expect(
+      (await app.inject({ method: 'GET', url: '/api/admin/scheduling/bookings', headers }))
+        .statusCode
+    ).toBe(403);
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/scheduling/settings',
+      headers,
+      payload: { auditEnabled: true },
+    });
+    const ok = await app.inject({ method: 'GET', url: '/api/admin/scheduling/bookings', headers });
+    expect(ok.statusCode).toBe(200);
+    expect(JSON.parse(ok.body)).toHaveProperty('total');
+    await app.close();
+  });
+
+  it('scheduling/{settings,bookings,summary} exigen admin → 403 para usuario normal', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'sched-norm@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    for (const url of [
+      '/api/admin/scheduling/settings',
+      '/api/admin/scheduling/bookings',
+      '/api/admin/scheduling/summary',
+    ]) {
+      expect((await app.inject({ method: 'GET', url, headers })).statusCode).toBe(403);
+    }
+    await app.close();
+  });
 });

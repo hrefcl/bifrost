@@ -16,6 +16,8 @@ import emailRoutes from './routes/emails.js';
 import draftRoutes from './routes/drafts.js';
 import contactRoutes from './routes/contacts.js';
 import calendarRoutes from './routes/calendar.js';
+import scheduleRoutes from './routes/schedule.js';
+import schedulePublicRoutes from './routes/schedule-public.js';
 import adminRoutes from './routes/admin.js';
 import brandingRoutes from './routes/branding.js';
 import configRoutes from './routes/config.js';
@@ -126,6 +128,8 @@ export async function buildApp() {
   await app.register(draftRoutes, { prefix: '/api/drafts' });
   await app.register(contactRoutes, { prefix: '/api/contacts' });
   await app.register(calendarRoutes, { prefix: '/api/calendar' });
+  await app.register(scheduleRoutes, { prefix: '/api/schedule' });
+  await app.register(schedulePublicRoutes, { prefix: '/api/schedule/public' });
   await app.register(adminRoutes, { prefix: '/api/admin' });
   await app.register(brandingRoutes, { prefix: '/api/branding' });
   await app.register(configRoutes, { prefix: '/api/config' });
