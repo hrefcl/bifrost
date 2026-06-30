@@ -168,4 +168,24 @@ describe('syncFolderHeaders incremental (F3.4)', () => {
     // Sin duplicados (índice único + serialización).
     expect(await Email.countDocuments({ folderId: fid })).toBe(2);
   });
+
+  it('backfill: un email existente SIN threadId se re-threadea en el próximo sync (no cuenta como nuevo)', async () => {
+    const { account } = await seedUserWithAccount({ email: 'backfill@test.com' });
+    const folder = await seedFolder(account._id);
+    const fid = folder._id.toString();
+    h.messages = [{ uid: 7, flags: new Set(), subject: 'hilo' }];
+    await syncFolderHeaders(account, fid); // inserta uid7 con threadId calculado
+    // Simula un email guardado ANTES de la feature: sin threadId.
+    await Email.updateOne(
+      { accountId: account._id.toString(), uid: 7 },
+      { $unset: { threadId: 1, references: 1 } }
+    );
+    expect((await Email.findOne({ folderId: fid, uid: 7 }).lean())?.threadId).toBeUndefined();
+
+    // Próximo sync: el backfill lo re-fetchea y le calcula el threadId. NO se cuenta como nuevo.
+    const inserted = await syncFolderHeaders(account, fid);
+    expect(inserted).toBe(0); // backfill no es "correo nuevo"
+    const after = await Email.findOne({ folderId: fid, uid: 7 }).lean();
+    expect(after?.threadId).toBe('<7@test>'); // del messageId del envelope mock
+  });
 });

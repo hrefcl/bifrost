@@ -15,6 +15,11 @@ import { createImapClient } from './mail-transport.js';
 // Tamaño de lote para comandos IMAP/Mongo (evita rangos UID/$in gigantes).
 const SYNC_CHUNK = 200;
 
+// Tope de re-fetch para el BACKFILL del threading por folder y por sync: los emails viejos sin
+// threadId se re-traen para calcularlo, pero acotado para no re-fetchear un buzón gigante de un golpe
+// (se completa en sucesivos syncs). Ver services/threading.ts y TD-THREADING-UI.
+const RETHREAD_CAP = 2000;
+
 // Tamaño de lote para la reconciliación de flags: a lo sumo este número de headers del
 // servidor se procesan a la vez (find por $in + bulkWrite). Acota la memoria del paso de
 // flags independientemente del tamaño del folder. Clamp defensivo: un env no-finito/<1 cae
@@ -276,6 +281,7 @@ async function syncFolderHeadersInner(account: IAccount, folderId: string): Prom
       // el camino O(cambios) es CONDSTORE/HIGHESTMODSEQ → ver TD-SYNC-CONDSTORE.
       const serverUids = new Set<number>();
       const newUids: number[] = [];
+      const rethreadUids: number[] = []; // backfill: existentes sin threadId a re-fetchear
       let count = 0;
       let unseen = 0;
       let totalMessages = 0;
@@ -294,7 +300,7 @@ async function syncFolderHeadersInner(account: IAccount, folderId: string): Prom
           folderId: folderIdStr,
           uid: { $in: bufUids },
         })
-          .select('uid flags')
+          .select('uid flags threadId')
           .lean();
         const localByUid = new Map(locals.map((e) => [e.uid, e]));
         const flagOps: Parameters<typeof Email.bulkWrite>[0] = [];
@@ -302,6 +308,11 @@ async function syncFolderHeadersInner(account: IAccount, folderId: string): Prom
           const known = localByUid.get(m.uid);
           if (!known) {
             newUids.push(m.uid);
+          } else if (!known.threadId && rethreadUids.length < RETHREAD_CAP) {
+            // BACKFILL del threading: un email guardado ANTES de la feature no tiene threadId (ni
+            // references). Se re-fetchea (el full-fetch corre upsertMessage → calcula threadId). El
+            // tope reparte el re-fetch de un buzón grande en varios syncs (no un golpe único).
+            rethreadUids.push(m.uid);
           } else if (flagsChanged(known.flags, m.flags)) {
             flagOps.push({
               updateOne: {
@@ -366,10 +377,13 @@ async function syncFolderHeadersInner(account: IAccount, folderId: string): Prom
       // nuevos, en sub-lotes IMAP de SYNC_CHUNK (sin anidar comandos). En un sync incremental
       // newUids ≈ 0; sólo el primer sync de un folder grande acumula la lista (enteros), el
       // mínimo bookkeeping inevitable para enumerar lo que hay que traer.
-      for (const batch of chunk(newUids, SYNC_CHUNK)) {
+      // newUids (alta real) + rethreadUids (backfill de threadId): mismo full-fetch + upsert. Sólo los
+      // NUEVOS cuentan como "mensajes nuevos" (el backfill no debe dispararse como correo entrante).
+      const newSet = new Set(newUids);
+      for (const batch of chunk([...newUids, ...rethreadUids], SYNC_CHUNK)) {
         for await (const msg of client.fetch(batch.join(','), query, { uid: true })) {
           await upsertMessage(account, folder, msg);
-          count++;
+          if (newSet.has(msg.uid)) count++;
         }
       }
 
