@@ -330,8 +330,20 @@ export default function schedulePublicRoutes(fastify: FastifyInstance) {
     const ev = await EventType.findById(booking.eventTypeId);
     if (!ev) return gone(reply);
     // No ofrecer slots de reagendado para una reunión ya pasada / fuera de plazo (review B-MED #4).
-    if (manageBlock(booking.startAt, ev.cancelMinNoticeMin, new Date(), 'reschedule')) {
-      return gone(reply, 410);
+    // Propaga el código exacto del bloqueo (410 pasada, 409 fuera de anticipación) — consistente con
+    // POST .../reschedule (review B final: el endpoint de slots no debe colapsar todo a 410).
+    const slotsBlock = manageBlock(
+      booking.startAt,
+      ev.cancelMinNoticeMin,
+      new Date(),
+      'reschedule'
+    );
+    if (slotsBlock) {
+      return reply.code(slotsBlock.code).send({
+        statusCode: slotsBlock.code,
+        error: slotsBlock.code === 410 ? 'Gone' : 'Conflict',
+        message: slotsBlock.message,
+      });
     }
     const sched = await AvailabilitySchedule.findById(ev.availabilityScheduleId);
     if (!sched) return gone(reply);

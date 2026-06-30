@@ -263,5 +263,31 @@ describe('Fase 3.4 — rutas públicas de agenda', () => {
     expect(
       (await inj('POST', `/api/schedule/public/booking/${managementToken}/cancel`, {})).statusCode
     ).toBe(409);
+    // El endpoint de slots de reagendado también respeta la anticipación → 409 (no 410, review B final).
+    const s = await inj(
+      'GET',
+      `/api/schedule/public/booking/${managementToken}/slots?from=2026-07-06T00:00:00.000Z&to=2026-07-07T00:00:00.000Z`
+    );
+    expect(s.statusCode).toBe(409);
+  });
+
+  it('cuenta primaria DESHABILITADA → perfil/book dan 404 (re-auditoría D-LOW)', async () => {
+    const user = await seedHost();
+    await Account.updateOne(
+      { userId: user._id, isPrimary: true },
+      { $set: { status: 'disabled' } }
+    );
+    expect((await inj('GET', '/api/schedule/public/ana')).statusCode).toBe(404);
+    expect(
+      (
+        await inj('POST', '/api/schedule/public/ana/30min/book', {
+          startAt: '2026-07-06T14:00:00.000Z',
+          invitee: { name: 'J', email: 'j@x.com', timezone: 'UTC' },
+        })
+      ).statusCode
+    ).toBe(404);
+    // En cambio 'syncing'/'error' siguen permitidas (pueden enviar SMTP).
+    await Account.updateOne({ userId: user._id, isPrimary: true }, { $set: { status: 'syncing' } });
+    expect((await inj('GET', '/api/schedule/public/ana')).statusCode).toBe(200);
   });
 });
