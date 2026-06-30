@@ -443,9 +443,9 @@ Tu reunión con Ana Pérez fue cancelada.  [Agendar otra]   (ICS METHOD:CANCEL a
 | H7 username | `GET/PATCH /profile` |
 | P1 perfil | `GET /public/:userSlug` |
 | P2 reservar | `GET /public/:userSlug/:eventSlug` · `…/slots` · `POST …/book` |
-| P3 gestionar | `GET/POST /public/booking/:token(/cancel|/reschedule)` |
-| A1 config | `GET/PATCH /admin/scheduling` |
-| A2 auditoría | `GET /admin/scheduling/audit` |
+| P3 gestionar | `GET/POST /public/booking/:token(/cancel|/reschedule)` · `GET …/slots` (reagendar) |
+| A1 config | `GET/PATCH /admin/scheduling/settings` · `GET /admin/scheduling/summary` |
+| A2 auditoría | `GET /admin/scheduling/bookings?status&from&to&userId&limit&skip` |
 | E1–E3 correos | worker BullMQ (post-commit) |
 
 ---
@@ -459,3 +459,18 @@ Tu reunión con Ana Pérez fue cancelada.  [Agendar otra]   (ICS METHOD:CANCEL a
 
 > Este documento es el contrato visual/funcional. Si la implementación se desvía de un mockup, se actualiza
 > aquí primero y se re-revisa.
+
+---
+
+# Decisiones de revisión (B/D — Fase 3.6/3.7)
+
+- **Privacidad de `location.value`** (B-HIGH): la dirección / URL de videollamada / teléfono del lugar
+  **NO** se expone en los endpoints públicos pre-reserva (`/public/:userSlug` y `/:eventSlug` devuelven
+  sólo `location.type`). El invitado lo recibe **después** de reservar: en el correo de confirmación y en
+  el snapshot del booking (gateado por el token de gestión).
+- **Token de gestión tras reagendar** (B/D-HIGH): el reschedule emite un `managementToken` nuevo y retira
+  el viejo; la UI de gestión lo adopta y reescribe la URL (`router.replace`) para que recargar siga válido.
+- **Replay idempotente** (B/D-MED): si el `POST /book` es un replay, el backend no reexpone el token; la UI
+  muestra el fallback "usa el enlace del correo" en lugar de un enlace roto.
+- **Disponibilidad host** (B-MED): H3 permite editar zona horaria e intervalos por día (añadir/editar/quitar),
+  no sólo activar/desactivar.
