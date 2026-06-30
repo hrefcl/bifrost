@@ -79,13 +79,19 @@ verdad y evita el Lambda custom-resource.
   SecretAccessKey crudo de AWS **no toca el box** (B-HIGH#1: el box recibe el password SMTP, no la key AWS).
 - El `InstanceRole` (CFN) recibe `ssm:GetParameter` + `kms:Decrypt` **scoped al parámetro/clave exactos**.
 
-### 4. Relay en docker-mailserver — user-data
-- En el boot, el box lee el parámetro SSM con el rol (IMDS), escribe un **env-file `0600`** con
-  `RELAY_HOST=email-smtp.<region>.amazonaws.com`, `RELAY_PORT=587`, `RELAY_USER`, `RELAY_PASSWORD`.
-- Sólo cuando el operador eligió SES (flag `ses`), igual que `s3Bucket` gatea el bloque S3.
-- **Rotación (3AM):** docker-mailserver NO recarga el relay en caliente → rotar = reescribir el env-file
-  + `docker compose restart mailserver`. Documentado como procedimiento op; un `bifrost-provision
-  rotate-ses` lo hace. Healthcheck del 587 saliente en el readiness.
+### 4. Relay en docker-mailserver — user-data (vía `config/user-patches.sh`, PROBADO)
+- El helper `bifrost-ses-activate` lee la credencial de SSM (con el rol) y escribe **`config/user-patches.sh`**
+  con la config del relay (`postconf relayhost = [email-smtp.<region>...]:587` + SASL `/etc/postfix/sasl_passwd`).
+- **Por qué user-patches.sh y NO `mailserver.env`+`compose up`:** docker-mailserver corre user-patches.sh en
+  CADA arranque del contenedor → el relay **sobrevive restart/reboot/recreate**. Confiar en que
+  `docker compose up -d` recree por un cambio de *contenido* de `env_file` es FRÁGIL/version-dependiente: si
+  no recrea, el relay nunca se aplica → **replicaría a un nuevo usuario el incidente del relay perdido**
+  (ver `docs/post-mortem-relay-saliente.md`). Mecanismo verificado contra un restart real del contenedor.
+- El helper lo aplica **YA** en el contenedor corriendo (`exec ... user-patches.sh`) + `postqueue -f`
+  (flushea la cola atascada), sin esperar un restart. Idempotente (sólo si el contenido cambió).
+- Sólo cuando el operador eligió SES, igual que `s3Bucket` gatea el bloque S3.
+- **Rotación (3AM):** `rotate-ses` reescribe el SSM param; el cron (≤5 min) regenera user-patches.sh y lo
+  re-aplica. (El env-file `mailserver.env` queda como camino MANUAL alternativo, documentado en el README.)
 
 ### 5. Estado de envío honesto (corrige B-HIGH#3)
 - Tras provisionar, el CLI llama `GetAccountSendingEnabled` + `GetAccount` → detecta **sandbox**.

@@ -150,9 +150,10 @@ ${
 }
 ${
   input.sesParamName
-    ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b) — mailserver.env vacío. El compose
-# referencia este env_file; un helper lo puebla SÓLO cuando la credencial SMTP existe en SSM (= el
-# orquestador del CLI la publica al quedar el outbound 'ready'). awscli para leer el SecureString con el rol.
+    ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b). Un helper lo activa SÓLO cuando la
+# credencial SMTP existe en SSM (= el orquestador del CLI la publica al quedar el outbound 'ready'),
+# escribiéndola en config/user-patches.sh (PERSISTENTE: docker-mailserver lo re-corre en cada arranque →
+# sobrevive restart/reboot, a diferencia de una config en caliente). awscli para leer el SecureString.
 apt_retry install -y awscli
 SES_PARAM="${sh(input.sesParamName)}"
 printf 'SES_PARAM=%s\\nSES_REGION=%s\\nCOMPOSE_DIR=%s\\n' "$SES_PARAM" "$REGION" "$(pwd)" > /etc/bifrost-ses.conf
@@ -166,13 +167,36 @@ VAL=$(aws ssm get-parameter --name "$SES_PARAM" --with-decryption --region "$SES
 RUSER=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessKeyId"])')
 RPASS=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["smtpPassword"])')
 cd "$COMPOSE_DIR"
-NEW=$(printf 'RELAY_HOST=email-smtp.%s.amazonaws.com\\nRELAY_PORT=587\\nRELAY_USER=%s\\nRELAY_PASSWORD=%s\\n' "$SES_REGION" "$RUSER" "$RPASS")
-# Sólo recrear si cambió (evita reinicios innecesarios del mailserver en cada corrida del timer).
-if [ "$(cat mailserver.env 2>/dev/null)" != "$NEW" ]; then
-  umask 077
-  printf '%s' "$NEW" > mailserver.env
-  docker compose up -d mailserver
-  echo "bifrost-ses: relay ACTIVADO (RELAY_USER=$RUSER)"
+RELAY="email-smtp.$SES_REGION.amazonaws.com"
+# El relay se persiste vía config/user-patches.sh: docker-mailserver lo corre en CADA arranque del
+# contenedor → sobrevive restart/reboot/recreate. NO se usa 'compose up' confiando en que recree por el
+# cambio de env_file (comportamiento FRÁGIL/version-dependiente que dejaría el relay sin aplicar). Este
+# mecanismo está PROBADO contra un restart real. (Comillas simples internas para los valores de postconf
+# → cero backslashes que el generador del user-data malinterprete.)
+mkdir -p config
+umask 077
+{
+  echo '#!/bin/bash'
+  echo "postconf -e 'relayhost = [$RELAY]:587'"
+  echo "postconf -e 'smtp_sasl_auth_enable = yes'"
+  echo "postconf -e 'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd'"
+  echo "postconf -e 'smtp_sasl_security_options = noanonymous'"
+  echo "postconf -e 'smtp_tls_security_level = encrypt'"
+  echo "echo '[$RELAY]:587 $RUSER:$RPASS' > /etc/postfix/sasl_passwd"
+  echo 'postmap hash:/etc/postfix/sasl_passwd'
+  echo 'chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db'
+  echo 'postfix reload || true'
+} > config/user-patches.sh.new
+chmod 700 config/user-patches.sh.new
+# Sólo re-aplicar si cambió (el cron corre cada 5 min; evita exec/flush innecesarios).
+if ! cmp -s config/user-patches.sh.new config/user-patches.sh 2>/dev/null; then
+  mv config/user-patches.sh.new config/user-patches.sh
+  # Aplicar YA en el contenedor corriendo (sin esperar un restart) + flushear la cola atascada.
+  docker compose exec -T mailserver bash /tmp/docker-mailserver/user-patches.sh || true
+  docker compose exec -T mailserver postqueue -f || true
+  echo "bifrost-ses: relay ACTIVADO y persistido (RELAY_USER=$RUSER)"
+else
+  rm -f config/user-patches.sh.new
 fi
 ACT
 chmod 755 /usr/local/bin/bifrost-ses-activate

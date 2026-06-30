@@ -58,9 +58,14 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('/usr/local/bin/bifrost-ses-activate');
     expect(s).toContain('aws ssm get-parameter --name "$SES_PARAM" --with-decryption');
     expect(s).toContain('/bifrost/acme-com/ses-smtp');
-    // Arma el relay de docker-mailserver hacia el endpoint SMTP de SES.
-    expect(s).toContain('RELAY_HOST=email-smtp.');
-    expect(s).toContain('RELAY_PORT=587');
+    // PERSISTENCIA ROBUSTA: el relay se escribe en config/user-patches.sh (docker-mailserver lo re-corre
+    // en CADA arranque) → sobrevive restart/reboot. NO depende de que 'compose up' recree por env_file
+    // (frágil). Esto evita replicar el incidente del relay perdido a un nuevo usuario de la CLI.
+    expect(s).toContain('config/user-patches.sh');
+    expect(s).toContain("postconf -e 'relayhost = [$RELAY]:587'");
+    // Aplica YA en el contenedor corriendo (sin esperar restart) y flushea la cola atascada.
+    expect(s).toContain('user-patches.sh || true');
+    expect(s).toContain('postqueue -f');
     // SEND-GATING: graceful si la credencial no está (relay sigue apagado), no rompe el boot.
     expect(s).toContain('relay apagado');
     // Timer pull-based (auto-activa + sobrevive reboot) y corrida al boot.
