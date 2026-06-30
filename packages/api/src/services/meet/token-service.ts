@@ -31,9 +31,18 @@ const PERSONAL_TTL_CAP_SEC = 12 * 3600; // techo de salas personales (sin ventan
 const EMPTY_TIMEOUT_SEC = 5 * 60; // LiveKit cierra la sala tras 5m vacía
 const ENSURE_ROOM_TIMEOUT_MS = 3000; // ensureRoom time-boxed (no acopla el token a LiveKit)
 
-/** ¿Está la feature realmente operativa? Exige el flag del admin Y credenciales presentes. */
+/**
+ * ¿Está la feature realmente operativa? Exige el flag del admin, credenciales LiveKit, Y las URLs públicas
+ * configuradas (review D-005): sin `publicBaseUrl`/`wsUrl` no se puede hornear un link de unión válido ni
+ * conectar el SDK → la feature NO está realmente lista aunque el flag esté en true.
+ */
 export function meetEnabled(settings: MeetSettings): boolean {
-  return settings.enabled && hasLivekitCredentials();
+  return (
+    settings.enabled &&
+    hasLivekitCredentials() &&
+    settings.publicBaseUrl.trim().length > 0 &&
+    settings.wsUrl.trim().length > 0
+  );
 }
 
 export function hasLivekitCredentials(): boolean {
@@ -97,14 +106,12 @@ export async function resolveBacklink(
 ): Promise<{ ok: boolean; backing: Backing | null }> {
   if (room.source === 'booking') {
     if (!room.bookingId) return { ok: false, backing: null };
-    const b = await Booking.findById(room.bookingId)
-      .select('startAt endAt status userId')
-      .lean<{
-        startAt: Date;
-        endAt: Date;
-        status: string;
-        userId: mongoose.Types.ObjectId;
-      } | null>();
+    const b = await Booking.findById(room.bookingId).select('startAt endAt status userId').lean<{
+      startAt: Date;
+      endAt: Date;
+      status: string;
+      userId: mongoose.Types.ObjectId;
+    } | null>();
     if (b?.status !== 'confirmed' || !b.userId.equals(room.userId)) {
       return { ok: false, backing: null };
     }

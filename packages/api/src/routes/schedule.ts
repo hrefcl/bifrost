@@ -12,6 +12,7 @@ import { User } from '../models/User.js';
 import { validateUsername, validateEventSlug } from '../lib/scheduling/slug.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 import { getSchedulingSettings } from '../services/scheduling/settings.js';
+import { safeCloseMeetRoom } from '../services/scheduling/booking-service.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i);
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$|^24:00$/;
@@ -119,6 +120,8 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
         message: 'customQuestions: cada pregunta debe tener un id único',
       }),
     active: z.boolean().default(true),
+    // Bifrost Meet: si las reservas de este tipo generan una sala de videollamada (F3.2).
+    meetEnabled: z.boolean().optional(),
   });
 
   async function assertOwnedSchedule(userId: string, scheduleId: string): Promise<void> {
@@ -454,7 +457,11 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Reserva no encontrada' });
     // HTTP-idempotente (review B-LOW): un retry de una cancelación ya aplicada devuelve la reserva (200).
-    if (existing.status === 'cancelled') return serializeBooking(existing);
+    // Reintentar el cierre de la sala Meet por si un cancel previo no lo completó (review B-MED).
+    if (existing.status === 'cancelled') {
+      await safeCloseMeetRoom(existing._id);
+      return serializeBooking(existing);
+    }
     // Una reserva reprogramada es terminal: no se cancela (se cancela/gestiona la nueva).
     if (existing.status !== 'confirmed') {
       return reply
@@ -482,6 +489,9 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
         { $set: { status: 'cancelled' } }
       );
     }
+    // Bifrost Meet: cerrar la sala de la reserva + evictar activos (review D-001 HIGH). El cancel por host
+    // antes NO pasaba por `cancelBooking`, dejando la sala `active`. Idempotente y no-fatal.
+    await safeCloseMeetRoom(booking._id);
     // TODO(Fase 3.4): encolar email de cancelación al invitado (BullMQ).
     return serializeBooking(booking);
   });

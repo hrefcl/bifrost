@@ -58,8 +58,28 @@ Implementado: DTOs shared (MeetRoomDto/MeetTokenResponse/MeetSettings/PublicConf
 - **TD-MEET-REVOKE**: sin revocación de token al close/rotate (inherente a token+roomCreate; acotado por TTL + `empty_timeout`). Evaluar revocación LiveKit en fase cercana.
 - **F3.2**: salas booking deben forzar `allowExternalOverride=true` + poblar `expiresAt`/`purgeAt` + janitor; `calendarEventId` ¿índice único parcial?
 
+## F3.2 — integración agenda/calendario/correo — APPROVED ✅ (commit en rama)
+Implementado: `EventType.meetEnabled` (+ruta scheduling) · `CalendarEvent.meetRoomId/meetUrl` · `services/meet/booking-meet.ts` (helpers Mongo-only, CERO RPC LiveKit: create/migrate/close/getId/delete) · `createBooking` (bookingId preasignado, MeetRoom write requerido idempotente por bookingId DENTRO del lock, slug horneado en snapshot, **degradado** que nunca aborta, compensación que borra sala huérfana en las 4 rutas) · proyección CE usa URL horneada + meetRoomId/meetUrl · `cancelBooking` + **host-cancel route** cierran la sala (idempotente) · `rescheduleBooking` (neo hereda snapshot=mismo link; migra sala old→neo con ROLLBACK). Email/ICS heredan el link vía snapshot inmutable. **349 suite (11 F3.2 service + host-cancel route), typecheck+lint limpios.**
+
+### QA F3.2 (3 rondas)
+| Ronda | B (Codex) | C (z/GLM) | D (Kimi) | Resultado |
+|-------|-----------|-----------|----------|-----------|
+| v1 | **7.4 NOT APPROVE (1 HIGH)** | 8.5 APPROVE-cond | **7.5 NOT APPROVE (1 HIGH)** | BLOCKED_HIGH (2 HIGH distintos) |
+| v2 | **8.2 NOT APPROVE (1 HIGH)** | 8.7 APPROVE (R2) | 9.0 APPROVE | BLOCKED_HIGH (rollback incompleto) |
+| v3 | **9.0 APPROVE** | **9.0 APPROVE** | 9.0 APPROVE | **APPROVED ✅** |
+
+**HIGH-1 (D-001, cerrado)**: el host-cancel route (`POST /api/schedule/bookings/:id/cancel`) hacía su propio cancel y NUNCA cerraba la sala → `safeCloseMeetRoom` en success + idempotent-return.
+**HIGH-2 (B, cerrado en v3)**: reschedule migraba la sala **después** de retirar la vieja (no-fatal) → link muerto si fallaba; **v2** lo movió a migrar-antes-de-retirar con rollback; **v3** cerró el caso commit+timeout (el `findOneAndUpdate` pudo COMMITEAR y reportar throw → la compensación migra la sala **de vuelta a old** antes de borrar neo). Test endurecido con mock commit-then-throw + **verificado por mutación** (quitar el migrate-back hace fallar el test).
+**MED/LOW cerrados**: cancel idempotente repara cierre · CE de reschedule hornea `location` · herencia atada a presencia real de MeetRoom (no URLs video externas) · compensaciones no-fatales (`safeDeleteMeetRoom`) · `meetEnabled` exige publicBaseUrl+wsUrl · `isSlugCollision` con fallback · migrate idempotente `{$in}` · tests de degradado/compensación/rollback.
+
+### Tech debt F3.2 → F3.3/F3.4 (documentado, no bloqueante — C: usabilidad, no seguridad; el backlink siempre protege)
+- **TD-MEET-RECONCILER**: el reconciler (F3.4) no tiene caso MeetRoom — agregar "sala con bookingId→booking no-confirmed con `rescheduledToId` → migrar" + propagar meetRoomId/meetUrl al reconstruir CE.
+- **TD-MEET-DEGRADED-METRIC**: la degradación de create es silenciosa (`console.error`) — métrica/flag para que el operador se entere.
+- **TD-MEET-CANCEL-RACE**: cancel de neo concurrente con reschedule en vuelo puede dejar sala stale 'active' sobre booking cancelado (la purga el TTL `purgeAt`; sin hole de seguridad).
+- **Manual calendar attach**: endpoint `POST/DELETE /api/calendar/events/:id/meet` diferido de F3.2.
+
 ## Próximos pasos
-1. **F3.2** integración agenda/calendario/correo (slug pre-Booking, MeetRoom write requerido idempotente por bookingId, CERO RPC en lock, degradado, reschedule/cancel, email/ICS link).
-2. F3.3 frontend (Google Meet + screen share) · F3.4 infra · F3.5 provisioner · F3.6 docs.
+1. **F3.3** frontend (Google Meet + screen share): livekit-client, config público en boot, MeetJoin/MeetCall, checkbox/toggle/settings/admin panel, i18n.
+2. F3.4 infra · F3.5 provisioner · F3.6 docs.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.

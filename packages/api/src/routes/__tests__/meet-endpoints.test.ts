@@ -397,6 +397,33 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
     expect(JSON.parse(res.body).message).toBe('too_early');
   });
 
+  // ---- Host cancel cierra la sala (review D-001) ----
+  it('POST /api/schedule/bookings/:id/cancel (host) cierra la MeetRoom de la reserva', async () => {
+    await enableMeet();
+    const { user } = await seedUserWithAccount({ email: 'host@test.com' });
+    const booking = await seedBooking(user._id, { status: 'confirmed' });
+    const room = await MeetRoom.create({
+      userId: user._id,
+      slug: 'hostcancelrm1',
+      name: 'r',
+      mode: 'per_event',
+      status: 'active',
+      source: 'booking',
+      bookingId: booking._id,
+      allowExternalOverride: true,
+      maxParticipants: 10,
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/schedule/bookings/${booking._id.toString()}/cancel`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { reason: 'no va' },
+    });
+    expect(res.statusCode).toBe(200);
+    const after = await MeetRoom.findById(room._id);
+    expect(after?.status).toBe('closed');
+  });
+
   // ---- Admin settings ----
   it('GET/PATCH /api/admin/meet/settings exige admin', async () => {
     const { user } = await seedUserWithAccount({ email: 'user@test.com' });

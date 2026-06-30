@@ -1,8 +1,18 @@
+import mongoose from 'mongoose';
 import { randomToken, hashToken } from '../../config/crypto.js';
 import { withLock } from '../../lib/withLock.js';
 import { Booking, type IBooking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
 import { type IEventType } from '../../models/EventType.js';
+import { getMeetSettings } from '../meet/settings.js';
+import { meetEnabled } from '../meet/token-service.js';
+import {
+  createBookingMeetRoom,
+  deleteMeetRoomById,
+  closeMeetRoomForBooking,
+  migrateMeetRoomToBooking,
+  getMeetRoomIdForBooking,
+} from '../meet/booking-meet.js';
 import { hostCalendarDay } from '../../lib/scheduling/time.js';
 import {
   isSlotBookable,
@@ -60,6 +70,22 @@ async function safeEnqueue(
   } catch (err) {
     console.error(
       `[scheduling] enqueue ${name} falló (la operación ya se aplicó): ${(err as Error).message}`
+    );
+  }
+}
+
+/**
+ * Borra una MeetRoom de compensación SIN hacer fallar el flujo (review C-L1): si `deleteOne` lanza (Mongo
+ * caído) dentro de un `catch` de compensación, NO debe enmascarar el `replay`/`conflict` correcto con un
+ * 500. La sala huérfana es benigna (no enumerable, sin backlink válido, la purga el TTL `purgeAt`).
+ */
+async function safeDeleteMeetRoom(meetRoomId: mongoose.Types.ObjectId | undefined): Promise<void> {
+  if (!meetRoomId) return;
+  try {
+    await deleteMeetRoomById(meetRoomId);
+  } catch (err) {
+    console.error(
+      `[meet] no se pudo borrar la sala de compensación (benigna, TTL la purga): ${(err as Error).message}`
     );
   }
 }
@@ -215,6 +241,14 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
     location: { type: eventType.location.type, value: eventType.location.value },
   };
 
+  // Bifrost Meet: si el tipo lo habilita Y la feature está activa, la reserva genera una sala. El `_id`
+  // se preasigna para que la `MeetRoom` referencie el `bookingId` ANTES de `Booking.create`, y la URL se
+  // hornea en el snapshot inmutable (link estable; el worker de email/ICS lo lee tal cual; reschedule lo
+  // hereda). La lectura de settings va fuera del lock (read-only). (review C-H1/C-H2, DESIGN §6)
+  const meetSettings = await getMeetSettings();
+  const wantMeet = eventType.meetEnabled === true && meetEnabled(meetSettings);
+  const bookingId = new mongoose.Types.ObjectId();
+
   const outcome = await withLock(
     lockKey(hostUserId),
     async (): Promise<CreateBookingResult> => {
@@ -246,13 +280,41 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
       const managementTokenHash = hashToken(rawToken);
       const icsUid = `${randomToken(16)}@bifrost-agenda`;
 
-      // (d) insertar Booking (fuente de verdad).
+      // (c2) Bifrost Meet: crear la sala (write Mongo REQUERIDO, CERO RPC LiveKit → seguro bajo el lock) y
+      // HORNEAR la URL en el snapshot inmutable. DEGRADADO (review C-H1): CUALQUIER error NO aborta la
+      // reserva; el snapshot queda con la location original (NUNCA `video` sin URL). La sala LiveKit se
+      // auto-crea al primer join; el cap lo fija `ensureRoom` (fuera del lock) + el techo global.
+      let bookingSnapshot: BookingSnapshot = snapshot;
+      let meetRoomId: mongoose.Types.ObjectId | undefined;
+      let meetUrl: string | undefined;
+      if (wantMeet) {
+        try {
+          const m = await createBookingMeetRoom({
+            bookingId,
+            userId: new mongoose.Types.ObjectId(hostUserId),
+            name: eventType.title,
+            endAt,
+            settings: meetSettings,
+          });
+          meetRoomId = m.meetRoomId;
+          meetUrl = m.meetUrl;
+          bookingSnapshot = { ...snapshot, location: { type: 'video', value: meetUrl } };
+        } catch (err) {
+          console.error(
+            `[meet] sala de la reserva no creada (degradado, la reserva sigue sin Meet): ${(err as Error).message}`
+          );
+        }
+      }
+
+      // (d) insertar Booking (fuente de verdad). `_id` preasignado para que la MeetRoom (creada arriba)
+      // referencie este booking; `snapshot` horneado con la URL de Meet si aplica.
       let booking: IBooking;
       try {
         booking = await Booking.create({
+          _id: bookingId,
           eventTypeId: eventType._id,
           userId: hostUserId,
-          snapshot,
+          snapshot: bookingSnapshot,
           startAt,
           endAt,
           invitee,
@@ -264,6 +326,8 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
           icsUid,
         });
       } catch (err) {
+        // Compensación: la Booking no se insertó → borrar la MeetRoom huérfana (mismo bookingId).
+        await safeDeleteMeetRoom(meetRoomId);
         if (isDuplicateKey(err)) {
           // ¿race de idempotencia (misma key/fingerprint)? → replay. Si no, backstop {userId,startAt} → conflicto.
           const existing = await Booking.findOne(idemFilter);
@@ -281,11 +345,13 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
         const others = await buildBusy(hostUserId, dayFrom, dayTo, booking._id.toString());
         if (overlapsAny(startAt, endAt, params.bufferBeforeMin, params.bufferAfterMin, others)) {
           await Booking.deleteOne({ _id: booking._id });
+          await safeDeleteMeetRoom(meetRoomId); // compensar la sala
           return { ok: false, reason: 'conflict' };
         }
       }
 
-      // (e) proyectar CalendarEvent. Compensación que borra AMBOS si algo falla (review B-HIGH#3).
+      // (e) proyectar CalendarEvent. Compensación que borra TODO (booking+sala) si algo falla (B-HIGH#3).
+      // La `location` y `meetUrl` salen del snapshot HORNEADO (misma URL que el email/ICS — review B-LOW).
       let ce;
       try {
         ce = await CalendarEvent.create({
@@ -297,7 +363,7 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
           uid: icsUid,
           summary: `${eventType.title} · ${invitee.name}`,
           description: `Invitado: ${invitee.name} <${invitee.email}>`,
-          location: eventType.location.value,
+          location: bookingSnapshot.location.value,
           startDate: startAt,
           endDate: endAt,
           startTimezone: schedule.timezone,
@@ -305,9 +371,12 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
           status: 'confirmed',
           source: 'booking',
           bookingId: booking._id,
+          meetRoomId,
+          meetUrl,
         });
       } catch (err) {
         await Booking.deleteOne({ _id: booking._id }); // el CE no se creó
+        await safeDeleteMeetRoom(meetRoomId);
         throw err;
       }
       try {
@@ -316,6 +385,7 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
       } catch (err) {
         await CalendarEvent.deleteOne({ _id: ce._id }); // compensar el CE huérfano (review B-HIGH#3)
         await Booking.deleteOne({ _id: booking._id });
+        await safeDeleteMeetRoom(meetRoomId);
         throw err;
       }
 
@@ -344,14 +414,21 @@ export async function cancelBooking(
   by: 'invitee' | 'host',
   reason?: string
 ): Promise<IBooking> {
-  if (booking.status === 'cancelled') return booking; // idempotente
+  if (booking.status === 'cancelled') {
+    // Idempotente — PERO se reintenta el cierre de sala (review B-MED): si un cancel previo flipeó el
+    // status pero el cierre de la sala falló, un retry lo repara (la sala sigue `active` en Mongo).
+    await safeCloseMeetRoom(booking._id);
+    return booking;
+  }
   const updated = await Booking.findOneAndUpdate(
     { _id: booking._id, status: 'confirmed' },
     { $set: { status: 'cancelled', cancelledBy: by, cancelReason: reason } },
     { new: true }
   );
   if (!updated) {
+    // Otro request la canceló entre medio → idempotente; intentar reparar el cierre de la sala igual.
     const now = await Booking.findById(booking._id);
+    if (now?.status === 'cancelled') await safeCloseMeetRoom(now._id);
     return now ?? booking;
   }
   if (updated.calendarEventId) {
@@ -360,12 +437,27 @@ export async function cancelBooking(
       { $set: { status: 'cancelled' } }
     );
   }
+  await safeCloseMeetRoom(updated._id);
   await safeEnqueue(
     'send-email',
     { bookingId: updated._id.toString(), kind: 'cancellation' },
     { jobId: `cancel:${updated._id.toString()}` }
   );
   return updated;
+}
+
+/**
+ * Cierra (soft) la sala Meet de una reserva + desconecta activos en LiveKit (best-effort). No-fatal e
+ * IDEMPOTENTE (sólo actúa si la sala sigue `active`). El backlink ya bloquea tokens nuevos (booking
+ * cancelado/rescheduled → 404); esto además evicta a los presentes. Reusable por todos los paths de cancel.
+ */
+export async function safeCloseMeetRoom(bookingId: mongoose.Types.ObjectId): Promise<void> {
+  try {
+    const meetSettings = await getMeetSettings();
+    await closeMeetRoomForBooking({ bookingId, settings: meetSettings });
+  } catch (err) {
+    console.error(`[meet] cierre de sala al cancelar falló (no-fatal): ${(err as Error).message}`);
+  }
 }
 
 export type RescheduleResult =
@@ -471,8 +563,19 @@ export async function rescheduleBooking(params: {
           return { ok: false, reason: 'conflict' };
         }
       }
+      // Bifrost Meet: el nuevo booking hereda el snapshot (mismo `meetUrl` baked) → el link se PRESERVA.
+      // La herencia se ata a la PRESENCIA REAL de una MeetRoom (no a `snapshot.location.type==='video'`,
+      // que también capturaría URLs de video EXTERNAS — review D-003/C-L5): sólo si la vieja reserva tiene
+      // sala Meet propagamos `meetRoomId`/`meetUrl` y migramos. Sin sala (URL externa o sala purgada) →
+      // el reschedule NO trata el evento como Meet.
+      const meetRoomId = await getMeetRoomIdForBooking(old._id);
+      const inheritedMeetUrl =
+        meetRoomId && current.snapshot.location.type === 'video'
+          ? current.snapshot.location.value
+          : undefined;
+
       // CalendarEvent con compensación SPLIT (paridad con createBooking — review B-MED): si falla el
-      // updateOne, se borra el CE huérfano además de la Booking.
+      // updateOne, se borra el CE huérfano además de la Booking. `location` horneada del snapshot heredado.
       let ce;
       try {
         ce = await CalendarEvent.create({
@@ -483,6 +586,7 @@ export async function rescheduleBooking(params: {
           calendarColor: eventType.color,
           uid: icsUid,
           summary: `${eventType.title} · ${current.invitee.name}`,
+          location: current.snapshot.location.value,
           startDate: newStartAt,
           endDate: newEnd,
           startTimezone: schedule.timezone,
@@ -490,6 +594,8 @@ export async function rescheduleBooking(params: {
           status: 'confirmed',
           source: 'booking',
           bookingId: neo._id,
+          meetRoomId: inheritedMeetUrl ? meetRoomId : undefined,
+          meetUrl: inheritedMeetUrl,
         });
       } catch (err) {
         await Booking.deleteOne({ _id: neo._id });
@@ -503,13 +609,68 @@ export async function rescheduleBooking(params: {
         await Booking.deleteOne({ _id: neo._id });
         throw err;
       }
+
+      // Bifrost Meet: migrar la sala old→neo ANTES de retirar la vieja, con ROLLBACK (review B-HIGH/D-002):
+      // si la migración falla, NO completamos el reschedule (compensamos neo+CE) → el link NUNCA queda
+      // muerto en un reschedule "exitoso". Tras migrar, la sala apunta a `neo` (confirmed) → token OK.
+      if (inheritedMeetUrl) {
+        let migrateFailed = false;
+        try {
+          const migrated = await migrateMeetRoomToBooking({
+            fromBookingId: old._id,
+            toBookingId: neo._id,
+            newEndAt: newEnd,
+          });
+          // `null` = la sala que leímos se esfumó antes de migrar (purga TTL de una reunión ya vieja, o
+          // anomalía). neo YA tiene el snapshot `video` heredado → si seguimos, sería un link muerto en un
+          // reschedule "exitoso" (la MISMA clase del HIGH). Por eso se trata IGUAL que un throw: abortar.
+          if (!migrated) migrateFailed = true;
+        } catch (err) {
+          migrateFailed = true;
+          console.error(`[meet] migración de sala lanzó: ${(err as Error).message}`);
+        }
+        if (migrateFailed) {
+          // Abortar el reschedule SIN dejar link muerto. CLAVE (review B-HIGH v2): un `findOneAndUpdate`
+          // pudo COMMITEAR server-side y aun así reportar timeout al cliente → la sala podría ya estar en
+          // `neo`. Si borramos `neo` sin más, el link (slug→bookingId=neo borrado) haría 404. Por eso,
+          // ANTES de borrar `neo`, migramos la sala DE VUELTA a `old` (idempotente `{$in:[neo,old]}`):
+          //   - si el migrate original NO aplicó → la sala sigue en `old`, el back es no-op.
+          //   - si SÍ aplicó (commit + timeout) → el back la devuelve a `old` (confirmed, la válida).
+          await migrateMeetRoomToBooking({
+            fromBookingId: neo._id,
+            toBookingId: old._id,
+            newEndAt: old.endAt,
+          }).catch((e: unknown) => {
+            console.error(`[meet] migrate-back en rollback falló (reconciler F3.4): ${String(e)}`);
+          });
+          await CalendarEvent.deleteOne({ _id: ce._id });
+          await Booking.deleteOne({ _id: neo._id });
+          return { ok: false, reason: 'conflict' };
+        }
+      }
+
       // Retirar la vieja ATÓMICAMENTE (filtro status:'confirmed' — review B-HIGH#5): si otro la cambió,
-      // se compensa borrando la nueva (no perdemos la vieja, que sigue confirmed).
+      // se compensa borrando la nueva (no perdemos la vieja, que sigue confirmed) Y se migra la sala DE
+      // VUELTA a la vieja (que sigue siendo la válida).
       const retired = await Booking.updateOne(
         { _id: old._id, status: 'confirmed' },
         { $set: { status: 'rescheduled', rescheduledToId: neo._id } }
       );
       if (retired.modifiedCount === 0) {
+        if (inheritedMeetUrl) {
+          // Revertir la migración: la sala vuelve a la vieja reserva (que sigue confirmed y es la válida).
+          try {
+            await migrateMeetRoomToBooking({
+              fromBookingId: neo._id,
+              toBookingId: old._id,
+              newEndAt: old.endAt,
+            });
+          } catch (err) {
+            console.error(
+              `[meet] rollback de migración falló (reconciler F3.4): ${(err as Error).message}`
+            );
+          }
+        }
         await CalendarEvent.deleteOne({ _id: neo.calendarEventId });
         await Booking.deleteOne({ _id: neo._id });
         return { ok: false, reason: 'not_confirmed' };

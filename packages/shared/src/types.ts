@@ -265,6 +265,10 @@ export interface CalendarEvent {
   source?: 'manual' | 'booking';
   /** Si `source==='booking'`: id de la Booking que lo originó (para reconciler/cancelación). */
   bookingId?: string;
+  /** Si el evento tiene una sala Bifrost Meet asociada: id de la `MeetRoom`. */
+  meetRoomId?: string;
+  /** URL pública de unión a la sala Meet (`${publicBaseUrl}/meet/<slug>`); no es secreto. */
+  meetUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -374,6 +378,8 @@ export interface EventType {
   cancelMinNoticeMin?: number;
   customQuestions: CustomQuestion[];
   active: boolean;
+  /** Si las reservas de este tipo generan una sala Bifrost Meet automáticamente (default false). */
+  meetEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
