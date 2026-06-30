@@ -373,36 +373,56 @@ async function applyUpdate() {
     return;
   updating.value = true;
   updateMsg.value = 'Encolando actualización…';
+  // El POST de encolado SÍ debe confirmar (si falla, el update ni arrancó).
   try {
     await api.post('/admin/update/apply');
-    // Poll del estado (el host-updater corre cada minuto + tarda segundos en aplicar).
-    for (let i = 0; i < 60; i++) {
-      await new Promise((r) => setTimeout(r, 4000));
-      const { data } = await api.get<{ status: string; to?: string }>('/admin/update/status');
-      if (data.status === 'in_progress') {
-        updateMsg.value = 'Aplicando la actualización…';
-        continue;
-      }
-      if (data.status === 'succeeded') {
-        updateMsg.value = '✅ Actualizado. Recargá la página.';
-        await loadUpdate(true);
-        return;
-      }
-      if (data.status === 'rolledback') {
-        updateMsg.value = '⚠ El build nuevo no levantó; se revirtió al anterior (sistema estable).';
-        return;
-      }
-      if (data.status === 'failed') {
-        updateMsg.value = '✗ La actualización falló. Revisá los logs del servidor.';
-        return;
-      }
-    }
-    updateMsg.value = 'La actualización está tardando; revisá en unos minutos.';
   } catch {
     updateMsg.value = '✗ No se pudo iniciar la actualización.';
-  } finally {
     updating.value = false;
+    return;
   }
+  // Poll del estado. CLAVE: durante el update se RECREAN los contenedores web+api → /admin/update/status
+  // va a fallar varios segundos. Un error de red NO es fallo del update (el estado real vive en disco y
+  // sobrevive el reinicio del API). Por eso cada GET va en su propio try/catch y los errores se toleran:
+  // antes, el catch global mataba el poll justo cuando el update terminaba OK → "dijo actualizado y no pasó".
+  // Ventana amplia: hasta ~6 min (cron hasta 60s + pull + recreate + rearmado).
+  updateMsg.value = 'Aplicando la actualización…';
+  for (let i = 0; i < 90; i++) {
+    await new Promise((r) => setTimeout(r, 4000));
+    let status = '';
+    try {
+      const { data } = await api.get<{ status: string; to?: string }>('/admin/update/status');
+      status = data.status;
+    } catch {
+      // API reiniciándose (esperado durante el recreate) → seguir esperando, no abortar.
+      updateMsg.value = 'Aplicando la actualización… (reiniciando servicios)';
+      continue;
+    }
+    if (status === 'queued' || status === 'in_progress' || status === 'idle') {
+      updateMsg.value = 'Aplicando la actualización…';
+      continue;
+    }
+    if (status === 'succeeded') {
+      updateMsg.value = '✅ Actualizado a la última versión. Recargando…';
+      // El bundle web también cambió → recargar para verlo. Damos 2s para que se lea el mensaje.
+      setTimeout(() => {
+        window.location.reload();
+      }, 2000);
+      return;
+    }
+    if (status === 'rolledback') {
+      updateMsg.value = '⚠ El build nuevo no levantó; se revirtió al anterior (sistema estable).';
+      updating.value = false;
+      return;
+    }
+    if (status === 'failed') {
+      updateMsg.value = '✗ La actualización falló. Revisá los logs del servidor.';
+      updating.value = false;
+      return;
+    }
+  }
+  updateMsg.value = 'La actualización está tardando; revisá en unos minutos.';
+  updating.value = false;
 }
 
 onMounted(async () => {

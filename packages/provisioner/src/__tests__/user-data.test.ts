@@ -50,12 +50,19 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('install -y awscli');
   });
 
-  it('instala el host-updater de la Fase 2 (cron + dir del marker + BIFROST_DOMAIN)', () => {
+  it('instala el host-updater de la Fase 2 (cron + systemd .path + dir del marker + BIFROST_DOMAIN)', () => {
     const s = buildUserData(base);
     expect(s).toContain('/etc/cron.d/bifrost-update');
     expect(s).toContain('./bifrost-update.sh'); // el script vive en el repo; el cron lo corre
     expect(s).toContain('install -d -m 0750 update-trigger'); // dir del marker
     expect(s).toContain('BIFROST_DOMAIN=');
+    // Disparo INMEDIATO: systemd .path observa el marker → el botón no espera al tick del cron.
+    expect(s).toContain('/etc/systemd/system/bifrost-update.path');
+    expect(s).toContain('/etc/systemd/system/bifrost-update.service');
+    expect(s).toContain(
+      'PathExists=/opt/bifrost/deploy/example-mailserver/update-trigger/requested'
+    );
+    expect(s).toContain('systemctl enable --now bifrost-update.path');
   });
 
   it('whitelistea la red Docker en fail2ban (el API es proxy IMAP; sin esto un user banea a TODO el tenant)', () => {
