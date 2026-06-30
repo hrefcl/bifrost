@@ -163,24 +163,20 @@ describe('Modelos de agenda (Fase 3.1)', () => {
     ).rejects.toThrow(/endAt must be after startAt/);
   });
 
-  it('AvailabilitySchedule: a lo sumo un isDefault por usuario; formato HH:MM validado', async () => {
+  it('AvailabilitySchedule: formato HH:MM validado (el default vive en User.defaultScheduleId, no aquí)', async () => {
+    // dos horarios del MISMO usuario conviven (el default es un puntero en User, no un flag aquí)
     const userId = oid();
-    await AvailabilitySchedule.create({
-      userId,
-      name: 'Horario laboral',
-      timezone: 'America/Santiago',
-      weeklyRules: [{ weekday: 1, intervals: [{ start: '09:00', end: '18:00' }] }],
-      isDefault: true,
-    });
-    // segundo default del MISMO usuario → choca
     await expect(
       AvailabilitySchedule.create({
         userId,
-        name: 'Otro',
+        name: 'Horario laboral',
         timezone: 'America/Santiago',
-        isDefault: true,
+        weeklyRules: [{ weekday: 1, intervals: [{ start: '09:00', end: '18:00' }] }],
       })
-    ).rejects.toThrow();
+    ).resolves.toBeTruthy();
+    await expect(
+      AvailabilitySchedule.create({ userId, name: 'Otro', timezone: 'America/Santiago' })
+    ).resolves.toBeTruthy();
     // intervalo con formato inválido → rechazado por el schema
     await expect(
       AvailabilitySchedule.create({

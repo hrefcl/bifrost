@@ -9,6 +9,8 @@ export interface IUser extends Document {
   avatarUrl?: string;
   /** Slug público de la agenda (`/u/:username`). Opcional; lo define el usuario. Único cuando existe. */
   username?: string;
+  /** Horario de agenda por defecto (puntero atómico — review B; evita el patrón boolean+índice). */
+  defaultScheduleId?: mongoose.Types.ObjectId;
   preferences: UserPreferences;
   createdAt: Date;
   updatedAt: Date;
@@ -26,6 +28,8 @@ const UserSchema = new Schema<IUser>(
     // username público de la agenda. SIN `unique` aquí (rompería con múltiples docs sin username):
     // la unicidad la da un índice PARCIAL `$type:'string'` abajo (review B-MED).
     username: { type: String },
+    // Puntero al horario de agenda por defecto (set atómico de un solo doc — review B).
+    defaultScheduleId: { type: Schema.Types.ObjectId },
     preferences: {
       language: { type: String, default: 'es' },
       timezone: { type: String, default: 'America/Mexico_City' },

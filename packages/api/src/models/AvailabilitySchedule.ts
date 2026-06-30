@@ -6,9 +6,14 @@ import type {
 } from '@webmail6/shared';
 
 /**
- * Horario de disponibilidad reutilizable (un host puede tener varios; uno `isDefault`). Owner-bound.
+ * Horario de disponibilidad reutilizable (un host puede tener varios). Owner-bound.
  * `weeklyRules[].weekday`: 0=Domingo … 6=Sábado. `overrides[].intervals:[]` = no disponible ese día
  * (vacación/festivo); con intervalos = REEMPLAZA la regla semanal de esa fecha (review C-M10).
+ *
+ * EL DEFAULT NO se guarda aquí (review B): vive como puntero `User.defaultScheduleId`, para que
+ * "fijar el default" sea un update ATÓMICO de un solo documento (Mongo single-node, sin transacciones)
+ * — sin la ventana de "cero defaults" del patrón boolean+clear-then-set. `isDefault` del DTO se computa
+ * comparando con ese puntero.
  */
 export interface IAvailabilitySchedule extends Document {
   userId: mongoose.Types.ObjectId;
@@ -16,7 +21,6 @@ export interface IAvailabilitySchedule extends Document {
   timezone: string;
   weeklyRules: WeeklyRule[];
   overrides: AvailabilityOverride[];
-  isDefault: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -60,26 +64,15 @@ const AvailabilityScheduleSchema = new Schema<IAvailabilitySchedule>(
     timezone: { type: String, required: true },
     weeklyRules: { type: [WeeklyRuleSchema], default: [] },
     overrides: { type: [OverrideSchema], default: [] },
-    isDefault: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
 
-AvailabilityScheduleSchema.index({ userId: 1, isDefault: 1 });
-// A LO SUMO UN horario default por usuario (invariante de integridad — review B-MED): índice único
-// PARCIAL sobre los docs con isDefault:true. Al cambiar el default, el servicio (3.3) debe desmarcar
-// el anterior en la misma operación; el índice impide que queden dos defaults a la vez.
-AvailabilityScheduleSchema.index(
-  { userId: 1 },
-  {
-    unique: true,
-    partialFilterExpression: { isDefault: true },
-    // Nombre explícito: el auto-generado sería `userId_1` y chocaría con el índice del campo userId.
-    name: 'uniq_default_schedule_per_user',
-  }
-);
-
-export function serializeAvailabilitySchedule(doc: IAvailabilitySchedule): AvailabilityScheduleDto {
+/** `isDefault` se computa contra `User.defaultScheduleId` (no se guarda en el doc) — review B. */
+export function serializeAvailabilitySchedule(
+  doc: IAvailabilitySchedule,
+  isDefault = false
+): AvailabilityScheduleDto {
   return {
     id: doc._id.toString(),
     userId: doc.userId.toString(),
@@ -94,7 +87,7 @@ export function serializeAvailabilitySchedule(doc: IAvailabilitySchedule): Avail
       intervals: o.intervals.map((i) => ({ start: i.start, end: i.end })),
       note: o.note,
     })),
-    isDefault: doc.isDefault,
+    isDefault,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
