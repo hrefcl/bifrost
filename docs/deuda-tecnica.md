@@ -246,6 +246,18 @@ ningún merge con HIGH abierto o score <9):
   del hilo (MED de C); (5) **normalización de Message-ID** (MED de C) — hoy se conservan `<>` y no se
   lowercasea el dominio; un cliente no-compliant podría no joinear; (6) **fallback por Subject**
   (Re:/Fwd: normalizado) para mensajes sin References/In-Reply-To (decisión de scope, JWZ lo hace).
+- **TD-QUOTE-COLLAPSE (MED, review B 6.5/C 7/D 6)** — el colapso de citas "···" cubre los markers de
+  alta confianza (Gmail/Apple/Thunderbird/Yahoo/Proton/OWA) con corte cut-from-node, falla "hacia
+  mostrar de más" y el sandbox sin allow-scripts neutraliza mXSS. Refinamientos pendientes: (1)
+  **recall de Outlook desktop/Word** (estilos border-top, `#OLK_SRC_BODY_SECTION`, `x_`-prefijados) y
+  **Zimbra** (`hr[data-marker="__DIVIDER__"]`) — talon los reconoce; (2) **forwards** — `#appendonsend`/
+  `.OutlookMessageHeader` pueden marcar un FORWARD cuyo contenido es payload legítimo → si el usuario
+  pone "FYI" arriba, se escondería el forward (B: MED, HIGH en bottom-posting/inline-reply donde el
+  texto nuevo va DEBAJO del marcador y se ocultaría); (3) **fallback textual** estilo talon
+  (delimitadores "On … wrote:"/"El … escribió:" + heurística de líneas) para citas sin markers; (4)
+  **mXSS (C, MED no-HIGH)** — el re-parse/re-serialize de DOMParser podría des-sanear un fragmento
+  crafteado; mitigado por el sandbox, pero lo ideal es re-pasar `main`/`quoted` por el sanitizer del
+  backend antes de renderizar. Validar todo contra un corpus real de .eml.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
