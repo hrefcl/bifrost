@@ -18,19 +18,33 @@ cd "$DIR"
 TRIGGER="$DIR/update-trigger"
 REQUESTED="$TRIGGER/requested"
 STATE="$TRIGGER/state.json"
-LOCK="$TRIGGER/.lock"
+# HARDENING (B HIGH): el dir update-trigger es bind-mount del API (root). Si el API se compromete, puede
+# plantar symlinks/FIFOs ahí → el host-updater (root) NO debe escribir/leer siguiéndolos (clobber/DoS de
+# archivos root del host). Por eso: (a) el LOCK y el tmp del STATE viven en /run (root-only, FUERA del
+# mount, intocable por el API); (b) se valida que update-trigger y requested sean archivos REGULARES y NO
+# symlinks antes de tocarlos; (c) el STATE final se escribe con mv (reemplaza, no escribe a través de un
+# symlink). Esto preserva la frontera "el API no toca el host".
+LOCK="/run/bifrost-update.lock"
+STATE_TMP="/run/bifrost-update.state.tmp"
 log() { logger -t bifrost-update "$*"; echo "$(date -Is) $*"; }
-write_state() { printf '%s\n' "$1" > "$STATE.tmp" && mv -f "$STATE.tmp" "$STATE"; }
+# write_state: escribe en /run (root-only) y mv a STATE → si STATE fuera un symlink plantado, mv lo
+# REEMPLAZA (no escribe a través). Nunca se hace `> "$STATE"` directo.
+write_state() { printf '%s\n' "$1" > "$STATE_TMP" && mv -f "$STATE_TMP" "$STATE"; }
 
+# El dir debe ser un directorio REAL (no un symlink que el API plante apuntando a otro lado).
+if [ -L "$TRIGGER" ] || { [ -e "$TRIGGER" ] && [ ! -d "$TRIGGER" ]; }; then
+  logger -t bifrost-update "update-trigger no es un dir regular — abortando"; exit 1
+fi
 install -d -m 0750 "$TRIGGER"
-# Sin pedido → nada que hacer.
-[ -f "$REQUESTED" ] || exit 0
+# Sin pedido, o pedido que NO es un archivo regular (symlink/FIFO/dir plantado) → no hacer nada.
+[ -f "$REQUESTED" ] && [ ! -L "$REQUESTED" ] || exit 0
 
-# Lock exclusivo NO bloqueante: si otro update corre, salir (no encolar).
+# Lock exclusivo NO bloqueante (en /run, intocable por el API): si otro update corre, salir.
 exec 9>"$LOCK"
 flock -n 9 || { log "otro update en curso; salgo"; exit 0; }
 
-# Leer y VALIDAR el tag target (única dato confiable-tras-validación del marker). Una sola línea.
+# Leer y VALIDAR el tag target (único dato confiable-tras-validación del marker). Una sola línea. El
+# archivo ya se verificó regular+no-symlink arriba, así que head no puede colgarse en un FIFO.
 TARGET="$(head -n1 "$REQUESTED" 2>/dev/null | tr -d '[:space:]')"
 if ! printf '%s' "$TARGET" | grep -qE '^sha-[0-9a-f]{7,40}$'; then
   log "marker inválido ('$TARGET') — ignoro y limpio"
@@ -67,7 +81,9 @@ healthy() {
 }
 
 apply() { # apply <tag>
-  set_tag "$1"
+  # [B-MED] chequear set_tag: si no se pudo fijar BIFROST_TAG en .env, abortar (si no, se haría pull/up con
+  # el tag VIEJO y se marcaría 'succeeded' para un target que nunca quedó fijado).
+  set_tag "$1" || return 1
   docker compose pull web api >/dev/null 2>&1 || return 1
   docker compose up -d web api >/dev/null 2>&1 || return 1
 }
