@@ -31,6 +31,7 @@
     "imapflow": "^1.0.176",
     "ioredis": "^5.4.2",
     "isomorphic-dompurify": "^2.20.0",
+    "markdown-it": "^14.1.0",
     "mongoose": "^8.9.3",
     "nodemailer": "^9.0.1",
     "postal-mime": "^2.3.2",
@@ -39,6 +40,7 @@
   },
   "devDependencies": {
     "@types/ioredis-mock": "^8.2.7",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.1",
     "@types/sanitize-html": "^2.13.0",

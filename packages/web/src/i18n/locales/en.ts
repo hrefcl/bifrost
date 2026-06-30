@@ -250,7 +250,12 @@ export default {
     errInvalid:
       'Invalid S3 data. Check the fields: endpoint (http/https, no path), region (e.g. us-east-1) and credentials.',
     errSave: 'Failed to save configuration',
-    tabs: { accounts: 'Accounts', branding: 'Branding', storage: 'Storage' },
+    tabs: {
+      accounts: 'Accounts',
+      branding: 'Branding',
+      storage: 'Storage',
+      compliance: 'Compliance',
+    },
     accounts: {
       title: 'Accounts',
       desc: 'Create, manage and remove mail accounts, and set their storage quota.',
@@ -357,5 +362,19 @@ export default {
       active: 'Active',
       server: 'Server',
     },
+  },
+  compliance: {
+    title: 'Policies',
+    subtitle: 'You must read and accept the policies to continue',
+    logout: 'Sign out',
+    loading: 'Loading…',
+    accept: 'I accept',
+    accepting: 'Recording…',
+    read: 'Document read.',
+    scrollHint: 'Scroll to the end to enable acceptance.',
+    loadError: 'Could not load the document. Please retry.',
+    acceptError: 'Could not record your acceptance. Please retry.',
+    inconsistentError:
+      'There are policies pending acceptance but they could not be loaded. Retry or contact your administrator.',
   },
 };

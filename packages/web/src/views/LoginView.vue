@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { useAuthStore } from '@/stores/auth';
+import { useComplianceStore } from '@/stores/compliance';
 import { brand } from '@/config/brand';
 import { SUPPORTED_LOCALES, LOCALE_NAMES, setLocale, type Locale } from '@/i18n';
 import AppLogo from '@/components/AppLogo.vue';
@@ -10,6 +11,7 @@ import AppIcon from '@/components/AppIcon.vue';
 
 const router = useRouter();
 const auth = useAuthStore();
+const compliance = useComplianceStore();
 const { t, locale } = useI18n();
 
 const form = ref({
@@ -70,6 +72,9 @@ async function submit() {
   loading.value = true;
   try {
     await auth.login(form.value);
+    // Hidrata compliance ANTES de navegar (D-004): si hay un bloqueo total pendiente, el guard del
+    // router redirige a la pantalla de aceptación en vez de al inbox (proactivo, no sólo reactivo al 403).
+    await compliance.fetchPending();
     void router.push({ name: 'inbox' });
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('login.failed');

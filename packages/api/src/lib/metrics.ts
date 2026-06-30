@@ -1,5 +1,14 @@
 /** Contadores de proceso en memoria para /metrics (Prometheus text format). */
-export const counters = { requests: 0, errors5xx: 0, bootstrapAdminGrants: 0 };
+export const counters = {
+  requests: 0,
+  errors5xx: 0,
+  bootstrapAdminGrants: 0,
+  // Compliance (DESIGN §10): señales de aceptación/publicación de políticas y del gate.
+  complianceAcceptances: 0,
+  compliancePublishes: 0,
+  complianceGateBlocks: 0,
+  complianceGateErrors: 0,
+};
 
 // Histograma de latencia de requests (segundos). Buckets cumulativos estilo Prometheus.
 const BUCKETS = [0.01, 0.05, 0.1, 0.3, 1, 3, 10];
@@ -54,6 +63,20 @@ export function renderMetrics(): string {
       '# HELP webmail_bootstrap_admin_grants_total Admin role granted via first-user bootstrap',
       '# TYPE webmail_bootstrap_admin_grants_total counter',
       `webmail_bootstrap_admin_grants_total ${String(counters.bootstrapAdminGrants)}`,
+      '# HELP webmail_compliance_acceptances_total Compliance policy acceptances recorded',
+      '# TYPE webmail_compliance_acceptances_total counter',
+      `webmail_compliance_acceptances_total ${String(counters.complianceAcceptances)}`,
+      '# HELP webmail_compliance_publishes_total Compliance document versions published',
+      '# TYPE webmail_compliance_publishes_total counter',
+      `webmail_compliance_publishes_total ${String(counters.compliancePublishes)}`,
+      '# HELP webmail_compliance_gate_blocks_total Requests blocked by the compliance gate',
+      '# TYPE webmail_compliance_gate_blocks_total counter',
+      `webmail_compliance_gate_blocks_total ${String(counters.complianceGateBlocks)}`,
+      // Señal temprana de falla: errores del gate que caen en fail-open (un valor creciente = bug que
+      // está dejando pasar tráfico sin enforcear → alertar).
+      '# HELP webmail_compliance_gate_errors_total Compliance gate errors (fail-open)',
+      '# TYPE webmail_compliance_gate_errors_total counter',
+      `webmail_compliance_gate_errors_total ${String(counters.complianceGateErrors)}`,
       ...histogramLines(),
     ].join('\n') + '\n'
   );

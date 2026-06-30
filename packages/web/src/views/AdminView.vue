@@ -4,18 +4,20 @@ import { AxiosError } from 'axios';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
+import ComplianceAdmin from '@/components/admin/ComplianceAdmin.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
 
 /**
- * Panel de administración (Roundcube administrable) con tres secciones:
+ * Panel de administración (Roundcube administrable) con cuatro secciones:
  *  - Cuentas: alta/edición/baja de cuentas y cuota de almacenamiento.
  *  - Marca: branding white-label en runtime (nombre, eslogan, color, logo de empresa).
  *  - Almacenamiento: destino de los adjuntos (local / S3) — wizard preexistente.
+ *  - Compliance: gestión de documentos legales, versiones, enforcement y auditoría de aceptaciones.
  * Todo exige rol admin (verificado también en el backend).
  */
-type Tab = 'accounts' | 'branding' | 'storage';
+type Tab = 'accounts' | 'branding' | 'storage' | 'compliance';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -451,6 +453,9 @@ async function save() {
           <button class="tab" :class="{ active: tab === 'storage' }" @click="tab = 'storage'">
             <AppIcon name="archive" :size="16" /> {{ t('admin.tabs.storage') }}
           </button>
+          <button class="tab" :class="{ active: tab === 'compliance' }" @click="tab = 'compliance'">
+            <AppIcon name="shield" :size="16" /> {{ t('admin.tabs.compliance') }}
+          </button>
         </nav>
 
         <!-- ===================== CUENTAS ===================== -->
@@ -677,8 +682,14 @@ async function save() {
           </div>
         </div>
 
+        <!-- ===================== COMPLIANCE ===================== -->
+        <div v-else-if="tab === 'compliance'" class="card">
+          <h2 class="card-h">{{ t('admin.tabs.compliance') }}</h2>
+          <ComplianceAdmin />
+        </div>
+
         <!-- ===================== ALMACENAMIENTO ===================== -->
-        <div v-else class="card">
+        <div v-else-if="tab === 'storage'" class="card">
           <h2 class="card-h">{{ t('admin.question') }}</h2>
           <p class="card-desc">{{ t('admin.questionDesc') }}</p>
 

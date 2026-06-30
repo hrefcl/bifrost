@@ -38,6 +38,22 @@ async function main() {
   const app = await buildApp();
   serverApp = app;
 
+  // Compliance: siembra idempotente de los 7 documentos por defecto + reconcilia la denormalización
+  // (sana cualquier crash entre publish y recomputeDenorm — B P1 HIGH-2). Patrón reconcile-indexes.
+  const { seedComplianceDocuments } = await import('./compliance/seedDocuments.js');
+  const { reconcileComplianceDenorm } = await import('./services/compliance.js');
+  await seedComplianceDocuments().then(
+    (n) => {
+      if (n > 0) app.log.info(`seeded ${String(n)} compliance document(s)`);
+    },
+    (err: unknown) => {
+      app.log.error(err);
+    }
+  );
+  await reconcileComplianceDenorm().catch((err: unknown) => {
+    app.log.error(err);
+  });
+
   // Barridos periódicos: (a) revierte borradores colgados en 'sending' a 'failed';
   // (b) recolecta AttachmentBlobs huérfanos (subidas descartadas, drafts borrados/enviados).
   const { recoverStuckDrafts, cleanupOrphanAttachments } = await import('./routes/drafts.js');
