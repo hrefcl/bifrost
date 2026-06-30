@@ -10,7 +10,15 @@ import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
 import { buildStackTemplate, templateToYaml, templateToJson } from './infra/stack-template.js';
 import { assembleStackParams, deriveBucketName, type WizardAnswers } from './wizard/params.js';
-import { deployStack, getStackStatus, getStackOutputs } from './aws/cloudformation.js';
+import {
+  deployStack,
+  getStackStatus,
+  getStackOutputs,
+  stackExists,
+  deleteStack,
+  waitForStackDeleted,
+} from './aws/cloudformation.js';
+import { emptyBucket } from './aws/s3.js';
 import { estimateMonthlyCost } from './cost.js';
 import { recommendInstance } from './catalog/instance-types.js';
 import { mailHostname, validateDomain } from './domain.js';
@@ -38,7 +46,9 @@ function printInstructions(file: string, stackName: string, region: string): voi
   );
   console.log('  • Consola web: CloudFormation → Create stack → "Upload a template file" → elegí');
   console.log(`      ${file} → Next → completá los parámetros → Create.`);
-  console.log('  • Teardown: borrá el stack (CloudFormation → Delete) y se va TODO.');
+  console.log(
+    '  • Teardown: `bifrost-provision destroy` (vacía el bucket y borra TODO el stack), o CloudFormation → Delete.'
+  );
 }
 
 async function main(): Promise<void> {
@@ -256,7 +266,55 @@ async function main(): Promise<void> {
   printInstructions(file, stackName, region);
 }
 
-main().catch((err: unknown) => {
-  console.error('Error en el wizard:', err instanceof Error ? err.message : String(err));
+/**
+ * Teardown: `bifrost-provision destroy [stackName]`. Borra TODA la infraestructura del stack (es UN
+ * stack de CloudFormation → no hay huérfanos). Vacía el bucket S3 antes (CFN no borra un bucket no
+ * vacío). Cierra el círculo provision↔destroy para poder probar desde cero.
+ */
+async function destroy(): Promise<void> {
+  console.log('Bifrost — teardown: borra TODA la infraestructura de un stack\n');
+  const argStack = process.argv.at(3); // string | undefined
+  const region = await input({ message: 'Región AWS del stack', default: 'us-east-1' });
+  const stackName =
+    argStack ??
+    `bifrost-${slug(await input({ message: 'Dominio del stack a borrar (ej: aulion.app)' }))}`;
+  const cfn = new CloudFormationClient({ region });
+
+  if (!(await stackExists(cfn, stackName))) {
+    console.log(`No existe el stack "${stackName}" en ${region}. Nada que borrar.`);
+    return;
+  }
+  const outputs = await getStackOutputs(cfn, stackName);
+  const bucket = outputs.S3Bucket;
+  const ok = await confirm({
+    message: `⚠ Esto BORRA TODO el stack "${stackName}" (EC2, EIP, SG, VPC, rol, DNS${
+      bucket ? `, el bucket ${bucket} + su CMK KMS` : ''
+    }). IRREVERSIBLE. ¿Continuar?`,
+    default: false,
+  });
+  if (!ok) {
+    console.log('Cancelado.');
+    return;
+  }
+  if (bucket) {
+    process.stdout.write(`Vaciando el bucket ${bucket}… `);
+    const n = await emptyBucket(region, bucket);
+    console.log(`${String(n)} objetos/versiones borrados.`);
+  }
+  await deleteStack(cfn, stackName);
+  console.log('Borrando el stack (puede tardar varios minutos)…');
+  await waitForStackDeleted(cfn, stackName, {
+    onTick: (s) => {
+      console.log(`  ${s}…`);
+    },
+  });
+  console.log(
+    `\n✅ Infraestructura eliminada.${bucket ? ' (La CMK de KMS queda programada para borrado ~7 días, deshabilitada.)' : ''}`
+  );
+}
+
+const entry = process.argv[2] === 'destroy' ? destroy : main;
+entry().catch((err: unknown) => {
+  console.error('Error:', err instanceof Error ? err.message : String(err));
   process.exit(1);
 });
