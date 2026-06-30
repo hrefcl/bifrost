@@ -50,10 +50,13 @@ const router = createRouter({
       component: () => import('@/views/public/PublicProfileView.vue'),
       meta: { guestOk: true },
     },
+    // Sala de Bifrost Meet (videollamada). El slug es de la MeetRoom (no un userSlug): el `meetUrl`
+    // horneado en las reservas es `${publicBaseUrl}/meet/<slug>`. Antes este path era un alias del perfil
+    // de agenda; se re-mapeó porque los perfiles ya viven en `/u/:userSlug` (review L5).
     {
-      path: '/meet/:userSlug',
-      name: 'public-meet',
-      component: () => import('@/views/public/PublicProfileView.vue'),
+      path: '/meet/:slug',
+      name: 'public-meet-room',
+      component: () => import('@/views/public/MeetJoinView.vue'),
       meta: { guestOk: true },
     },
     {

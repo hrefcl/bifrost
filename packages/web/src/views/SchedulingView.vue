@@ -4,9 +4,21 @@ import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import { useSchedulingStore, type EventTypeInput } from '@/stores/scheduling';
 import type { WeeklyRule, AvailabilitySchedule } from '@webmail6/shared';
+import { useMeetConfig } from '@/composables/useMeetConfig';
 
 const { t } = useI18n();
 const store = useSchedulingStore();
+
+// Gate del toggle de Meet: sólo se ofrece "Incluir Bifrost Meet" si la instalación tiene Meet activo.
+const meetAvailable = ref(false);
+const { load: loadMeetConfig } = useMeetConfig();
+void loadMeetConfig()
+  .then((c) => {
+    meetAvailable.value = c.meetEnabled;
+  })
+  .catch(() => {
+    meetAvailable.value = false;
+  });
 
 type Tab = 'types' | 'availability' | 'bookings';
 const tab = ref<Tab>('types');
@@ -67,6 +79,7 @@ function blankType(): EventTypeInput {
     availabilityScheduleId: store.schedules[0]?.id ?? '',
     customQuestions: [],
     active: true,
+    meetEnabled: false,
   };
 }
 const typeError = ref('');
@@ -407,6 +420,13 @@ function fmt(iso: string, tz: string): string {
             </select>
           </label>
           <label>{{ t('scheduling.locationValue') }}<input v-model="form.location.value" /></label>
+          <label v-if="meetAvailable" class="modal__check">
+            <input v-model="form.meetEnabled" type="checkbox" />
+            <span>{{ t('meet.enableLabel') }}</span>
+          </label>
+          <p v-if="meetAvailable && form.meetEnabled" class="modal__hint">
+            {{ t('meet.enableHint') }}
+          </p>
           <div class="modal__row">
             <label
               >{{ t('scheduling.bufferBefore')

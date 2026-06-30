@@ -25,6 +25,7 @@
     "@vueuse/core": "^12.3.0",
     "@webmail6/shared": "workspace:*",
     "axios": "^1.7.9",
+    "livekit-client": "^2.20.0",
     "pinia": "^2.3.0",
     "vue": "^3.5.13",
     "vue-i18n": "^10",

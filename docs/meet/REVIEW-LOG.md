@@ -78,8 +78,26 @@ Implementado: `EventType.meetEnabled` (+ruta scheduling) · `CalendarEvent.meetR
 - **TD-MEET-CANCEL-RACE**: cancel de neo concurrente con reschedule en vuelo puede dejar sala stale 'active' sobre booking cancelado (la purga el TTL `purgeAt`; sin hole de seguridad).
 - **Manual calendar attach**: endpoint `POST/DELETE /api/calendar/events/:id/meet` diferido de F3.2.
 
+## F3.3 — frontend Google Meet + screen share — APPROVED ✅ (commit en rama)
+Implementado: dep `livekit-client` (chunk lazy de /meet, no infla el bundle) · `composables/useMeetConfig.ts` (config runtime cacheada + single-flight) · re-map router `/meet/:slug`→`MeetJoinView` (el alias de perfil estaba sin uso) · `MeetJoinView.vue` (pre-join: metadata, nombre, preview video-only) · `MeetCallView.vue` (LiveKit, UI Google Meet: grilla oscura, active-speaker spotlight, screen-share spotlight, barra mic/cam/compartir/copiar/salir) · `MeetVideoTile.vue` (attach/detach de tracks; audio local nunca → no eco) · toggle `meetEnabled` en SchedulingView (gated por config) · i18n es+en. **typecheck (vue-tsc) + lint + 31 web tests + build limpios.**
+
+### QA F3.3 (3 rondas)
+| Ronda | B (Codex) | C (z/GLM) | D (Kimi) | Resultado |
+|-------|-----------|-----------|----------|-----------|
+| v1 | **7.0 NOT APPROVE (1 HIGH)** | 8.0 APPROVE (5 MED) | 6.5 NOT APPROVE (3 MED) | BLOCKED_HIGH |
+| v2 | **8.0 NOT APPROVE (1 HIGH)** | 8.8 APPROVE | 8.5 APPROVE | BLOCKED_HIGH (residual más profundo) |
+| v3 | **9.3 APPROVE** | 9.2 APPROVE | 9.0 APPROVE | **APPROVED ✅** |
+
+**HIGH (B, cerrado en v3) — ciclo de vida de Room (privacidad/leak)**: v1 = la `Room` se asignaba a `room.value` solo DESPUÉS de `await connect()` → un unmount durante connect dejaba una Room huérfana publicando. v2 lo corrigió con guards (disposed/connectGen/connecting/staleGen + teardownRoom) pero B cazó un residual más profundo: tras `room.value=r`, el publish de mic/cam corría sin re-chequear staleGen → **la cámara/mic podían encenderse DESPUÉS del unmount** (race sensible a privacidad). v3: `room.value=r` ANTES de connect (unmount aborta la Room pendiente) + guard `staleGen` ANTES de cada `setXEnabled` (no se invoca getUserMedia tras disposal) + teardown post-publish + `removeAllListeners` en teardown. B confirmó: el device nunca se inicia tras disposal ni sobrevive al cleanup.
+**MEDIUM/LOW cerrados**: config-fail→unavailable graceful · preview video-only serializado (mic nunca capturado en pre-join, sin streams huérfanos) · error backend con i18n (403 too_early/window_closed/external_forbidden) · `markRaw` en tracks (no Proxy de Vue) · rejoin desde 'left' · eventos Reconnecting/Reconnected · audio de screen-share · handlers scopeados a la room actual (C-R1) · test single-flight real (resetModules+deferred).
+
+### Tech debt F3.3 → follow-up (documentado, no bloqueante)
+- **TD-MEET-LIFECYCLE-TEST** (C-R2): sin test automatizado del ciclo de vida de Room — requiere `@vue/test-utils`+`jsdom` (no en el repo) o extraer un composable `useMeetConnection`. El lifecycle está guardado en código y revisado por B; falta red de regresión.
+- **UI follow-up**: panel admin de MeetSettings, prefs "Reuniones" en Settings, checkbox en CalendarView, link en paso confirmado de PublicBooking, e2e Playwright de la llamada (necesita harness mock de LiveKit).
+- D-006 (refresh full rebuild, keys estables), C-L4 (timeout axios global), C-L7 (solo último screen-share en spotlight) — diferidos.
+
 ## Próximos pasos
-1. **F3.3** frontend (Google Meet + screen share): livekit-client, config público en boot, MeetJoin/MeetCall, checkbox/toggle/settings/admin panel, i18n.
-2. F3.4 infra · F3.5 provisioner · F3.6 docs.
+1. **F3.4** infra: servicio `livekit` en compose (profile meet, mailnet, imagen pinneada, límites mem/cpu), `livekit.yaml`, CSP deploy-time, `.env.example`.
+2. F3.5 provisioner (CFN 2º SG + Route53 + piso instancia + user-data) · F3.6 docs.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.
