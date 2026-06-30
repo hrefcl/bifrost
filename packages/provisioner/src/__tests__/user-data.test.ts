@@ -58,6 +58,16 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('BIFROST_DOMAIN=');
   });
 
+  it('whitelistea la red Docker en fail2ban (el API es proxy IMAP; sin esto un user banea a TODO el tenant)', () => {
+    const s = buildUserData(base);
+    // El archivo que docker-mailserver copia a jail.d/user-jail.local (gana a jail.local por orden de lectura).
+    expect(s).toContain('config/fail2ban-jail.cf');
+    expect(s).toContain('ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16');
+    // Se escribe SIEMPRE (no depende de SES): el lockout del tenant aplica a cualquier deploy.
+    const withoutSes = buildUserData(base);
+    expect(withoutSes).toContain('config/fail2ban-jail.cf');
+  });
+
   it('con sesParamName → helper que lee SSM + cron + boot-run, con SEND-GATING (relay off al boot)', () => {
     const s = buildUserData({ ...base, sesParamName: '/bifrost/acme-com/ses-smtp' });
     // awscli para leer el SecureString con el rol del box.

@@ -398,3 +398,25 @@ un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`
   pasa por DKIM igual). El turnkey ya configura `bounce.<dominio>`; aplicarlo al box vivo.
 - **TD-SES-IAM-CLEANUP (P3)**: dos IAM users SES (`aulion-ses-smtp` + `bifrost-ses-smtp`), cruft de setups
   manuales. Consolidar a uno (el turnkey usa nombre determinístico por dominio).
+
+## fail2ban / lockout de tenant (incidente 2026-06-30)
+
+- **TD-FAIL2BAN-PROXY-LOCKOUT (HIGH) — RESUELTO** (este commit): el API es un proxy IMAP; todos los logins
+  del tenant salen de la IP del contenedor API. fail2ban (jail dovecot) la baneaba ante fallos de password
+  de UN usuario → **lockout total del tenant**. Fix turnkey: `config/fail2ban-jail.cf` con
+  `[DEFAULT] ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16` (docker-mailserver lo copia a
+  `jail.d/user-jail.local`, leído último → gana a `jail.local`). Escrito por `user-data.ts` (CLI) y
+  `setup.sh` (manual). Seguro: esos rangos son RFC1918 internos (no spoofeables desde internet) y el
+  bruteforce IMAP/SMTP directo desde IPs públicas se sigue baneando. **Trade-off aceptado (review B/D):** el
+  whitelist es ancho (cubre todo el pool default de Docker: moby `172.17-31/16` + `192.168/16`) → exime
+  cualquier RFC1918 con reachability a IMAP/SMTP, no sólo el contenedor API. Aceptable porque Bifrost es
+  **all-in-one single-tenant** (único origen interno = el propio box). En host/VPC compartido, estrechar a la
+  subnet exacta del compose (`ipam` pin) — descartado hoy: pinnear subnet arriesga colisión con la VPC del
+  cliente y rompería `compose up` (peor para turnkey). El anti-bruteforce del login web NO
+  dependía de fail2ban: vive en el API (`/auth/login` 10/min, key por IP real vía `trustProxy`). Aplicado
+  y verificado en el box vivo (unban + `ignoreip` persistente tras `reload`).
+- **TD-AUTH-XFF-SPOOF (MED)**: `trustProxy: true` (app.ts) hace que Fastify tome la IP del cliente del
+  X-Forwarded-For *completo* (leftmost, claim del cliente). Un atacante puede rotar XFF falsos para evadir
+  el rate-limit por-IP de `/login` (10/min) y del global (100/min). Pre-existente, no introducido por el fix
+  de fail2ban. Fix: configurar `trustProxy` con el hop confiable (Traefik) — p.ej. número de saltos o la
+  subred del proxy — para derivar la IP real no-spoofeable; o keyear el rate-limit por `email` además de IP.
