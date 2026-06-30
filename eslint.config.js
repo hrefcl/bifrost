@@ -52,6 +52,7 @@ export default tseslint.config(
       '**/__tests__/**/*.ts',
       '**/test/**/*.ts',
       '**/e2e/**/*.ts',
+      '**/e2e/**/*.{js,cjs,mjs}', // harness e2e en JS (ej. shots.mjs) — fuera del tsconfig, sin typed-lint
       '**/demo/**/*.ts',
       '**/scripts/**/*.{js,cjs,mjs}',
       '**/*.config.{js,cjs,mjs,ts,mts,cts}',

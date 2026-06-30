@@ -457,6 +457,26 @@ export interface SchedulingSettings {
   auditEnabled: boolean;
 }
 
+/** Defaults de calendario a nivel instancia (admin). Singleton en SystemConfig key='calendarDefaults'. */
+export interface CalendarSettings {
+  /** IANA, p.ej. "America/Santiago". */
+  timezone: string;
+  /** 0=Domingo, 1=Lunes (primer día de la semana en la grilla). */
+  weekStart: 0 | 1;
+  /** Inicio/fin de jornada visible "HH:MM" (end > start). */
+  dayStart: string;
+  dayEnd: string;
+  /** Duración por defecto de un evento nuevo (min). */
+  defaultDurationMin: number;
+  /** Vista inicial del calendario. */
+  defaultView: 'day' | 'week' | 'month';
+  showWeekends: boolean;
+  /** Enviar invitación automática al crear un evento con asistentes. */
+  autoInvite: boolean;
+  /** Las reservas de Agenda bloquean el calendario. */
+  syncAgenda: boolean;
+}
+
 // --- DTOs de la página PÚBLICA (sin datos privados del host) ---
 export interface PublicEventType {
   slug: string;

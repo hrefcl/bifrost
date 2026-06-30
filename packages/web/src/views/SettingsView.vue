@@ -2,7 +2,7 @@
 import { ref, onMounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
-import AppIcon from '@/components/AppIcon.vue';
+import AppIcon, { type IconName } from '@/components/AppIcon.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { useAuthStore } from '@/stores/auth';
 import { api } from '@/lib/http';
@@ -14,13 +14,13 @@ const { t, locale } = useI18n();
 
 type Section = 'appearance' | 'signature' | 'security';
 const section = ref<Section>('appearance');
-const NAV: { id: Section; icon: string }[] = [
+const NAV: { id: Section; icon: IconName }[] = [
   { id: 'appearance', icon: 'sun' },
   { id: 'signature', icon: 'pencil' },
   { id: 'security', icon: 'shield' },
 ];
 
-const THEMES: { id: 'light' | 'dark' | 'system'; icon: string; label: string }[] = [
+const THEMES: { id: 'light' | 'dark' | 'system'; icon: IconName; label: string }[] = [
   { id: 'light', icon: 'sun', label: 'themeLight' },
   { id: 'dark', icon: 'moon', label: 'themeDark' },
   { id: 'system', icon: 'settings', label: 'themeSystem' },

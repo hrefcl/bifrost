@@ -164,40 +164,47 @@ onMounted(load);
 
 <template>
   <PublicLayout>
-    <div v-if="loading" class="muted">Cargando…</div>
-    <div v-else-if="serverError" class="notfound">
+    <div v-if="loading" class="state"><div class="spinner" /></div>
+    <div v-else-if="serverError" class="state notfound">
       <h2>Algo salió mal</h2>
       <p class="muted">No pudimos cargar tu reserva. Intenta de nuevo en un momento.</p>
     </div>
-    <div v-else-if="loadErr || !booking" class="notfound">
+    <div v-else-if="loadErr || !booking" class="state notfound" data-testid="pub-notfound">
       <h2>Reserva no encontrada</h2>
       <p class="muted">El enlace puede haber expirado o ser inválido.</p>
     </div>
-    <div v-else class="manage">
-      <span class="badge" :class="booking.status">{{
-        statusLabel[booking.status] ?? booking.status
-      }}</span>
-      <h1>{{ booking.snapshot.title }}</h1>
-      <p class="when">{{ startLabel }}</p>
-      <p class="muted">{{ booking.invitee.name }} · {{ booking.invitee.email }}</p>
+    <div v-else class="manage" data-testid="pub-manage">
+      <div class="card">
+        <span class="badge" :class="booking.status">{{
+          statusLabel[booking.status] ?? booking.status
+        }}</span>
+        <h1>{{ booking.snapshot.title }}</h1>
+        <p class="when">{{ startLabel }}</p>
+        <p class="muted">{{ booking.invitee.name }} · {{ booking.invitee.email }}</p>
 
-      <p v-if="msg" class="msg">{{ msg }}</p>
+        <p v-if="msg" class="msg">{{ msg }}</p>
 
-      <template v-if="isActive && !rescheduling">
-        <div class="actions">
+        <div v-if="isActive && !rescheduling" class="actions">
           <button class="primary" :disabled="busy" @click="startReschedule">Reagendar</button>
           <button class="danger" :disabled="busy" @click="cancel">Cancelar</button>
         </div>
-      </template>
+      </div>
 
-      <section v-if="rescheduling" class="picker">
+      <section v-if="rescheduling" class="card picker">
         <h3>Elige un nuevo horario</h3>
         <div class="daynav">
-          <button class="ghost" :disabled="dayOffset === 0" @click="changeDay(-1)">‹</button>
+          <button
+            class="ghost"
+            :disabled="dayOffset === 0"
+            aria-label="Día anterior"
+            @click="changeDay(-1)"
+          >
+            ‹
+          </button>
           <strong class="dayname">{{ dayLabel }}</strong>
-          <button class="ghost" @click="changeDay(1)">›</button>
+          <button class="ghost" aria-label="Día siguiente" @click="changeDay(1)">›</button>
         </div>
-        <div v-if="slotsLoading" class="muted">Buscando horarios…</div>
+        <div v-if="slotsLoading" class="muted center">Buscando horarios…</div>
         <div v-else-if="slots.length === 0" class="muted empty">No hay horarios este día.</div>
         <div v-else class="slots">
           <button
@@ -219,39 +226,78 @@ onMounted(load);
 
 <style scoped>
 .muted {
-  color: var(--text-3, #8a8a8a);
+  color: var(--text-3);
+}
+.center {
+  text-align: center;
+}
+.state {
+  text-align: center;
+  padding: 56px 0;
+}
+.spinner {
+  width: 34px;
+  height: 34px;
+  margin: 0 auto;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner {
+    animation: none;
+  }
+}
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 22px;
+  box-shadow: var(--shadow-sm);
+  margin-bottom: 14px;
 }
 .badge {
   display: inline-block;
-  padding: 3px 10px;
+  padding: 3px 11px;
   border-radius: 999px;
   font-size: 12px;
-  font-weight: 600;
-  background: var(--surface-2, #eee);
+  font-weight: 700;
+  background: var(--surface-dim);
+  color: var(--text-2);
 }
 .badge.confirmed {
-  background: #e6f4ea;
-  color: #1e7e34;
+  background: color-mix(in srgb, #16a34a 14%, transparent);
+  color: var(--green, #16a34a);
 }
 .badge.cancelled {
-  background: #fdecea;
-  color: #c0392b;
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
 }
 .badge.rescheduled {
-  background: #fff4e5;
-  color: #b26a00;
+  background: color-mix(in srgb, #d97706 16%, transparent);
+  color: var(--amber, #d97706);
 }
 .manage h1 {
-  margin: 8px 0 4px;
+  margin: 10px 0 4px;
+  font-size: 21px;
+  font-weight: 700;
 }
 .when {
   font-weight: 600;
 }
 .msg {
-  padding: 10px;
-  background: var(--surface-2, #f0f0f0);
-  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  border-radius: 9px;
   margin: 12px 0;
+  font-size: 13.5px;
 }
 .actions {
   display: flex;
@@ -261,8 +307,9 @@ onMounted(load);
 .primary,
 .danger {
   padding: 11px 18px;
-  border-radius: 8px;
+  border-radius: 9px;
   border: none;
+  font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
@@ -270,9 +317,14 @@ onMounted(load);
   background: var(--accent);
   color: #fff;
 }
+.primary:disabled,
+.danger:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 .danger {
-  background: #fdecea;
-  color: #c0392b;
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
 }
 .daynav {
   display: flex;
@@ -284,16 +336,18 @@ onMounted(load);
   text-transform: capitalize;
 }
 .ghost {
-  background: none;
-  border: 1px solid var(--border, #e5e5e5);
-  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 9px;
   width: 38px;
   height: 38px;
   font-size: 18px;
   cursor: pointer;
+  color: var(--text-1);
 }
 .ghost:disabled {
   opacity: 0.35;
+  cursor: default;
 }
 .slots {
   display: grid;
@@ -302,9 +356,12 @@ onMounted(load);
 }
 .slot {
   padding: 12px;
-  border: 1px solid var(--border, #e5e5e5);
-  border-radius: 8px;
-  background: var(--surface, #fff);
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--text-1);
+  font: inherit;
+  font-weight: 600;
   cursor: pointer;
 }
 .slot:hover {
@@ -322,12 +379,17 @@ onMounted(load);
   color: var(--accent);
   cursor: pointer;
   padding: 0;
+  font: inherit;
+  font-weight: 600;
 }
 .picker h3 {
-  margin: 20px 0 0;
+  margin: 0 0 4px;
+  font-size: 16px;
 }
 .notfound {
-  text-align: center;
   padding: 48px 0;
+}
+.notfound h2 {
+  margin: 0 0 6px;
 }
 </style>

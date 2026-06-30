@@ -73,6 +73,53 @@ describe('Fase 3.3 — APIs host de agenda', () => {
     expect(list.find((s) => s.isDefault)?.id).toBe((JSON.parse(second.body) as { id: string }).id);
   });
 
+  it('availability: PATCH con expectedUpdatedAt hace CAS (409 si stale, sin clobber de overrides)', async () => {
+    const { user } = await seedUserWithAccount({ email: 'a@test.com' });
+    const uid = user._id.toString();
+    const s = await seedSchedule(uid);
+
+    // Estado fresco (baseline) que un "cliente A" leyó.
+    const base = JSON.parse((await get(uid, '/api/schedule/availability')).body) as Array<{
+      id: string;
+      updatedAt: string;
+    }>;
+    const staleUpdatedAt = base[0].updatedAt;
+
+    // Otro escritor avanza el doc (añade una excepción) → updatedAt cambia.
+    const w1 = await patch(uid, `/api/schedule/availability/${s.id}`, {
+      overrides: [{ date: '2099-01-01', intervals: [] }],
+    });
+    expect(w1.statusCode).toBe(200);
+
+    // El "cliente A" intenta guardar con el updatedAt VIEJO → 409 (no pisa la excepción de w1).
+    const stale = await patch(uid, `/api/schedule/availability/${s.id}`, {
+      overrides: [{ date: '2099-02-02', intervals: [] }],
+      expectedUpdatedAt: staleUpdatedAt,
+    });
+    expect(stale.statusCode).toBe(409);
+
+    // La excepción de w1 sigue intacta (no fue clobbered).
+    const after = JSON.parse((await get(uid, '/api/schedule/availability')).body) as Array<{
+      overrides: { date: string }[];
+      updatedAt: string;
+    }>;
+    expect(after[0].overrides.map((o) => o.date)).toEqual(['2099-01-01']);
+
+    // Con el updatedAt FRESCO sí guarda (200) — el CAS no bloquea escrituras legítimas.
+    const fresh = await patch(uid, `/api/schedule/availability/${s.id}`, {
+      overrides: [
+        { date: '2099-01-01', intervals: [] },
+        { date: '2099-02-02', intervals: [] },
+      ],
+      expectedUpdatedAt: after[0].updatedAt,
+    });
+    expect(fresh.statusCode).toBe(200);
+
+    // Sin expectedUpdatedAt → comportamiento previo intacto (backward-compatible).
+    const noCas = await patch(uid, `/api/schedule/availability/${s.id}`, { timezone: 'UTC' });
+    expect(noCas.statusCode).toBe(200);
+  });
+
   it('availability: rechaza tz inválida, intervalo end<=start y 24:00 como inicio', async () => {
     const { user } = await seedUserWithAccount({ email: 'a@test.com' });
     const uid = user._id.toString();
