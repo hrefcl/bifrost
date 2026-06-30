@@ -457,6 +457,19 @@ export interface SchedulingSettings {
   auditEnabled: boolean;
 }
 
+/** Grupo de cuentas/usuarios (admin, F7). `memberUserIds` referencia usuarios; sin duplicados. */
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  email?: string;
+  memberUserIds: string[];
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Defaults de calendario a nivel instancia (admin). Singleton en SystemConfig key='calendarDefaults'. */
 export interface CalendarSettings {
   /** IANA, p.ej. "America/Santiago". */

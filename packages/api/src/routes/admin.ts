@@ -25,6 +25,7 @@ import {
   CalendarSettingsError,
 } from '../services/calendar-settings.js';
 import { getStorageDefaults, setStorageDefaults } from '../services/storage-defaults.js';
+import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
@@ -268,6 +269,199 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.patch('/config/storage-defaults', async (request) => {
     const body = storageDefaultsSchema.parse(request.body);
     return setStorageDefaults(body);
+  });
+
+  // ───────── Grupos (F7) ─────────
+  // Valida que los `ids` sean usuarios EXISTENTES y los devuelve deduplicados; si alguno no existe,
+  // responde 400 y devuelve null (el caller corta). Integridad de referencias (review B/C/D).
+  async function resolveExistingMembers(
+    ids: string[],
+    reply: import('fastify').FastifyReply
+  ): Promise<string[] | null> {
+    const uniq = [...new Set(ids)];
+    if (uniq.length === 0) return [];
+    const found = await User.find({ _id: { $in: uniq } })
+      .select('_id')
+      .lean();
+    const foundSet = new Set(found.map((u) => u._id.toString()));
+    const missing = uniq.filter((id) => !foundSet.has(id));
+    if (missing.length > 0) {
+      reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'Algún miembro no existe' });
+      return null;
+    }
+    return uniq;
+  }
+  function isDupKey(e: unknown): boolean {
+    return (e as { code?: number }).code === 11000;
+  }
+  const MAX_GROUP_MEMBERS = 5000; // cota dura del tamaño del array (review D-040)
+  /** Serializa filtrando miembros a usuarios existentes — MISMO criterio que el GET (consistencia, review C). */
+  async function serializeGroupFiltered(g: IGroup): Promise<ReturnType<typeof serializeGroup>> {
+    const ids = g.memberUserIds.map((id) => id.toString());
+    if (ids.length === 0) return serializeGroup(g, []);
+    const existing = await User.find({ _id: { $in: ids } })
+      .select('_id')
+      .lean();
+    const set = new Set(existing.map((u) => u._id.toString()));
+    return serializeGroup(
+      g,
+      ids.filter((id) => set.has(id))
+    );
+  }
+  const groupCreateSchema = z
+    .object({
+      name: z.string().trim().min(1).max(120),
+      description: z.string().trim().max(500).optional(),
+      color: z.string().regex(HEX, 'color inválido').optional(),
+      email: z.union([z.string().email(), z.literal('')]).optional(),
+      memberUserIds: z.array(objectId).max(2000).optional(),
+    })
+    .strict();
+  const groupPatchSchema = z
+    .object({
+      name: z.string().trim().min(1).max(120).optional(),
+      description: z.string().trim().max(500).optional(),
+      color: z.string().regex(HEX, 'color inválido').optional(),
+      email: z.union([z.string().email(), z.literal('')]).optional(),
+    })
+    .strict();
+
+  /** Lista grupos; FILTRA miembros a usuarios existentes al leer (defensa ante usuarios borrados). */
+  fastify.get('/groups', async () => {
+    const groups = await Group.find().sort({ name: 1 });
+    const allIds = [...new Set(groups.flatMap((g) => g.memberUserIds.map((id) => id.toString())))];
+    const existing = allIds.length
+      ? await User.find({ _id: { $in: allIds } })
+          .select('_id')
+          .lean()
+      : [];
+    const existingSet = new Set(existing.map((u) => u._id.toString()));
+    return {
+      groups: groups.map((g) =>
+        serializeGroup(
+          g,
+          g.memberUserIds.map((id) => id.toString()).filter((id) => existingSet.has(id))
+        )
+      ),
+    };
+  });
+
+  fastify.post('/groups', async (request, reply) => {
+    const body = groupCreateSchema.parse(request.body);
+    const members = await resolveExistingMembers(body.memberUserIds ?? [], reply);
+    if (members === null) return;
+    const email = body.email && body.email.length > 0 ? body.email : undefined;
+    try {
+      const g = await Group.create({
+        name: body.name,
+        description: body.description,
+        color: body.color,
+        email,
+        memberUserIds: members,
+      });
+      reply.code(201);
+      return await serializeGroupFiltered(g);
+    } catch (e) {
+      if (isDupKey(e)) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya existe un grupo con ese nombre o email',
+        });
+      }
+      throw e;
+    }
+  });
+
+  fastify.patch('/groups/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    objectId.parse(id);
+    const body = groupPatchSchema.parse(request.body);
+    const set: Record<string, unknown> = {};
+    const unset: Record<string, unknown> = {};
+    if (body.name !== undefined) set.name = body.name;
+    if (body.description !== undefined) set.description = body.description;
+    if (body.color !== undefined) set.color = body.color;
+    if (body.email !== undefined) {
+      // '' limpia el email (→ $unset, para no chocar con el índice parcial único).
+      if (body.email === '') unset.email = 1;
+      else set.email = body.email;
+    }
+    const update: Record<string, unknown> = {};
+    if (Object.keys(set).length) update.$set = set;
+    if (Object.keys(unset).length) update.$unset = unset;
+    try {
+      const g = await Group.findByIdAndUpdate(id, update, { new: true });
+      if (!g)
+        return await reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Grupo no encontrado' });
+      return await serializeGroupFiltered(g);
+    } catch (e) {
+      if (isDupKey(e)) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya existe un grupo con ese nombre o email',
+        });
+      }
+      throw e;
+    }
+  });
+
+  /** Miembros vía $addToSet/$pull (NUNCA replace del array → unicidad atómica + sin lost-update, review C). */
+  fastify.patch('/groups/:id/members', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    objectId.parse(id);
+    const body = z
+      .object({
+        add: z.array(objectId).max(2000).optional(),
+        remove: z.array(objectId).max(2000).optional(),
+      })
+      .strict()
+      .parse(request.body);
+    if (body.add?.length) {
+      const ok = await resolveExistingMembers(body.add, reply);
+      if (ok === null) return;
+      // Cota dura del tamaño final del array (review B/D-040): no permitir que crezca sin techo.
+      const current = await Group.findById(id).select('memberUserIds').lean();
+      if (!current)
+        return reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Grupo no encontrado' });
+      const currentIds = new Set(current.memberUserIds.map((m) => m.toString()));
+      const net = ok.filter((m) => !currentIds.has(m)).length;
+      if (currentIds.size + net > MAX_GROUP_MEMBERS) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: `Máximo ${String(MAX_GROUP_MEMBERS)} miembros por grupo`,
+        });
+      }
+      await Group.updateOne({ _id: id }, { $addToSet: { memberUserIds: { $each: ok } } });
+    }
+    if (body.remove?.length) {
+      await Group.updateOne({ _id: id }, { $pull: { memberUserIds: { $in: body.remove } } });
+    }
+    const g = await Group.findById(id);
+    if (!g)
+      return await reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Grupo no encontrado' });
+    return await serializeGroupFiltered(g);
+  });
+
+  fastify.delete('/groups/:id', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    objectId.parse(id);
+    const g = await Group.findByIdAndDelete(id);
+    if (!g)
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Grupo no encontrado' });
+    return { ok: true };
   });
 
   fastify.get('/config/calendar', async () => {

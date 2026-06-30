@@ -8,6 +8,7 @@ import { vFocusTrap } from '@/lib/focusTrap';
 import ComplianceAdmin from '@/components/admin/ComplianceAdmin.vue';
 import AdminSchedulingPanel from '@/components/admin/AdminSchedulingPanel.vue';
 import AdminCalendarPrefs from '@/components/admin/AdminCalendarPrefs.vue';
+import AdminGroups from '@/components/admin/AdminGroups.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
@@ -20,7 +21,14 @@ import { BUILD_INFO } from '@/lib/buildInfo';
  *  - Compliance: gestión de documentos legales, versiones, enforcement y auditoría de aceptaciones.
  * Todo exige rol admin (verificado también en el backend).
  */
-type Tab = 'accounts' | 'branding' | 'storage' | 'compliance' | 'scheduling' | 'preferences';
+type Tab =
+  | 'accounts'
+  | 'groups'
+  | 'branding'
+  | 'storage'
+  | 'compliance'
+  | 'scheduling'
+  | 'preferences';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -38,10 +46,17 @@ interface AdminSection {
 const SECTIONS: AdminSection[] = [
   {
     key: 'accounts',
-    icon: 'users',
+    icon: 'user',
     label: 'admin.tabs.accounts',
     title: 'admin.accounts.title',
     desc: 'admin.accounts.desc',
+  },
+  {
+    key: 'groups',
+    icon: 'users',
+    label: 'admin.tabs.groups',
+    title: 'admin.groups.title',
+    desc: 'admin.groups.desc',
   },
   {
     key: 'branding',
@@ -754,6 +769,9 @@ async function save() {
 
           <!-- ===================== PREFERENCIAS DE CALENDARIO ===================== -->
           <AdminCalendarPrefs v-else-if="tab === 'preferences'" />
+
+          <!-- ===================== GRUPOS ===================== -->
+          <AdminGroups v-else-if="tab === 'groups'" />
 
           <!-- ===================== CUENTAS ===================== -->
           <div v-if="tab === 'accounts'" class="card">
