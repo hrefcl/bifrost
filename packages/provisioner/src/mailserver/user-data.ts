@@ -39,6 +39,13 @@ export interface UserDataInput {
    * cuenta ya conoce la clave y puede cambiarla); endurecer entregándola por SSH post-deploy (deuda).
    */
   adminMailboxPassword?: string;
+  /**
+   * Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador del
+   * CLI). Si se da, el box instala un helper `bifrost-ses-activate` que LEE la credencial con el rol y
+   * cablea el relay de docker-mailserver. SEND-GATING (§7b): al boot el relay queda APAGADO
+   * (mailserver.env vacío); se activa sólo cuando la credencial existe en SSM (outbound `ready`).
+   */
+  sesParamName?: string;
 }
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
@@ -141,6 +148,40 @@ ${
 } > .env`
     : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
 }
+${
+  input.sesParamName
+    ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b) — mailserver.env vacío. El compose
+# referencia este env_file; un helper lo puebla SÓLO cuando la credencial SMTP existe en SSM (= el
+# orquestador del CLI la publica al quedar el outbound 'ready'). awscli para leer el SecureString con el rol.
+apt_retry install -y awscli
+SES_PARAM="${sh(input.sesParamName)}"
+printf 'SES_PARAM=%s\\nSES_REGION=%s\\nCOMPOSE_DIR=%s\\n' "$SES_PARAM" "$REGION" "$(pwd)" > /etc/bifrost-ses.conf
+cat > /usr/local/bin/bifrost-ses-activate <<'ACT'
+#!/bin/bash
+# Cablea el relay SES leyendo la credencial SMTP de SSM (con el rol del box). Idempotente y graceful:
+# si la credencial aún no existe (outbound no-ready), NO toca nada y sale 0 (relay sigue apagado).
+set -euo pipefail
+. /etc/bifrost-ses.conf
+VAL=$(aws ssm get-parameter --name "$SES_PARAM" --with-decryption --region "$SES_REGION" --query Parameter.Value --output text 2>/dev/null) || { echo "bifrost-ses: credencial no disponible aún; relay apagado"; exit 0; }
+RUSER=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessKeyId"])')
+RPASS=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["smtpPassword"])')
+cd "$COMPOSE_DIR"
+NEW=$(printf 'RELAY_HOST=email-smtp.%s.amazonaws.com\\nRELAY_PORT=587\\nRELAY_USER=%s\\nRELAY_PASSWORD=%s\\n' "$SES_REGION" "$RUSER" "$RPASS")
+# Sólo recrear si cambió (evita reinicios innecesarios del mailserver en cada corrida del timer).
+if [ "$(cat mailserver.env 2>/dev/null)" != "$NEW" ]; then
+  umask 077
+  printf '%s' "$NEW" > mailserver.env
+  docker compose up -d mailserver
+  echo "bifrost-ses: relay ACTIVADO (RELAY_USER=$RUSER)"
+fi
+ACT
+chmod 755 /usr/local/bin/bifrost-ses-activate
+# Timer pull-based: el box se auto-activa dentro de ~5 min de que la credencial aparezca en SSM, y
+# RE-aplica el relay tras un reboot (sobrevive reinicios). No requiere push del operador al box.
+echo '*/5 * * * * root /usr/local/bin/bifrost-ses-activate >> /var/log/bifrost-ses.log 2>&1' > /etc/cron.d/bifrost-ses
+chmod 644 /etc/cron.d/bifrost-ses`
+    : ''
+}
 
 # 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).
 docker compose pull
@@ -187,6 +228,14 @@ for _ in $(seq 1 36); do docker compose exec -T mailserver setup email list >/de
 docker compose exec -T mailserver setup email add "$ADMIN_MAILBOX" "$ADMIN_MAILBOX_PASS" \\
   || echo "buzón admin ya existía o setup no estaba listo"
 echo "bifrost-provision: buzón admin $ADMIN_MAILBOX listo" >> /var/log/bifrost-provision.log`
+    : ''
+}
+
+${
+  input.sesParamName
+    ? `# 7.c) Intentar activar el relay SES YA (si la credencial ya está en SSM). Graceful: si aún no está
+# (outbound no-ready), no hace nada; el cron reintenta cada 5 min. Sobrevive reboots.
+/usr/local/bin/bifrost-ses-activate || true`
     : ''
 }
 

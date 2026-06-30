@@ -43,6 +43,33 @@ describe('buildUserData (cloud-init)', () => {
     expect(buildUserData(base)).not.toContain('setup email add');
   });
 
+  it('sin sesParamName → NO instala el relay SES (sin helper, sin cron, sin awscli)', () => {
+    const s = buildUserData(base);
+    expect(s).not.toContain('bifrost-ses-activate');
+    expect(s).not.toContain('/etc/cron.d/bifrost-ses');
+    expect(s).not.toContain('install -y awscli');
+  });
+
+  it('con sesParamName → helper que lee SSM + cron + boot-run, con SEND-GATING (relay off al boot)', () => {
+    const s = buildUserData({ ...base, sesParamName: '/bifrost/acme-com/ses-smtp' });
+    // awscli para leer el SecureString con el rol del box.
+    expect(s).toContain('install -y awscli');
+    // El helper lee la credencial de SSM con --with-decryption.
+    expect(s).toContain('/usr/local/bin/bifrost-ses-activate');
+    expect(s).toContain('aws ssm get-parameter --name "$SES_PARAM" --with-decryption');
+    expect(s).toContain('/bifrost/acme-com/ses-smtp');
+    // Arma el relay de docker-mailserver hacia el endpoint SMTP de SES.
+    expect(s).toContain('RELAY_HOST=email-smtp.');
+    expect(s).toContain('RELAY_PORT=587');
+    // SEND-GATING: graceful si la credencial no está (relay sigue apagado), no rompe el boot.
+    expect(s).toContain('relay apagado');
+    // Timer pull-based (auto-activa + sobrevive reboot) y corrida al boot.
+    expect(s).toContain('/etc/cron.d/bifrost-ses');
+    expect(s).toContain('/usr/local/bin/bifrost-ses-activate || true');
+    // El SecretAccessKey de AWS jamás aparece; sólo se maneja el password ya derivado vía SSM.
+    expect(s).not.toContain('SecretAccessKey');
+  });
+
   it('instala deps + docker (repo APT firmado, NO curl|sh), clona el stack y levanta compose', () => {
     const s = buildUserData(base);
     // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).

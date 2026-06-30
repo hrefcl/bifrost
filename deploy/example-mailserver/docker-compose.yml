@@ -55,6 +55,12 @@ services:
       # system" al crear live/). Comparte el volumen con Traefik (que escribe acme.json). [deploy real]
       - ./letsencrypt:/etc/letsencrypt
       - /etc/localtime:/etc/localtime:ro
+    # Relay saliente (SES): las credenciales SMTP viven en mailserver.env, que arranca VACÍO (relay
+    # apagado = send-gating). El helper bifrost-ses-activate del box lo puebla con RELAY_HOST/PORT/USER/
+    # PASSWORD leyendo la credencial de SSM cuando el outbound queda 'ready'. Vacío → docker-mailserver
+    # no ve RELAY_HOST y entrega directo (sólo sirve si el puerto 25 saliente está abierto).
+    env_file:
+      - mailserver.env
     environment:
       - OVERRIDE_HOSTNAME=mail.example.com
       - ENABLE_FAIL2BAN=1

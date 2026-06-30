@@ -43,6 +43,7 @@ import { Draft } from '../../models/Draft.js';
 import { User } from '../../models/User.js';
 import { Contact } from '../../models/Contact.js';
 import { recoverStuckDrafts } from '../drafts.js';
+import { redis } from '../../config/redis.js';
 
 describe('envío de drafts (F3.5)', () => {
   let app: FastifyInstance;
@@ -89,6 +90,57 @@ describe('envío de drafts (F3.5)', () => {
     expect(after?.status).toBe('sent');
     expect(after?.sentMessageId).toBeTruthy();
     expect(after?.sentAt).toBeTruthy();
+  });
+
+  it('rate-limit por buzón: excede el cap → 429 + Retry-After, NO envía y revierte a editing', async () => {
+    await redis.flushall();
+    process.env.OUTBOUND_MAX_RCPT_PER_MIN = '1'; // cap minúsculo para el test
+    try {
+      const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+      // 2 destinatarios > cap de 1 → debe bloquear en el primer envío.
+      const draft = await makeDraft(user._id.toString(), account._id.toString(), [
+        { address: 'a@test.com' },
+        { address: 'b@test.com' },
+      ]);
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/drafts/${draft._id.toString()}/send`,
+        headers: authHeaders(app, user._id.toString()),
+      });
+      expect(res.statusCode).toBe(429);
+      expect(res.headers['retry-after']).toBeTruthy();
+      expect(h.sent).toBe(0); // NO se hizo submit SMTP
+      // El draft se revierte a 'editing' (se reclamó a 'sending') para que el user pueda reintentar.
+      const after = await Draft.findById(draft._id);
+      expect(after?.status).toBe('editing');
+    } finally {
+      delete process.env.OUTBOUND_MAX_RCPT_PER_MIN;
+      await redis.flushall();
+    }
+  });
+
+  it('cap de destinatarios por MENSAJE: excede → 400, NO envía y revierte a editing', async () => {
+    await redis.flushall();
+    process.env.OUTBOUND_MAX_RCPT_PER_MESSAGE = '2';
+    try {
+      const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+      const draft = await makeDraft(user._id.toString(), account._id.toString(), [
+        { address: 'a@test.com' },
+        { address: 'b@test.com' },
+        { address: 'c@test.com' },
+      ]);
+      const res = await app.inject({
+        method: 'POST',
+        url: `/api/drafts/${draft._id.toString()}/send`,
+        headers: authHeaders(app, user._id.toString()),
+      });
+      expect(res.statusCode).toBe(400);
+      expect(h.sent).toBe(0);
+      const after = await Draft.findById(draft._id);
+      expect(after?.status).toBe('editing');
+    } finally {
+      delete process.env.OUTBOUND_MAX_RCPT_PER_MESSAGE;
+    }
   });
 
   it('reenviar un draft ya enviado es idempotente (no re-envía)', async () => {
