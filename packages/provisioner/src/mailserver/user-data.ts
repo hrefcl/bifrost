@@ -151,6 +151,15 @@ ${
 } > .env`
     : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
 }
+# Dominio del box → lo usa el host-updater (Fase 2) para el healthcheck post-update por Traefik.
+echo "BIFROST_DOMAIN=\${DOMAIN}" >> .env
+# Updater del host (botón "Actualizar" del admin): el script vive en el repo (deploy/example-mailserver/
+# bifrost-update.sh); el cron lo corre cada minuto. Lee el marker que deja el API y hace pull+up+rollback.
+# El API NUNCA toca el socket de Docker. Ver bifrost-update.sh.
+chmod +x bifrost-update.sh 2>/dev/null || true
+install -d -m 0750 update-trigger
+echo '* * * * * root cd /opt/bifrost/deploy/example-mailserver && ./bifrost-update.sh >> /var/log/bifrost-update.log 2>&1' > /etc/cron.d/bifrost-update
+chmod 644 /etc/cron.d/bifrost-update
 ${
   input.sesParamName
     ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b). Un helper lo activa SÓLO cuando la
