@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, watch, onBeforeUnmount } from 'vue';
+import { ref, watch, computed, onBeforeUnmount } from 'vue';
+import { splitEmailQuote } from '@/lib/emailQuote';
 
 /**
  * Renderiza el cuerpo HTML de un email en un IFRAME SANDBOX. Dos motivos:
@@ -22,6 +23,16 @@ import { ref, watch, onBeforeUnmount } from 'vue';
 const props = defineProps<{ html: string }>();
 const frame = ref<HTMLIFrameElement | null>(null);
 const height = ref(120);
+// Mostrar/ocultar la CITA (el mensaje anterior citado debajo de la respuesta), estilo Gmail "···".
+const showQuoted = ref(false);
+
+// Separa contenido nuevo + cita (ver lib/emailQuote.ts). El split se hace en el PADRE porque el iframe
+// no corre scripts; el toggle "···" re-renderiza el srcdoc con/sin la cita.
+const split = computed(() => splitEmailQuote(props.html));
+const visibleHtml = computed(() =>
+  split.value.quoted && !showQuoted.value ? split.value.main : props.html
+);
+const hasQuote = computed(() => split.value.quoted.length > 0);
 
 // CSP del documento del email — defensa en profundidad sobre el sandbox (que ya bloquea scripts por
 // no llevar allow-scripts). Bloquea explícitamente JS/plugins/<base href> malicioso y deja sólo lo
@@ -81,24 +92,36 @@ onBeforeUnmount(() => {
   ro = null;
 });
 
-// Al cambiar de email, reseteamos la altura; el @load del nuevo srcdoc la vuelve a medir.
+// Al cambiar de email, reseteamos la altura y volvemos a colapsar la cita; el @load la vuelve a medir.
 watch(
   () => props.html,
   () => {
     height.value = 120;
+    showQuoted.value = false;
   }
 );
 </script>
 
 <template>
-  <iframe
-    ref="frame"
-    class="email-frame"
-    sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
-    :srcdoc="srcdoc(props.html)"
-    :style="{ height: height + 'px' }"
-    @load="onLoad"
-  />
+  <div class="ebf">
+    <iframe
+      ref="frame"
+      class="email-frame"
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      :srcdoc="srcdoc(visibleHtml)"
+      :style="{ height: height + 'px' }"
+      @load="onLoad"
+    />
+    <!-- Toggle estilo Gmail: muestra/oculta la cita (mensaje previo citado). Sólo si hay cita. -->
+    <button
+      v-if="hasQuote"
+      class="ebf-quote-toggle"
+      :title="showQuoted ? 'Ocultar lo citado' : 'Mostrar el contenido citado'"
+      @click="showQuoted = !showQuoted"
+    >
+      <span class="ebf-dots">•••</span>
+    </button>
+  </div>
 </template>
 
 <style scoped>
@@ -109,5 +132,26 @@ watch(
   /* Normalmente la altura calza exacto (sin scroll); si se capea por MAX_PX, scrollea adentro. */
   overflow-y: auto;
   overflow-x: hidden;
+}
+.ebf-quote-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 2px;
+  padding: 0 8px;
+  height: 18px;
+  border: none;
+  border-radius: 9px;
+  background: var(--surface-3, #e8eaed);
+  color: var(--text-2, #5f6368);
+  cursor: pointer;
+  line-height: 1;
+}
+.ebf-quote-toggle:hover {
+  background: var(--surface-4, #dadce0);
+}
+.ebf-dots {
+  font-size: 13px;
+  letter-spacing: 1px;
 }
 </style>
