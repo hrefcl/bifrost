@@ -5,6 +5,7 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
 import EmailBodyFrame from '@/components/EmailBodyFrame.vue';
+import ThreadMessage from '@/components/ThreadMessage.vue';
 import { api } from '@/lib/http';
 import { useUiStore } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
@@ -514,13 +515,43 @@ async function selectLabel(f: Folder) {
   await selectFolder(f.id);
 }
 
+// Mensajes del hilo (conversación) abierto, cronológico. Con >1 el panel los apila (vista Gmail); con
+// 1 cae al render simple de un solo mensaje. Cada ThreadMessage carga su propio body perezoso.
+const threadMessages = ref<Email[]>([]);
+
 let openToken = 0;
 async function openEmail(email: Email) {
   const token = ++openToken;
   selected.value = email;
   body.value = null;
   attachments.value = [];
+  threadMessages.value = [email]; // fallback inmediato (hilo de 1)
   bodyLoading.value = true;
+
+  // Carga el hilo completo (todos los mensajes con el mismo threadId) para la vista apilada.
+  if (email.threadId) {
+    api
+      .get<{ data: Email[] }>(`/emails/thread/${encodeURIComponent(email.threadId)}`)
+      .then(({ data }) => {
+        if (token !== openToken || data.data.length <= 1) return;
+        threadMessages.value = data.data; // backend lo devuelve date asc
+        // Marca leídos TODOS los del hilo (abrir una conversación la marca leída, estilo Gmail).
+        for (const m of data.data) {
+          if (!m.flags.seen) {
+            m.flags.seen = true;
+            void api.patch(`/emails/${m.id}/flags`, { seen: true }).catch(() => {
+              m.flags.seen = false;
+              scheduleBadgeRefresh();
+            });
+          }
+        }
+        scheduleBadgeRefresh();
+      })
+      .catch(() => {
+        /* queda el fallback [email] */
+      });
+  }
+
   try {
     const bodyRes = await api.get<EmailBody>(`/emails/${email.id}/body`);
     if (token !== openToken) return;
@@ -814,6 +845,10 @@ function compose() {
 }
 function reply() {
   if (selected.value) composer.openComposer({ replyTo: selected.value.id });
+}
+/** Responder a un mensaje PUNTUAL del hilo (botón dentro de la vista apilada). */
+function replyToMessage(m: Email) {
+  composer.openComposer({ replyTo: m.id });
 }
 function replyAll() {
   if (selected.value) composer.openComposer({ replyAll: selected.value.id });
@@ -1360,7 +1395,19 @@ onBeforeUnmount(() => {
             </button>
           </div>
 
-          <div class="msg-block">
+          <!-- Conversación (hilo) con >1 mensaje: vista APILADA, cada mensaje colapsable (el más
+               reciente expandido). Carga la cadena histórica completa vía /emails/thread/:id. -->
+          <div v-if="threadMessages.length > 1" class="thread-stack">
+            <ThreadMessage
+              v-for="(m, i) in threadMessages"
+              :key="m.id"
+              :email="m"
+              :expanded="i === threadMessages.length - 1"
+              @reply="replyToMessage"
+            />
+          </div>
+
+          <div v-else class="msg-block">
             <div class="msg-head">
               <AppAvatar :name="selected.from.name" :email="selected.from.address" :size="40" />
               <div class="msg-id">
@@ -1408,18 +1455,20 @@ onBeforeUnmount(() => {
                 </div>
               </div>
             </div>
+          </div>
 
-            <div class="reply-bar">
-              <button class="btn-secondary" @click="reply">
-                <AppIcon name="reply" :size="18" />{{ t('thread.reply') }}
-              </button>
-              <button class="btn-secondary" @click="replyAll">
-                <AppIcon name="replyAll" :size="18" />{{ t('thread.replyAll') }}
-              </button>
-              <button class="btn-secondary" @click="forward">
-                <AppIcon name="forward" :size="18" />{{ t('thread.forward') }}
-              </button>
-            </div>
+          <!-- Barra de acciones de la conversación (responde al mensaje más reciente). Fuera del
+               msg-block para que aplique tanto a la vista apilada como al mensaje único. -->
+          <div class="reply-bar">
+            <button class="btn-secondary" @click="reply">
+              <AppIcon name="reply" :size="18" />{{ t('thread.reply') }}
+            </button>
+            <button class="btn-secondary" @click="replyAll">
+              <AppIcon name="replyAll" :size="18" />{{ t('thread.replyAll') }}
+            </button>
+            <button class="btn-secondary" @click="forward">
+              <AppIcon name="forward" :size="18" />{{ t('thread.forward') }}
+            </button>
           </div>
         </div>
       </section>
