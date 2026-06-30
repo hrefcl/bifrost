@@ -420,3 +420,22 @@ un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`
   el rate-limit por-IP de `/login` (10/min) y del global (100/min). Pre-existente, no introducido por el fix
   de fail2ban. Fix: configurar `trustProxy` con el hop confiable (Traefik) — p.ej. número de saltos o la
   subred del proxy — para derivar la IP real no-spoofeable; o keyear el rate-limit por `email` además de IP.
+
+## Auto-auditoría 2026-06-30 (sesión fail2ban/update/rediseño)
+
+- **TD-SES-PROPAGATION (LOW)**: `orchestrateSesOutbound` crea el IAM user+policy+access-key y publica la
+  credencial SMTP en SSM en el MISMO paso (cuando el outbound queda `ready`), sin un envío de verificación.
+  IAM es eventually-consistent: existe una ventana teórica donde la policy aún no propagó y el primer envío
+  podría rebotar `554`. En la práctica está mitigado: el relay del box recién activa al próximo tick del cron
+  (hasta ~1 min después), > propagación típica de IAM (segundos). El incidente real de Aulion fue por un IAM
+  user creado ANTES del fix #27 (policy sin config-set), no por propagación. Hardening bulletproof (alinea con
+  "la CLI debe funcionar de una"): test-send a `success@simulator.amazonses.com` con el config-set antes de
+  declarar `ready`/publicar, reintentando hasta `250`. No bloqueante.
+- **TD-PUBLIC-BOOKING-EMAIL-AMP (LOW-MED)**: `POST /schedule/public/:u/:e/book` manda un correo de confirmación
+  vía el SMTP del host a `invitee.email` (elegido por quien reserva). Con el bypass de rate-limit por XFF-spoof
+  (ver [[TD-AUTH-XFF-SPOOF]]) un atacante podría usarlo como amplificador (mail con dominio del host a
+  destinatarios arbitrarios). Acotado: rate-limit 20/min por IP en el `book`, contenido fijo (plantilla de
+  confirmación), y gateado por `publicLinksEnabled` (OFF por defecto). Fix real = cerrar el XFF-spoof
+  (trustProxy con hop confiable) y/o key del limiter por IP+slug del host. Verificado en auditoría hostil:
+  el resto de la superficie pública de scheduling está bien blindada (tenant isolation por user._id, zod en
+  todo input, token de gestión por hash, fail-closed 503 si Redis cae, privacidad de location.value).
