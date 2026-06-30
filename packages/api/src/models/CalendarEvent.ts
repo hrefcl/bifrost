@@ -23,6 +23,9 @@ export interface ICalendarEvent extends Document {
   inviteStatus?: string;
   status: 'confirmed' | 'tentative' | 'cancelled';
   sourceEmailId?: mongoose.Types.ObjectId;
+  /** 'booking' = bloque busy creado por una reserva de la agenda (proyección reparable). Default 'manual'. */
+  source?: 'manual' | 'booking';
+  bookingId?: mongoose.Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,6 +64,9 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
     inviteStatus: { type: String },
     status: { type: String, enum: ['confirmed', 'tentative', 'cancelled'], default: 'confirmed' },
     sourceEmailId: { type: Schema.Types.ObjectId },
+    // Aditivos para la agenda (no rompen eventos existentes: opcionales, default 'manual').
+    source: { type: String, enum: ['manual', 'booking'], default: 'manual' },
+    bookingId: { type: Schema.Types.ObjectId },
   },
   { timestamps: true }
 );
@@ -101,6 +107,8 @@ export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
     inviteStatus: doc.inviteStatus as CalendarEventDto['inviteStatus'],
     status: doc.status,
     sourceEmailId: doc.sourceEmailId?.toString(),
+    source: doc.source,
+    bookingId: doc.bookingId?.toString(),
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };

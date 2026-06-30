@@ -10,6 +10,39 @@ describe('buildUserData (cloud-init)', () => {
     region: 'us-east-1',
   };
 
+  it('sin s3Bucket → storage LOCAL (sin claves ni S3 en el .env)', () => {
+    const s = buildUserData(base);
+    expect(s).toContain('STORAGE_PROVIDER=local');
+    expect(s).not.toContain('STORAGE_PROVIDER=s3');
+    expect(s).not.toContain('S3_BUCKET');
+  });
+
+  it('con s3Bucket → storage S3 con el ROL del EC2 (IMDS), SIN claves estáticas en el .env', () => {
+    const s = buildUserData({ ...base, s3Bucket: 'bifrost-acme-com-data' });
+    expect(s).toContain('STORAGE_PROVIDER=s3');
+    expect(s).toContain('S3_BUCKET=bifrost-acme-com-data');
+    expect(s).toContain('S3_REGION=us-east-1');
+    expect(s).toContain('S3_USE_INSTANCE_ROLE=1');
+    // Cero claves estáticas (el rol del EC2 las provee temporales vía IMDS).
+    expect(s).not.toContain('S3_ACCESS_KEY_ID');
+    expect(s).not.toContain('S3_SECRET');
+  });
+
+  it('con adminMailbox → crea el buzón admin en docker-mailserver (login turnkey)', () => {
+    const s = buildUserData({
+      ...base,
+      adminMailbox: 'admin@acme.com',
+      adminMailboxPassword: 'super-clave-8+',
+    });
+    expect(s).toContain('setup email add');
+    expect(s).toContain('admin@acme.com');
+    expect(s).toContain('mailserver setup email list'); // espera a que el mailserver esté listo
+  });
+
+  it('sin adminMailbox → no toca docker-mailserver', () => {
+    expect(buildUserData(base)).not.toContain('setup email add');
+  });
+
   it('instala deps + docker (repo APT firmado, NO curl|sh), clona el stack y levanta compose', () => {
     const s = buildUserData(base);
     // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).
@@ -23,6 +56,10 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('get.docker.com'); // ya no se usa el instalador sin checksum
     // Compat API 1.24 para Traefik v3 con Docker 29+ (si no, Traefik no lee labels → 404). [deploy real]
     expect(s).toContain('DOCKER_MIN_API_VERSION=1.24');
+    // RESTART explícito (no 'enable --now') — sin esto el daemon ya corriendo no toma el drop-in y
+    // Traefik queda en API 1.40 → 404 en todo. Bug real del 2º deploy.
+    expect(s).toContain('systemctl restart docker');
+    expect(s).toContain('MinAPIVersion'); // fail-fast si el min no quedó en 1.24
     expect(s).toContain('git clone');
     expect(s).toContain('deploy/example-mailserver'); // REUSA la plantilla existente
     expect(s).toContain('docker compose up -d');

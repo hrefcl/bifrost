@@ -149,6 +149,14 @@ async function onLogout() {
       </button>
       <button
         class="icon-btn"
+        :class="{ active: isActive('scheduling') }"
+        :title="t('nav.scheduling')"
+        @click="router.push({ name: 'scheduling' })"
+      >
+        <AppIcon name="users" :size="20" />
+      </button>
+      <button
+        class="icon-btn"
         :class="{ active: isActive('contacts') }"
         :title="t('nav.contacts')"
         @click="router.push({ name: 'contacts' })"

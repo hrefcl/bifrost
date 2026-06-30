@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import ComplianceAdmin from '@/components/admin/ComplianceAdmin.vue';
+import AdminSchedulingPanel from '@/components/admin/AdminSchedulingPanel.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
@@ -17,7 +18,7 @@ import { BUILD_INFO } from '@/lib/buildInfo';
  *  - Compliance: gestión de documentos legales, versiones, enforcement y auditoría de aceptaciones.
  * Todo exige rol admin (verificado también en el backend).
  */
-type Tab = 'accounts' | 'branding' | 'storage' | 'compliance';
+type Tab = 'accounts' | 'branding' | 'storage' | 'compliance' | 'scheduling';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -456,7 +457,13 @@ async function save() {
           <button class="tab" :class="{ active: tab === 'compliance' }" @click="tab = 'compliance'">
             <AppIcon name="shield" :size="16" /> {{ t('admin.tabs.compliance') }}
           </button>
+          <button class="tab" :class="{ active: tab === 'scheduling' }" @click="tab = 'scheduling'">
+            <AppIcon name="users" :size="16" /> {{ t('admin.tabs.scheduling') }}
+          </button>
         </nav>
+
+        <!-- ===================== AGENDA ===================== -->
+        <AdminSchedulingPanel v-if="tab === 'scheduling'" />
 
         <!-- ===================== CUENTAS ===================== -->
         <div v-if="tab === 'accounts'" class="card">

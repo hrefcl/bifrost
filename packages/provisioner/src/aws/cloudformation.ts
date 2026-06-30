@@ -119,3 +119,30 @@ export async function getStackOutputs(
 export async function deleteStack(cfn: CloudFormationClient, stackName: string): Promise<void> {
   await cfn.send(new DeleteStackCommand({ StackName: stackName }));
 }
+
+/**
+ * Espera a que el stack termine de borrarse. Devuelve cuando ya no existe (getStackStatus = null) o
+ * DELETE_COMPLETE. Lanza ante DELETE_FAILED (típico: un recurso retenido o un bucket no vacío que no se
+ * vació antes) o timeout. `onTick` reporta progreso.
+ */
+export async function waitForStackDeleted(
+  cfn: CloudFormationClient,
+  stackName: string,
+  opts: { timeoutMs?: number; pollMs?: number; onTick?: (status: string) => void } = {}
+): Promise<void> {
+  const timeoutMs = opts.timeoutMs ?? 25 * 60 * 1000;
+  const pollMs = opts.pollMs ?? 10_000;
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const status = await getStackStatus(cfn, stackName);
+    if (status === null || status === 'DELETE_COMPLETE') return;
+    if (status === 'DELETE_FAILED') {
+      throw new Error(
+        `El stack ${stackName} quedó en DELETE_FAILED (revisá recursos retenidos o un bucket no vacío).`
+      );
+    }
+    if (Date.now() > deadline) throw new Error(`Timeout esperando el borrado de ${stackName}.`);
+    opts.onTick?.(status);
+    await new Promise((r) => setTimeout(r, pollMs));
+  }
+}

@@ -9,6 +9,12 @@ import {
   reconcileEmailTextIndex,
 } from './db/reconcile-indexes.js';
 import { env, isSetupMode } from './config/env.js';
+import {
+  startSchedulingWorker,
+  closeScheduling,
+  scheduleReconciler,
+} from './services/scheduling/queue.js';
+import { schedulingProcessor } from './services/scheduling/worker.js';
 
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
 let stuckSweep: ReturnType<typeof setInterval> | undefined;
@@ -35,6 +41,11 @@ async function main() {
   await reconcileEmailTextIndex();
   await redis.ping();
 
+  // Turnkey: en el PRIMER boot de un deploy AWS con S3, siembra el storage=S3 desde el entorno
+  // (el provisioner inyecta las claves del IAM user del bucket). Idempotente: no pisa config existente.
+  const { seedStorageConfigFromEnv } = await import('./services/storage/config.js');
+  await seedStorageConfigFromEnv().catch(() => undefined);
+
   const app = await buildApp();
   serverApp = app;
 
@@ -51,6 +62,14 @@ async function main() {
     }
   );
   await reconcileComplianceDenorm().catch((err: unknown) => {
+    app.log.error(err);
+  });
+
+  // Worker IN-PROCESO de la cola de agenda (BullMQ): procesa el email de confirmación + el reconciler
+  // que encola el booking público (Fase 3.4). No-op en mock/test. Cableado aquí para cumplir el
+  // contrato de ciclo de vida (review B HIGH de Fase 3.0). El cierre va en doShutdown.
+  startSchedulingWorker(schedulingProcessor);
+  await scheduleReconciler().catch((err: unknown) => {
     app.log.error(err);
   });
 
@@ -162,6 +181,13 @@ async function doShutdown() {
     await serverApp?.close();
   } catch (err) {
     console.error('Error closing HTTP server:', err);
+  }
+  // Cerrar el worker/cola de agenda y SUS conexiones Redis ANTES de la conexión Redis compartida
+  // (cada paso aislado: un fallo aquí no debe impedir el cierre de Redis/Mongo).
+  try {
+    await closeScheduling();
+  } catch (err) {
+    console.error('Error closing scheduling worker:', err);
   }
   try {
     await closeRedis();

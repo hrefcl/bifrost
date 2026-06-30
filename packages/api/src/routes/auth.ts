@@ -163,6 +163,7 @@ export default function authRoutes(fastify: FastifyInstance) {
       displayName: user.displayName,
       role: user.role,
       avatarUrl: user.avatarUrl,
+      username: user.username,
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),

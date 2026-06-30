@@ -173,7 +173,13 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
           SecurityGroupIds: [{ Ref: 'SecurityGroup' }],
           // IMDSv2 obligatorio (HttpTokens required) — cierra el SSRF a credenciales de IMDSv1.
-          MetadataOptions: { HttpEndpoint: 'enabled', HttpTokens: 'required' },
+          // HopLimit=2: la API corre en un CONTENEDOR Docker → alcanzar el IMDS suma un hop de red; con
+          // el default 1, las requests IMDSv2 desde el contenedor fallan y el S3-por-rol no autentica.
+          MetadataOptions: {
+            HttpEndpoint: 'enabled',
+            HttpTokens: 'required',
+            HttpPutResponseHopLimit: 2,
+          },
           BlockDeviceMappings: [
             {
               DeviceName: '/dev/sda1',
@@ -330,7 +336,13 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
             Statement: [
               {
                 Effect: 'Allow',
-                Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
+                Action: [
+                  's3:GetObject',
+                  's3:PutObject',
+                  's3:DeleteObject',
+                  's3:ListBucket',
+                  's3:GetBucketLocation',
+                ],
                 Resource: [
                   { 'Fn::GetAtt': ['S3Bucket', 'Arn'] },
                   { 'Fn::Sub': '${S3Bucket.Arn}/*' },
@@ -338,7 +350,7 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
               },
               {
                 Effect: 'Allow',
-                Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey'],
+                Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
                 Resource: { 'Fn::GetAtt': ['KmsKey', 'Arn'] },
               },
             ],
@@ -404,6 +416,11 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
         Condition: 'CreateS3',
         Description: 'Bucket de datos cifrado',
         Value: { Ref: 'S3Bucket' },
+      },
+      S3Region: {
+        Condition: 'CreateS3',
+        Description: 'Región del bucket (para el provider S3 vía rol del EC2)',
+        Value: { Ref: 'AWS::Region' },
       },
     },
   };

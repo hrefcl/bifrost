@@ -134,6 +134,8 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(t.Resources.Instance?.Properties.MetadataOptions).toEqual({
       HttpEndpoint: 'enabled',
       HttpTokens: 'required',
+      // HopLimit=2: la API en contenedor necesita 1 hop extra para alcanzar el IMDS (S3 por rol).
+      HttpPutResponseHopLimit: 2,
     });
     const ebs = (
       t.Resources.Instance?.Properties.BlockDeviceMappings as {
