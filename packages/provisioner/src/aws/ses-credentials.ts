@@ -9,6 +9,7 @@ import {
 } from '@aws-sdk/client-iam';
 import { SSMClient, GetParameterCommand, PutParameterCommand } from '@aws-sdk/client-ssm';
 import { deriveSesSmtpPassword, sesSmtpHost } from './ses-smtp.js';
+import { sesConfigSetName } from '../ses/naming.js';
 
 /**
  * Ciclo de vida de las credenciales SMTP de SES — la pieza de seguridad crítica del outbound turnkey.
@@ -59,16 +60,22 @@ export interface EnsureSmtpCredentialsResult {
 
 /** Policy inline mínima: enviar SOLO desde el dominio dado, scoped a la identidad SES. [B/D-MED] */
 export function buildSesSendPolicy(region: string, accountId: string, domain: string): string {
+  const base = `arn:aws:ses:${region}:${accountId}`;
   return JSON.stringify({
     Version: '2012-10-17',
     Statement: [
       {
         Effect: 'Allow',
         Action: ['ses:SendRawEmail', 'ses:SendEmail'],
-        Resource: `arn:aws:ses:${region}:${accountId}:identity/${domain}`,
-        // Acota al dominio: un leak de las creds SMTP no puede mandar as cualquier identidad. La
-        // mitigación REAL ante leak es SSM + rotación (la Condition es defensa en profundidad). [B/D]
-        Condition: { StringLike: { 'ses:FromAddress': `*@${domain}` } },
+        // DOS recursos: la IDENTIDAD **y** el CONFIGURATION SET. El config-set es el default de la
+        // identidad (§6), así que SES evalúa el permiso de envío TAMBIÉN sobre el config-set → sin su ARN
+        // el envío rebota `554 Access denied ... configuration-set` (bug hallado en el e2e real desde 0).
+        // Scopear el Resource a esta identidad ya restringe el envío a ESTE dominio (reemplaza la antigua
+        // Condition FromAddress); un leak sólo puede mandar as aulion.app, no as cualquier identidad. [B/D]
+        Resource: [
+          `${base}:identity/${domain}`,
+          `${base}:configuration-set/${sesConfigSetName(domain)}`,
+        ],
       },
     ],
   });

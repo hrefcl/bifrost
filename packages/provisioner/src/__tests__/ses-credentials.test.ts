@@ -53,16 +53,14 @@ describe('ensureSmtpCredentials', () => {
     iamMock.on(CreateUserCommand).resolves({});
     iamMock.on(PutUserPolicyCommand).resolves({});
     iamMock.on(ListAccessKeysCommand).resolves({ AccessKeyMetadata: [] });
-    iamMock
-      .on(CreateAccessKeyCommand)
-      .resolves({
-        AccessKey: {
-          UserName: 'u',
-          AccessKeyId: 'AKIANEW',
-          SecretAccessKey: SECRET,
-          Status: 'Active',
-        },
-      });
+    iamMock.on(CreateAccessKeyCommand).resolves({
+      AccessKey: {
+        UserName: 'u',
+        AccessKeyId: 'AKIANEW',
+        SecretAccessKey: SECRET,
+        Status: 'Active',
+      },
+    });
     ssmMock.on(GetParameterCommand).rejects(notFound('ParameterNotFound'));
     ssmMock.on(PutParameterCommand).resolves({});
 
@@ -108,16 +106,14 @@ describe('ensureSmtpCredentials', () => {
       AccessKeyMetadata: [{ AccessKeyId: 'AKIAORPHAN', Status: 'Active' }],
     });
     iamMock.on(DeleteAccessKeyCommand).resolves({});
-    iamMock
-      .on(CreateAccessKeyCommand)
-      .resolves({
-        AccessKey: {
-          UserName: 'u',
-          AccessKeyId: 'AKIAFRESH',
-          SecretAccessKey: SECRET,
-          Status: 'Active',
-        },
-      });
+    iamMock.on(CreateAccessKeyCommand).resolves({
+      AccessKey: {
+        UserName: 'u',
+        AccessKeyId: 'AKIAFRESH',
+        SecretAccessKey: SECRET,
+        Status: 'Active',
+      },
+    });
     ssmMock.on(PutParameterCommand).resolves({});
 
     const res = await ensureSmtpCredentials(baseInput());
@@ -135,16 +131,14 @@ describe('ensureSmtpCredentials', () => {
     iamMock.on(PutUserPolicyCommand).resolves({});
     ssmMock.on(GetParameterCommand).rejects(notFound('ParameterNotFound'));
     iamMock.on(ListAccessKeysCommand).resolves({ AccessKeyMetadata: [] });
-    iamMock
-      .on(CreateAccessKeyCommand)
-      .resolves({
-        AccessKey: {
-          UserName: 'u',
-          AccessKeyId: 'AKIADOOMED',
-          SecretAccessKey: SECRET,
-          Status: 'Active',
-        },
-      });
+    iamMock.on(CreateAccessKeyCommand).resolves({
+      AccessKey: {
+        UserName: 'u',
+        AccessKeyId: 'AKIADOOMED',
+        SecretAccessKey: SECRET,
+        Status: 'Active',
+      },
+    });
     ssmMock.on(PutParameterCommand).rejects(new Error('KMS AccessDenied'));
     iamMock.on(DeleteAccessKeyCommand).resolves({});
 
@@ -181,11 +175,16 @@ describe('ensureSmtpCredentials', () => {
 });
 
 describe('buildSesSendPolicy', () => {
-  it('acota el envío a la identidad del dominio y al FromAddress del dominio', () => {
+  it('permite enviar sobre la IDENTIDAD y el CONFIG-SET (sin éste rebota 554) — scoped al dominio', () => {
     const doc = JSON.parse(buildSesSendPolicy('us-east-1', '111122223333', 'acme.com'));
     const stmt = doc.Statement[0];
-    expect(stmt.Resource).toBe('arn:aws:ses:us-east-1:111122223333:identity/acme.com');
     expect(stmt.Action).toContain('ses:SendRawEmail');
-    expect(stmt.Condition.StringLike['ses:FromAddress']).toBe('*@acme.com');
+    // DOS recursos: identidad + configuration-set (el config-set es el default de la identidad → SES
+    // exige el permiso también sobre él; faltaba en el e2e real y el envío rebotaba).
+    expect(stmt.Resource).toEqual([
+      'arn:aws:ses:us-east-1:111122223333:identity/acme.com',
+      'arn:aws:ses:us-east-1:111122223333:configuration-set/bifrost-acme-com',
+    ]);
+    // El scope a la identidad ya restringe el envío al dominio → no hace falta la Condition FromAddress.
   });
 });
