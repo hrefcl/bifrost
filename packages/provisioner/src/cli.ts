@@ -286,6 +286,13 @@ async function destroy(): Promise<void> {
   }
   const outputs = await getStackOutputs(cfn, stackName);
   const bucket = outputs.S3Bucket;
+  // Salvaguarda anti-typo: los stacks de Bifrost se llaman `bifrost-<dominio>`. Si el nombre no sigue
+  // la convención, avisar fuerte (no bloquear: alguien pudo usar un nombre custom) para no nukear otro.
+  if (!stackName.startsWith('bifrost-')) {
+    console.log(
+      `\n⚠ "${stackName}" NO sigue la convención bifrost-<dominio>. Asegurate de que sea el stack correcto.`
+    );
+  }
   const ok = await confirm({
     message: `⚠ Esto BORRA TODO el stack "${stackName}" (EC2, EIP, SG, VPC, rol, DNS${
       bucket ? `, el bucket ${bucket} + su CMK KMS` : ''

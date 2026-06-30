@@ -17,7 +17,17 @@ export async function emptyBucket(region: string, bucket: string): Promise<numbe
   const s3 = new S3Client({ region });
   let deleted = 0;
   for (;;) {
-    const list = await s3.send(new ListObjectVersionsCommand({ Bucket: bucket, MaxKeys: 1000 }));
+    let list;
+    try {
+      list = await s3.send(new ListObjectVersionsCommand({ Bucket: bucket, MaxKeys: 1000 }));
+    } catch (err) {
+      // El bucket ya no existe (borrado en una corrida previa) → nada que vaciar, seguir con el stack.
+      // Cualquier OTRO error (AccessDenied, etc.) SÍ se propaga: abortar antes del delete-stack para no
+      // dejarlo en DELETE_FAILED por un bucket no vacío.
+      const name = (err as { name?: string }).name;
+      if (name === 'NoSuchBucket') return deleted;
+      throw err;
+    }
     const objects: ObjectIdentifier[] = [...(list.Versions ?? []), ...(list.DeleteMarkers ?? [])]
       .filter((o): o is { Key: string; VersionId?: string } => typeof o.Key === 'string')
       .map((o) => ({ Key: o.Key, VersionId: o.VersionId }));
