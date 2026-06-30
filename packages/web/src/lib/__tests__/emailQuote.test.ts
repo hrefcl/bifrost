@@ -22,6 +22,16 @@ describe('splitEmailQuote', () => {
     expect(quoted).toContain('lo anterior');
   });
 
+  it('NO colapsa un <blockquote> decorativo sin marca de cita (anti falso-positivo)', () => {
+    // Un pull-quote de newsletter: blockquote SIN type="cite" ni clase de cita → NO es una respuesta.
+    const html =
+      '<p>Mira esta cita inspiradora:</p><blockquote>El futuro es hoy</blockquote><p>Saludos</p>';
+    const { main, quoted } = splitEmailQuote(html);
+    expect(quoted).toBe(''); // no se esconde nada
+    expect(main).toContain('El futuro es hoy');
+    expect(main).toContain('Saludos');
+  });
+
   it('sin cita → todo es contenido nuevo, quoted vacío', () => {
     const html = '<p>Un correo normal sin citas</p>';
     const { main, quoted } = splitEmailQuote(html);

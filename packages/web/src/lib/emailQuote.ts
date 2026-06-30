@@ -5,9 +5,16 @@
  * scripts ni carga recursos— así que parsear HTML no confiable acá no agrega superficie XSS (el HTML
  * igual va al iframe sandbox). Si no hay cita, o la cita es TODO el cuerpo (p.ej. un forward), devuelve
  * `quoted: ''` (no hay nada útil que colapsar).
+ *
+ * IMPORTANTE: sólo se usan marcadores de ALTA CONFIANZA de "esto es una cita de respuesta". A propósito
+ * NO se incluye `<blockquote>` pelado: montones de emails legítimos (newsletters, testimonios, callouts)
+ * lo usan para citas decorativas → colapsarlos escondería contenido real, peor que no colapsar. Los
+ * clientes reales marcan sus citas con clases/atributos detectables (los de abajo). `blockquote[type=
+ * "cite"]` sí es señal fuerte (Apple Mail/Thunderbird). Mejorar la detección de blockquote ambiguo
+ * queda en TD-THREADING-UI.
  */
 const QUOTE_SEL =
-  '.gmail_quote, .gmail_attr, blockquote, .moz-cite-prefix, [type="cite"], .OutlookMessageHeader, #appendonsend';
+  '.gmail_quote, .gmail_attr, blockquote[type="cite"], .moz-cite-prefix, .OutlookMessageHeader, #appendonsend';
 
 export function splitEmailQuote(html: string): { main: string; quoted: string } {
   try {
