@@ -235,6 +235,20 @@ async function mockApi(page, { publicSlug = 'ana' } = {}) {
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
     if (p === '/admin/config/branding') return json(route, BRANDING);
     if (p === '/admin/config/storage') return json(route, { providerType: 'local' });
+    if (p === '/admin/config/storage-defaults')
+      return json(route, { defaultQuotaBytes: 2147483648 });
+    if (p === '/admin/config/calendar')
+      return json(route, {
+        timezone: 'America/Santiago',
+        weekStart: 1,
+        dayStart: '08:00',
+        dayEnd: '20:00',
+        defaultDurationMin: 30,
+        defaultView: 'week',
+        showWeekends: true,
+        autoInvite: true,
+        syncAgenda: true,
+      });
     if (p === '/admin/version') return json(route, { build: '113', sha: 'abc1234' });
     if (p === '/admin/update/check')
       return json(route, {
@@ -311,6 +325,11 @@ const run = async () => {
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-storage');
+  await page
+    .getByRole('button', { name: 'Preferencias' })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-preferences');
   await shot(page, 'admin-accounts-dark', 'dark');
 
   // Scheduling host

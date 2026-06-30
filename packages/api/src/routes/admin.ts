@@ -23,6 +23,7 @@ import {
   setCalendarSettings,
   CalendarSettingsError,
 } from '../services/calendar-settings.js';
+import { getStorageDefaults, setStorageDefaults } from '../services/storage-defaults.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
@@ -224,6 +225,16 @@ export default function adminRoutes(fastify: FastifyInstance) {
     })
     .strict();
 
+  // ───────── Almacenamiento: defaults de cuenta (F6) ─────────
+  const storageDefaultsSchema = z.object({ defaultQuotaBytes: z.number().int().min(0) }).strict();
+  fastify.get('/config/storage-defaults', async () => {
+    return getStorageDefaults();
+  });
+  fastify.patch('/config/storage-defaults', async (request) => {
+    const body = storageDefaultsSchema.parse(request.body);
+    return setStorageDefaults(body);
+  });
+
   fastify.get('/config/calendar', async () => {
     return getCalendarSettings();
   });
@@ -339,9 +350,11 @@ export default function adminRoutes(fastify: FastifyInstance) {
         message: 'Ya existe una cuenta con ese email.',
       });
     }
-    const set: Record<string, unknown> = {};
-    if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
-    if (Object.keys(set).length > 0) await Account.updateOne({ _id: account._id }, { $set: set });
+    // Cuota: si el admin no la envía, se aplica la cuota por defecto configurada (F6). Sólo al CREAR;
+    // nunca migra cuentas existentes (review C). `0` = sin límite (= comportamiento legado).
+    const quotaBytes = body.quotaBytes ?? (await getStorageDefaults()).defaultQuotaBytes;
+    const set: Record<string, unknown> = { quotaBytes };
+    await Account.updateOne({ _id: account._id }, { $set: set });
     if (body.displayName) {
       await User.updateOne({ _id: user._id }, { $set: { displayName: body.displayName } });
     }
@@ -349,7 +362,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
       id: account._id.toString(),
       email: account.email,
       status: account.status,
-      quotaBytes: body.quotaBytes ?? 0,
+      quotaBytes,
     });
   });
 

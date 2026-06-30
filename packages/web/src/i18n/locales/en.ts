@@ -271,6 +271,13 @@ export default {
       title: 'Calendar preferences',
       desc: 'Instance-wide calendar defaults.',
     },
+    apply: 'Apply',
+    storage: {
+      defaultQuota: 'Default quota for new accounts',
+      defaultQuotaHint:
+        'Applied when creating an account without a quota. 0 = unlimited. Does not affect existing accounts.',
+      usageByAccount: 'Usage by account',
+    },
     calendar: {
       timezone: 'Time zone',
       weekStart: 'First day of week',
@@ -301,6 +308,7 @@ export default {
       password: 'Password',
       displayName: 'Display name',
       quotaMb: 'Quota (MB, 0 = unlimited)',
+      quotaDefaultPh: 'Default',
       imapHost: 'IMAP server',
       imapPort: 'IMAP port',
       smtpHost: 'SMTP server',

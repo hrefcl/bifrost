@@ -271,6 +271,13 @@ export default {
       title: 'Preferencias de calendario',
       desc: 'Valores por defecto del calendario para toda la instancia.',
     },
+    apply: 'Aplicar',
+    storage: {
+      defaultQuota: 'Cuota por defecto de cuentas nuevas',
+      defaultQuotaHint:
+        'Se aplica al crear una cuenta sin cuota. 0 = sin límite. No afecta cuentas existentes.',
+      usageByAccount: 'Uso por cuenta',
+    },
     calendar: {
       timezone: 'Zona horaria',
       weekStart: 'Primer día de la semana',
@@ -301,6 +308,7 @@ export default {
       password: 'Contraseña',
       displayName: 'Nombre visible',
       quotaMb: 'Cuota (MB, 0 = sin límite)',
+      quotaDefaultPh: 'Por defecto',
       imapHost: 'Servidor IMAP',
       imapPort: 'Puerto IMAP',
       smtpHost: 'Servidor SMTP',
