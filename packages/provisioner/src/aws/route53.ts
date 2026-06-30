@@ -1,4 +1,9 @@
-import { Route53Client, ListHostedZonesCommand } from '@aws-sdk/client-route-53';
+import {
+  Route53Client,
+  ListHostedZonesCommand,
+  ChangeResourceRecordSetsCommand,
+  type Change,
+} from '@aws-sdk/client-route-53';
 
 export interface HostedZone {
   /** Id sin el prefijo `/hostedzone/`. */
@@ -48,4 +53,55 @@ export function matchHostedZone(zones: readonly HostedZone[], domain: string): H
       .filter((z) => fqdn.endsWith(`.${z.name}`))
       .sort((a, b) => b.name.length - a.name.length)[0] ?? null;
   return { exact: null, parent };
+}
+
+/** Un record DNS genérico (lo producen ses-identity.dkimCnameRecords / mailFromRecords). */
+export interface DnsUpsert {
+  name: string;
+  type: 'CNAME' | 'MX' | 'TXT' | 'A';
+  value: string;
+  ttl: number;
+}
+
+/**
+ * Agrupa records por (name,type) en Changes UPSERT. PURA. Necesario porque Route53 modela un
+ * ResourceRecordSet por (name,type) con N valores — dos records del mismo name+type van en el MISMO set
+ * (si se mandaran como Changes separados, el segundo PISA al primero).
+ */
+export function toUpsertChanges(records: readonly DnsUpsert[]): Change[] {
+  const byKey = new Map<string, { rec: DnsUpsert; values: string[] }>();
+  for (const r of records) {
+    const key = `${r.name.toLowerCase()}|${r.type}`;
+    const entry = byKey.get(key);
+    if (entry) entry.values.push(r.value);
+    else byKey.set(key, { rec: r, values: [r.value] });
+  }
+  return [...byKey.values()].map(({ rec, values }) => ({
+    Action: 'UPSERT',
+    ResourceRecordSet: {
+      Name: rec.name,
+      Type: rec.type,
+      TTL: rec.ttl,
+      ResourceRecords: values.map((Value) => ({ Value })),
+    },
+  }));
+}
+
+/**
+ * Crea/actualiza records en una hosted zone (UPSERT → idempotente: re-correr no duplica ni falla).
+ * Si no hay records, no llama a la API.
+ */
+export async function upsertRecords(
+  r53: Route53Client,
+  hostedZoneId: string,
+  records: readonly DnsUpsert[]
+): Promise<void> {
+  const changes = toUpsertChanges(records);
+  if (changes.length === 0) return;
+  await r53.send(
+    new ChangeResourceRecordSetsCommand({
+      HostedZoneId: hostedZoneId,
+      ChangeBatch: { Changes: changes },
+    })
+  );
 }

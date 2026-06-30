@@ -39,6 +39,13 @@ export interface UserDataInput {
    * cuenta ya conoce la clave y puede cambiarla); endurecer entregándola por SSH post-deploy (deuda).
    */
   adminMailboxPassword?: string;
+  /**
+   * Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador del
+   * CLI). Si se da, el box instala un helper `bifrost-ses-activate` que LEE la credencial con el rol y
+   * cablea el relay de docker-mailserver. SEND-GATING (§7b): al boot el relay queda APAGADO
+   * (mailserver.env vacío); se activa sólo cuando la credencial existe en SSM (outbound `ready`).
+   */
+  sesParamName?: string;
 }
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
@@ -129,6 +136,9 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
 openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
+# Secreto DEDICADO de la evidencia de compliance (HMAC). NO se deriva de JWT_SECRET (que rota →
+# invalidaría evidencia histórica). 64 chars hex ≥ 32 (lo que exige la API en producción).
+openssl rand -hex 32 > secrets/compliance_hmac_secret.txt
 ${
   input.s3Bucket
     ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.
@@ -140,6 +150,87 @@ ${
   echo "S3_USE_INSTANCE_ROLE=1"
 } > .env`
     : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
+}
+${
+  input.sesParamName
+    ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b). Un helper lo activa SÓLO cuando la
+# credencial SMTP existe en SSM (= el orquestador del CLI la publica al quedar el outbound 'ready'),
+# escribiéndola en config/user-patches.sh (PERSISTENTE: docker-mailserver lo re-corre en cada arranque →
+# sobrevive restart/reboot, a diferencia de una config en caliente). awscli para leer el SecureString.
+apt_retry install -y awscli
+SES_PARAM="${sh(input.sesParamName)}"
+printf 'SES_PARAM=%s\\nSES_REGION=%s\\nCOMPOSE_DIR=%s\\n' "$SES_PARAM" "$REGION" "$(pwd)" > /etc/bifrost-ses.conf
+cat > /usr/local/bin/bifrost-ses-activate <<'ACT'
+#!/bin/bash
+# Cablea el relay SES leyendo la credencial SMTP de SSM (con el rol del box). Idempotente y graceful:
+# si la credencial aún no existe (outbound no-ready), NO toca nada y sale 0 (relay sigue apagado).
+set -euo pipefail
+. /etc/bifrost-ses.conf
+VAL=$(aws ssm get-parameter --name "$SES_PARAM" --with-decryption --region "$SES_REGION" --query Parameter.Value --output text 2>/dev/null) || { echo "bifrost-ses: credencial no disponible aún; relay apagado"; exit 0; }
+RUSER=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessKeyId"])')
+RPASS=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["smtpPassword"])')
+cd "$COMPOSE_DIR"
+RELAY="email-smtp.$SES_REGION.amazonaws.com"
+# El relay se persiste vía config/user-patches.sh: docker-mailserver lo corre en CADA arranque del
+# contenedor → sobrevive restart/reboot/recreate. NO se usa 'compose up' confiando en que recree por el
+# cambio de env_file (comportamiento FRÁGIL/version-dependiente que dejaría el relay sin aplicar). Este
+# mecanismo está PROBADO contra un restart real. (Comillas simples internas para los valores de postconf
+# → cero backslashes que el generador del user-data malinterprete.)
+mkdir -p config
+umask 077
+{
+  echo '#!/bin/bash'
+  echo "postconf -e 'relayhost = [$RELAY]:587'"
+  echo "postconf -e 'smtp_sasl_auth_enable = yes'"
+  echo "postconf -e 'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd'"
+  echo "postconf -e 'smtp_sasl_security_options = noanonymous'"
+  echo "postconf -e 'smtp_tls_security_level = encrypt'"
+  echo "echo '[$RELAY]:587 $RUSER:$RPASS' > /etc/postfix/sasl_passwd"
+  echo 'postmap hash:/etc/postfix/sasl_passwd'
+  echo 'chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db'
+  echo 'postfix reload || true'
+} > config/user-patches.sh.new
+chmod 700 config/user-patches.sh.new
+# Sólo re-aplicar si cambió (el cron corre cada 5 min; evita exec/flush innecesarios).
+if ! cmp -s config/user-patches.sh.new config/user-patches.sh 2>/dev/null; then
+  mv config/user-patches.sh.new config/user-patches.sh
+  # Aplicar YA en el contenedor corriendo (sin esperar un restart) + flushear la cola atascada.
+  docker compose exec -T mailserver bash /tmp/docker-mailserver/user-patches.sh || true
+  docker compose exec -T mailserver postqueue -f || true
+  echo "bifrost-ses: relay ACTIVADO y persistido (RELAY_USER=$RUSER)"
+else
+  rm -f config/user-patches.sh.new
+fi
+
+# HEALTH PROBE del saliente (corre en cada tick del cron) → convierte un corte SILENCIOSO en detectable.
+# Hace AUTH a SES:587 SIN mandar correo (valida puerto 587 abierto + TLS + credenciales). La clave va por
+# ENV (no por argv → no aparece en 'ps'). Loguea OK o ALERTA con causa en /var/log/bifrost-ses.log.
+LOG=/var/log/bifrost-ses.log
+if RHOST="$RELAY" RUSR="$RUSER" RPWD="$RPASS" python3 - <<'PY' 2>>"$LOG"
+import smtplib, os, sys
+try:
+    s = smtplib.SMTP(os.environ["RHOST"], 587, timeout=15)
+    s.starttls(); s.login(os.environ["RUSR"], os.environ["RPWD"]); s.quit()
+except Exception as e:
+    print("probe-error:", e, file=sys.stderr); sys.exit(1)
+PY
+then
+  echo "$(date -Is) bifrost-ses: relay OK (AUTH a SES:587 exitoso)" >> "$LOG"
+else
+  echo "$(date -Is) bifrost-ses: ALERTA — el relay NO funciona (fallo AUTH/conexión a SES:587). El saliente externo NO sale. Revisá creds SES / puerto 587." >> "$LOG"
+fi
+# Alerta de cola: mail atascado = relay roto o SES rechazando. Cuenta entradas de cola (IDs hex).
+QN=$(docker compose exec -T mailserver postqueue -p 2>/dev/null | grep -cE '^[0-9A-F]{8,}' || true)
+if [ "\${QN:-0}" -gt 5 ]; then
+  echo "$(date -Is) bifrost-ses: ALERTA — $QN mensajes ATASCADOS en la cola de envío (revisá el relay)." >> "$LOG"
+fi
+ACT
+chmod 755 /usr/local/bin/bifrost-ses-activate
+# Timer pull-based: el box se auto-activa dentro de ~5 min de que la credencial aparezca en SSM, y
+# RE-aplica el relay tras un reboot (sobrevive reinicios). No requiere push del operador al box.
+echo '*/5 * * * * root /usr/local/bin/bifrost-ses-activate >> /var/log/bifrost-ses.log 2>&1' > /etc/cron.d/bifrost-ses
+chmod 644 /etc/cron.d/bifrost-ses`
+    : ''
 }
 
 # 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).
@@ -187,6 +278,14 @@ for _ in $(seq 1 36); do docker compose exec -T mailserver setup email list >/de
 docker compose exec -T mailserver setup email add "$ADMIN_MAILBOX" "$ADMIN_MAILBOX_PASS" \\
   || echo "buzón admin ya existía o setup no estaba listo"
 echo "bifrost-provision: buzón admin $ADMIN_MAILBOX listo" >> /var/log/bifrost-provision.log`
+    : ''
+}
+
+${
+  input.sesParamName
+    ? `# 7.c) Intentar activar el relay SES YA (si la credencial ya está en SSM). Graceful: si aún no está
+# (outbound no-ready), no hace nada; el cron reintenta cada 5 min. Sobrevive reboots.
+/usr/local/bin/bifrost-ses-activate || true`
     : ''
 }
 

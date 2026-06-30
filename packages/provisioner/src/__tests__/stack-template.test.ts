@@ -130,6 +130,33 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect(enc).toBe('aws:kms');
   });
 
+  it('SES: SesParamName parametrizado, EnableSes condicional, SesAccessPolicy lee SSM + descifra vía SSM', () => {
+    // Por defecto (deploy pelado) el outbound SES está deshabilitado.
+    expect(t.Parameters.SesParamName).toMatchObject({ Default: '' });
+    expect(t.Conditions.EnableSes).toEqual({
+      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'SesParamName' }, ''] }],
+    });
+    // La policy de lectura SÓLO existe si SES está habilitado y cuelga del MISMO rol del box.
+    const pol = t.Resources.SesAccessPolicy;
+    expect(pol?.Condition).toBe('EnableSes');
+    expect(pol?.Properties.Roles).toEqual([{ Ref: 'InstanceRole' }]);
+    const stmts = (
+      pol?.Properties.PolicyDocument as {
+        Statement: { Action: string[]; Resource: unknown; Condition?: unknown }[];
+      }
+    ).Statement;
+    const ssmStmt = stmts.find((s) => s.Action.includes('ssm:GetParameter'));
+    // Scoped al parámetro exacto (no a todo SSM).
+    expect(ssmStmt?.Resource).toEqual({
+      'Fn::Sub': 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SesParamName}',
+    });
+    const kmsStmt = stmts.find((s) => s.Action.includes('kms:Decrypt'));
+    // kms:Decrypt acotado por ViaService a SSM (la key sólo se usa a través de SSM).
+    expect(kmsStmt?.Condition).toEqual({
+      StringEquals: { 'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' } },
+    });
+  });
+
   it('endurecimiento: IMDSv2 requerido, EBS NO se borra al terminar, CreationPolicy presente', () => {
     expect(t.Resources.Instance?.Properties.MetadataOptions).toEqual({
       HttpEndpoint: 'enabled',

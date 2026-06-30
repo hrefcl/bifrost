@@ -71,6 +71,10 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       // Zona Route53 para gestionar el DNS (A/MX/SPF/DMARC) desde el stack. Vacío = NO gestionar DNS
       // acá (el CLI imprime los registros para cargarlos a mano — seguro si la zona ya tiene records).
       HostedZoneId: { Type: 'String', Default: '' },
+      // Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador
+      // del CLI post-stack). Vacío = outbound SES deshabilitado. Con valor, el rol del box puede LEERLO
+      // (ssm:GetParameter + kms:Decrypt) para cablear el relay cuando el outbound esté `ready`. §3/§7b.
+      SesParamName: { Type: 'String', Default: '' },
     },
     // CloudFormation Rules: validan parámetros ANTES de crear recursos y rechazan el deploy con un
     // mensaje claro. Protegen el path de despliegue STANDALONE (consola web / `aws cloudformation
@@ -96,6 +100,8 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       CreateS3: { 'Fn::Equals': [{ Ref: 'S3Mode' }, 'create'] },
       // Gestionar el DNS desde el stack sólo si se dio una zona (opt-in; el default es no tocar DNS).
       ManageDns: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
+      // Outbound SES habilitado: dar al rol del box permiso de leer la credencial SMTP de SSM.
+      EnableSes: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'SesParamName' }, ''] }] },
     },
     Resources: {
       VPC: {
@@ -352,6 +358,43 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
                 Effect: 'Allow',
                 Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
                 Resource: { 'Fn::GetAtt': ['KmsKey', 'Arn'] },
+              },
+            ],
+          },
+        },
+      },
+      // Lectura de la credencial SMTP de SES (SSM SecureString) SÓLO si el outbound SES está habilitado.
+      // El box la lee con el rol al boot (send-gating) — el SecretAccessKey de AWS nunca toca el box,
+      // sólo el password SMTP ya derivado. §3/§7b.
+      SesAccessPolicy: {
+        Type: 'AWS::IAM::Policy',
+        Condition: 'EnableSes',
+        Properties: {
+          PolicyName: 'bifrost-ses-ssm',
+          Roles: [{ Ref: 'InstanceRole' }],
+          PolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Action: ['ssm:GetParameter'],
+                // El nombre del parámetro empieza con '/', así el ARN queda :parameter/bifrost/...
+                Resource: {
+                  'Fn::Sub':
+                    'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SesParamName}',
+                },
+              },
+              {
+                // Descifrar el SecureString. Acotado por kms:ViaService a SSM → la key (gestionada
+                // alias/aws/ssm) sólo se puede usar a través de SSM, no para otra cosa.
+                Effect: 'Allow',
+                Action: ['kms:Decrypt'],
+                Resource: '*',
+                Condition: {
+                  StringEquals: {
+                    'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' },
+                  },
+                },
               },
             ],
           },

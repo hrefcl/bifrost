@@ -22,6 +22,14 @@ import { emptyBucket } from './aws/s3.js';
 import { estimateMonthlyCost } from './cost.js';
 import { recommendInstance } from './catalog/instance-types.js';
 import { mailHostname, validateDomain } from './domain.js';
+import {
+  resolveSesCommand,
+  runSesStatus,
+  runSesActivate,
+  runSesSuppressions,
+  runSesSending,
+} from './ses/commands.js';
+import { sesParamName } from './ses/naming.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const slug = (s: string): string => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -66,6 +74,11 @@ async function main(): Promise<void> {
   const useS3 = await confirm({
     message:
       '¿Guardar los adjuntos en S3 cifrado? (la palanca de costo: bucket+KMS, la app lo usa vía el rol del EC2; recursos facturables)',
+    default: true,
+  });
+  const enableSes = await confirm({
+    message:
+      '¿Habilitar envío saliente vía Amazon SES? (AWS bloquea el puerto 25; SES es el relay. Se cablea turnkey, pero la verificación DKIM y salir del sandbox no son instantáneas — el box reporta el estado)',
     default: true,
   });
   const sshCidr = await input({
@@ -170,6 +183,8 @@ async function main(): Promise<void> {
     s3Bucket,
     adminMailbox,
     adminMailboxPassword,
+    // SES on → el box instala el helper que lee la credencial SMTP de ESTE parámetro SSM.
+    sesParamName: enableSes ? sesParamName(domain) : undefined,
   });
   const answers: WizardAnswers = {
     domain,
@@ -181,6 +196,7 @@ async function main(): Promise<void> {
     existingSubnetId: orUndef(existingSubnetId),
     hostedZoneId: orUndef(hostedZoneId),
     sshCidr,
+    enableSes,
   };
   const params = assembleStackParams(answers);
   const file = `bifrost-stack-${slug(domain)}.yaml`;
@@ -243,29 +259,38 @@ async function main(): Promise<void> {
         } else {
           printDns(domain, out.PublicIp ?? 'TU_IP');
         }
-        console.log(
-          '\n⚠ ENVÍO SALIENTE en AWS (importante): AWS BLOQUEA el puerto 25 saliente por'
-        );
-        console.log(
-          '  defecto. Vas a RECIBIR correo, pero para ENVIAR a internet tenés 2 opciones:'
-        );
-        console.log(
-          '   1) Pedir a AWS el desbloqueo del puerto 25 (formulario de soporte, 24-48h) → envío'
-        );
-        console.log('      directo self-hosted.');
-        console.log(
-          '   2) RELAY por Amazon SES (recomendado, inmediato): configurá RELAY_HOST/USER/PASSWORD'
-        );
-        console.log(
-          '      en el mailserver con credenciales SMTP de SES. OJO: una cuenta SES nueva está en'
-        );
-        console.log(
-          '      SANDBOX → sólo entrega a destinatarios VERIFICADOS. Para enviar a CUALQUIERA hay que'
-        );
-        console.log(
-          '      pedir "production access" a SES (sale del sandbox; suele aprobarse para bajo volumen).'
-        );
-        console.log('⚠ Falta crear los buzones y el DKIM en el servidor (SSH al box) — fase F-E5.');
+        if (enableSes) {
+          console.log('\n📨 ENVÍO SALIENTE (Amazon SES) — el box quedó cableado turnkey:');
+          console.log(
+            `   1) Activá/verificá la identidad SES corriendo:  bifrost-provision ses-activate`
+          );
+          console.log(
+            '      (crea identidad+DKIM+MAIL FROM, escribe los CNAME en tu DNS si gestionás la zona,'
+          );
+          console.log(
+            '       y configura supresión + métricas de reputación). Es idempotente: re-corré.'
+          );
+          console.log(
+            '   2) Esperá la verificación DKIM (hasta 72h, normalmente minutos) — chequeá con: ses-status'
+          );
+          console.log(
+            '   3) SANDBOX: una cuenta SES nueva sólo manda a destinos VERIFICADOS (200/día). Para enviar'
+          );
+          console.log(
+            '      a cualquiera pedí "production access" en la consola de SES. ses-status te avisa el estado.'
+          );
+          console.log(
+            '   → Cuando el outbound quede `ready`, el box activa el relay solo (≤5 min); no toca nada más.'
+          );
+        } else {
+          console.log(
+            '\n⚠ ENVÍO SALIENTE: AWS BLOQUEA el puerto 25 saliente. No habilitaste SES, así que el'
+          );
+          console.log(
+            '  box RECIBE pero no ENVÍA a internet. Para enviar, re-provisioná con SES habilitado o'
+          );
+          console.log('  pedí a AWS el desbloqueo del puerto 25 (formulario de soporte).');
+        }
       } else if (status.endsWith('IN_PROGRESS')) {
         console.log(`\n⏱ Timeout de espera; el stack sigue en ${status}. Seguí en la consola web.`);
       } else {
@@ -333,7 +358,40 @@ async function destroy(): Promise<void> {
   );
 }
 
-const entry = process.argv[2] === 'destroy' ? destroy : main;
+/** Subcomandos SES post-provision: bifrost-provision ses-status|ses-activate|ses-suppressions|ses-pause|ses-resume */
+async function sesCommand(): Promise<void> {
+  const cmd = resolveSesCommand(process.argv);
+  if (!cmd) return; // no debería pasar (entry sólo llama acá si resolveSesCommand !== null)
+  const domain = await input({ message: 'Dominio de correo (ej: aulion.app)' });
+  const region = await input({ message: 'Región AWS', default: 'us-east-1' });
+  switch (cmd) {
+    case 'ses-status':
+      await runSesStatus(domain, region);
+      break;
+    case 'ses-activate': {
+      const hz = orUndef(
+        await input({
+          message: 'HostedZoneId de Route53 (vacío = cargo el DNS a mano)',
+          default: '',
+        })
+      );
+      await runSesActivate(domain, region, { hostedZoneId: hz });
+      break;
+    }
+    case 'ses-suppressions':
+      await runSesSuppressions(region);
+      break;
+    case 'ses-pause':
+      await runSesSending(domain, region, false);
+      break;
+    case 'ses-resume':
+      await runSesSending(domain, region, true);
+      break;
+  }
+}
+
+const entry =
+  process.argv[2] === 'destroy' ? destroy : resolveSesCommand(process.argv) ? sesCommand : main;
 entry().catch((err: unknown) => {
   console.error('Error:', err instanceof Error ? err.message : String(err));
   process.exit(1);

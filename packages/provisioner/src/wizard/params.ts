@@ -1,5 +1,6 @@
 import type { StackParameter } from '../aws/cloudformation.js';
 import { archForInstanceType, type CpuArch } from '../catalog/instance-types.js';
+import { sesParamName } from '../ses/naming.js';
 
 /** Path SSM del AMI Ubuntu 22.04 más reciente para una arquitectura (CFN lo resuelve al deploy). */
 export function ubuntuAmiSsmPath(arch: CpuArch): string {
@@ -26,6 +27,8 @@ export interface WizardAnswers {
   sshCidr?: string;
   /** Zona Route53 para gestionar el DNS desde el stack (opt-in). Vacío = no tocar DNS. */
   hostedZoneId?: string;
+  /** Habilitar outbound SES: da al rol del box permiso de leer la credencial SMTP de SSM. */
+  enableSes?: boolean;
 }
 
 /** Nombre de bucket derivado del dominio (S3: minúsculas, sin puntos consecutivos, único-ish). */
@@ -51,5 +54,8 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     { key: 'S3Mode', value: a.useS3 ? 'create' : 'none' },
     { key: 'S3BucketName', value: a.useS3 ? (a.s3BucketName ?? deriveBucketName(a.domain)) : '' },
     { key: 'HostedZoneId', value: a.hostedZoneId ?? '' },
+    // SES on → el rol del box puede leer la credencial SMTP de ESTE parámetro (mismo nombre que escribe
+    // el orquestador y lee el user-data). Vacío = outbound SES off.
+    { key: 'SesParamName', value: a.enableSes ? sesParamName(a.domain) : '' },
   ];
 }

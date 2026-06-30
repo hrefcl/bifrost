@@ -43,6 +43,47 @@ describe('buildUserData (cloud-init)', () => {
     expect(buildUserData(base)).not.toContain('setup email add');
   });
 
+  it('sin sesParamName → NO instala el relay SES (sin helper, sin cron, sin awscli)', () => {
+    const s = buildUserData(base);
+    expect(s).not.toContain('bifrost-ses-activate');
+    expect(s).not.toContain('/etc/cron.d/bifrost-ses');
+    expect(s).not.toContain('install -y awscli');
+  });
+
+  it('con sesParamName → helper que lee SSM + cron + boot-run, con SEND-GATING (relay off al boot)', () => {
+    const s = buildUserData({ ...base, sesParamName: '/bifrost/acme-com/ses-smtp' });
+    // awscli para leer el SecureString con el rol del box.
+    expect(s).toContain('install -y awscli');
+    // El helper lee la credencial de SSM con --with-decryption.
+    expect(s).toContain('/usr/local/bin/bifrost-ses-activate');
+    expect(s).toContain('aws ssm get-parameter --name "$SES_PARAM" --with-decryption');
+    expect(s).toContain('/bifrost/acme-com/ses-smtp');
+    // PERSISTENCIA ROBUSTA: el relay se escribe en config/user-patches.sh (docker-mailserver lo re-corre
+    // en CADA arranque) → sobrevive restart/reboot. NO depende de que 'compose up' recree por env_file
+    // (frágil). Esto evita replicar el incidente del relay perdido a un nuevo usuario de la CLI.
+    expect(s).toContain('config/user-patches.sh');
+    expect(s).toContain("postconf -e 'relayhost = [$RELAY]:587'");
+    // Aplica YA en el contenedor corriendo (sin esperar restart) y flushea la cola atascada.
+    expect(s).toContain('user-patches.sh || true');
+    expect(s).toContain('postqueue -f');
+    // HEALTH PROBE: AUTH a SES:587 (sin mandar correo) en cada tick del cron → un corte deja de ser
+    // SILENCIOSO. Loguea ALERTA con causa. Más alerta de cola atascada. (Cierra TD-OUTBOUND-MONITOR.)
+    expect(s).toContain('smtplib');
+    expect(s).toContain('.starttls()');
+    expect(s).toContain('ALERTA');
+    expect(s).toContain('/var/log/bifrost-ses.log');
+    // La clave del relay NO va por argv (no aparece en 'ps') — se pasa por ENV al python.
+    expect(s).toContain('RPWD="$RPASS" python3');
+    expect(s).not.toContain('sys.argv');
+    // SEND-GATING: graceful si la credencial no está (relay sigue apagado), no rompe el boot.
+    expect(s).toContain('relay apagado');
+    // Timer pull-based (auto-activa + sobrevive reboot) y corrida al boot.
+    expect(s).toContain('/etc/cron.d/bifrost-ses');
+    expect(s).toContain('/usr/local/bin/bifrost-ses-activate || true');
+    // El SecretAccessKey de AWS jamás aparece; sólo se maneja el password ya derivado vía SSM.
+    expect(s).not.toContain('SecretAccessKey');
+  });
+
   it('instala deps + docker (repo APT firmado, NO curl|sh), clona el stack y levanta compose', () => {
     const s = buildUserData(base);
     // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).
@@ -93,6 +134,8 @@ describe('buildUserData (cloud-init)', () => {
     const s = buildUserData(base);
     expect(s).toContain('secrets/jwt_secret.txt');
     expect(s).toContain('secrets/encryption_key.txt');
+    // Secreto dedicado de la evidencia de compliance (lo exige la API en prod; nombre EXACTO del compose).
+    expect(s).toContain('secrets/compliance_hmac_secret.txt');
     expect(s).toContain('openssl rand');
     // NUNCA debe haber access keys de AWS embebidas.
     expect(s).not.toMatch(/AKIA[0-9A-Z]{16}/);

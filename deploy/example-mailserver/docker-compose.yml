@@ -55,6 +55,12 @@ services:
       # system" al crear live/). Comparte el volumen con Traefik (que escribe acme.json). [deploy real]
       - ./letsencrypt:/etc/letsencrypt
       - /etc/localtime:/etc/localtime:ro
+    # Relay saliente (SES): las credenciales SMTP viven en mailserver.env, que arranca VACÍO (relay
+    # apagado = send-gating). El helper bifrost-ses-activate del box lo puebla con RELAY_HOST/PORT/USER/
+    # PASSWORD leyendo la credencial de SSM cuando el outbound queda 'ready'. Vacío → docker-mailserver
+    # no ve RELAY_HOST y entrega directo (sólo sirve si el puerto 25 saliente está abierto).
+    env_file:
+      - mailserver.env
     environment:
       - OVERRIDE_HOSTNAME=mail.example.com
       - ENABLE_FAIL2BAN=1
@@ -106,6 +112,9 @@ services:
       # docker secrets). NO commitees valores reales.
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      # Secreto DEDICADO para firmar la evidencia de compliance (HMAC). Obligatorio en producción; el
+      # provisioner lo genera en ./secrets/compliance_hmac_secret.txt. NO se deriva de JWT_SECRET.
+      COMPLIANCE_HMAC_SECRET_FILE: /run/secrets/compliance_hmac_secret
       FRONTEND_URL: https://webmail.example.com
       CORS_ORIGIN: https://webmail.example.com
       # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
@@ -118,7 +127,7 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-}
       S3_USE_INSTANCE_ROLE: ${S3_USE_INSTANCE_ROLE:-}
-    secrets: [jwt_secret, encryption_key]
+    secrets: [jwt_secret, encryption_key, compliance_hmac_secret]
     networks: [mailnet]
 
   # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
@@ -140,6 +149,8 @@ secrets:
     file: ./secrets/jwt_secret.txt
   encryption_key:
     file: ./secrets/encryption_key.txt
+  compliance_hmac_secret:
+    file: ./secrets/compliance_hmac_secret.txt
 
 volumes:
   mongo-data:
