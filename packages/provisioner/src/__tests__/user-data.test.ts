@@ -56,6 +56,10 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('get.docker.com'); // ya no se usa el instalador sin checksum
     // Compat API 1.24 para Traefik v3 con Docker 29+ (si no, Traefik no lee labels → 404). [deploy real]
     expect(s).toContain('DOCKER_MIN_API_VERSION=1.24');
+    // RESTART explícito (no 'enable --now') — sin esto el daemon ya corriendo no toma el drop-in y
+    // Traefik queda en API 1.40 → 404 en todo. Bug real del 2º deploy.
+    expect(s).toContain('systemctl restart docker');
+    expect(s).toContain('MinAPIVersion'); // fail-fast si el min no quedó en 1.24
     expect(s).toContain('git clone');
     expect(s).toContain('deploy/example-mailserver'); // REUSA la plantilla existente
     expect(s).toContain('docker compose up -d');

@@ -87,9 +87,19 @@ apt_retry install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin 
 mkdir -p /etc/systemd/system/docker.service.d
 printf '[Service]\nEnvironment="DOCKER_MIN_API_VERSION=1.24"\n' > /etc/systemd/system/docker.service.d/min-api.conf
 systemctl daemon-reload
-systemctl enable --now docker
+# CRÍTICO: 'enable --now' NO reinicia un daemon que el apt-install ya dejó corriendo → el drop-in de
+# DOCKER_MIN_API_VERSION NO se aplicaría (el daemon seguiría con min 1.40 → Traefik 404). Hay que
+# RESTART explícito para que tome el Environment. [bug hallado en el 2º deploy real a AWS]
+systemctl enable docker
+systemctl restart docker
 # Esperar a que el daemon esté listo antes de usarlo (race de arranque del servicio).
 for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
+# Confirmar que el min API quedó en 1.24 (si no, Traefik no leerá labels → fail-fast con aviso a CFN).
+MINAPI=$(docker version --format '{{.Server.MinAPIVersion}}' 2>/dev/null || echo "")
+if [ "$MINAPI" != "1.24" ]; then
+  echo "ERROR: Docker MinAPIVersion=$MINAPI (esperado 1.24); Traefik no leería labels." >&2
+  signal_fail; exit 1
+fi
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
