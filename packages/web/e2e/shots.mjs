@@ -235,6 +235,31 @@ async function mockApi(page, { publicSlug = 'ana' } = {}) {
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
     if (p === '/admin/config/branding') return json(route, BRANDING);
     if (p === '/admin/config/storage') return json(route, { providerType: 'local' });
+    if (p === '/admin/groups')
+      return json(route, {
+        groups: [
+          {
+            id: 'g1',
+            name: 'Ventas',
+            description: 'Equipo comercial',
+            color: '#1b66ff',
+            email: 'ventas@aulion.app',
+            memberUserIds: ['u1', 'u2'],
+            memberCount: 2,
+            createdAt: '',
+            updatedAt: '',
+          },
+          {
+            id: 'g2',
+            name: 'Soporte técnico',
+            color: '#9333ea',
+            memberUserIds: ['u3'],
+            memberCount: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ],
+      });
     if (p === '/admin/config/storage-defaults')
       return json(route, { defaultQuotaBytes: 2147483648 });
     if (p === '/admin/config/calendar')
@@ -310,6 +335,11 @@ const run = async () => {
   // Admin
   await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
   await shot(page, 'admin-accounts');
+  await page
+    .getByRole('button', { name: 'Grupos' })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-groups');
   await page
     .getByRole('button', { name: 'Marca' })
     .click()
