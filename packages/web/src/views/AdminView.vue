@@ -362,6 +362,49 @@ async function loadUpdate(force = false) {
   }
 }
 
+// Fase 2: aplicar la actualización. El API deja un marker; el host-updater hace pull+up+rollback. Acá
+// disparamos el apply y POLLEAMOS el estado hasta que termine (succeeded/rolledback/failed), mostrando
+// el progreso. El servidor elige el build target (no el cliente).
+const updating = ref(false);
+const updateMsg = ref('');
+async function applyUpdate() {
+  if (updating.value) return;
+  if (!confirm('¿Actualizar a la última versión? El sistema puede reiniciarse unos segundos.'))
+    return;
+  updating.value = true;
+  updateMsg.value = 'Encolando actualización…';
+  try {
+    await api.post('/admin/update/apply');
+    // Poll del estado (el host-updater corre cada minuto + tarda segundos en aplicar).
+    for (let i = 0; i < 60; i++) {
+      await new Promise((r) => setTimeout(r, 4000));
+      const { data } = await api.get<{ status: string; to?: string }>('/admin/update/status');
+      if (data.status === 'in_progress') {
+        updateMsg.value = 'Aplicando la actualización…';
+        continue;
+      }
+      if (data.status === 'succeeded') {
+        updateMsg.value = '✅ Actualizado. Recargá la página.';
+        await loadUpdate(true);
+        return;
+      }
+      if (data.status === 'rolledback') {
+        updateMsg.value = '⚠ El build nuevo no levantó; se revirtió al anterior (sistema estable).';
+        return;
+      }
+      if (data.status === 'failed') {
+        updateMsg.value = '✗ La actualización falló. Revisá los logs del servidor.';
+        return;
+      }
+    }
+    updateMsg.value = 'La actualización está tardando; revisá en unos minutos.';
+  } catch {
+    updateMsg.value = '✗ No se pudo iniciar la actualización.';
+  } finally {
+    updating.value = false;
+  }
+}
+
 onMounted(async () => {
   await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild(), loadUpdate()]);
 });
@@ -835,10 +878,11 @@ async function save() {
             class="ub-link"
             >Ver cambios</a
           >
-          <button class="ub-btn" disabled title="Disponible en la próxima versión (Fase 2)">
-            Actualizar (pronto)
+          <button class="ub-btn" :disabled="updating" @click="applyUpdate">
+            {{ updating ? 'Actualizando…' : 'Actualizar' }}
           </button>
         </div>
+        <p v-if="updateMsg" class="ub-msg" data-testid="update-msg">{{ updateMsg }}</p>
         <div
           v-else-if="update && !update.updateAvailable && update.latest"
           class="update-banner update-ok"

@@ -50,6 +50,14 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('install -y awscli');
   });
 
+  it('instala el host-updater de la Fase 2 (cron + dir del marker + BIFROST_DOMAIN)', () => {
+    const s = buildUserData(base);
+    expect(s).toContain('/etc/cron.d/bifrost-update');
+    expect(s).toContain('./bifrost-update.sh'); // el script vive en el repo; el cron lo corre
+    expect(s).toContain('install -d -m 0750 update-trigger'); // dir del marker
+    expect(s).toContain('BIFROST_DOMAIN=');
+  });
+
   it('con sesParamName → helper que lee SSM + cron + boot-run, con SEND-GATING (relay off al boot)', () => {
     const s = buildUserData({ ...base, sesParamName: '/bifrost/acme-com/ses-smtp' });
     // awscli para leer el SecureString con el rol del box.
