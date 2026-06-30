@@ -145,7 +145,10 @@ export default function authRoutes(fastify: FastifyInstance) {
     }
   );
 
-  fastify.get('/me', async (request) => {
+  // `skipCompliance`: el SPA hace `GET /me` en restore(); si el gate lo bloqueara con 403, el store
+  // limpiaría la sesión y el usuario no podría llegar al flujo de aceptación (B P3 MEDIUM, anti-deadlock).
+  // `PATCH /me/preferences` (escritura) SÍ queda gateado.
+  fastify.get('/me', { config: { skipCompliance: true } }, async (request) => {
     const user = await User.findById(request.user.userId).lean();
     if (!user) {
       throw new Error('User not found');

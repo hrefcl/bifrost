@@ -255,6 +255,7 @@ export default {
       accounts: 'Cuentas',
       branding: 'Marca',
       storage: 'Almacenamiento',
+      compliance: 'Compliance',
       scheduling: 'Agenda',
     },
     accounts: {
@@ -368,6 +369,20 @@ export default {
       active: 'Activo',
       server: 'Servidor',
     },
+  },
+  compliance: {
+    title: 'Políticas',
+    subtitle: 'Debe leer y aceptar las políticas para continuar',
+    logout: 'Cerrar sesión',
+    loading: 'Cargando…',
+    accept: 'Acepto',
+    accepting: 'Registrando…',
+    read: 'Documento leído.',
+    scrollHint: 'Desplácese hasta el final para habilitar la aceptación.',
+    loadError: 'No se pudo cargar el documento. Reintente.',
+    acceptError: 'No se pudo registrar la aceptación. Reintente.',
+    inconsistentError:
+      'Hay políticas pendientes de aceptación pero no se pudieron cargar. Reintente o contacte al administrador.',
   },
   scheduling: {
     title: 'Reuniones',

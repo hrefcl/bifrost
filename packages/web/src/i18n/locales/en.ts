@@ -255,6 +255,7 @@ export default {
       accounts: 'Accounts',
       branding: 'Branding',
       storage: 'Storage',
+      compliance: 'Compliance',
       scheduling: 'Scheduling',
     },
     accounts: {
@@ -363,6 +364,20 @@ export default {
       active: 'Active',
       server: 'Server',
     },
+  },
+  compliance: {
+    title: 'Policies',
+    subtitle: 'You must read and accept the policies to continue',
+    logout: 'Sign out',
+    loading: 'Loading…',
+    accept: 'I accept',
+    accepting: 'Recording…',
+    read: 'Document read.',
+    scrollHint: 'Scroll to the end to enable acceptance.',
+    loadError: 'Could not load the document. Please retry.',
+    acceptError: 'Could not record your acceptance. Please retry.',
+    inconsistentError:
+      'There are policies pending acceptance but they could not be loaded. Retry or contact your administrator.',
   },
   scheduling: {
     title: 'Meetings',
