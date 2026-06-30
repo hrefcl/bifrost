@@ -22,6 +22,35 @@ describe('splitEmailQuote', () => {
     expect(quoted).toContain('lo anterior');
   });
 
+  it('wrapper único: la cita anidada en un <div> raíz NO deja el contenido del lado equivocado', () => {
+    // Todo envuelto en un solo div raíz (caso Gmail). El corte debe sacar la cita y dejar lo nuevo.
+    const html =
+      '<div dir="ltr">Mi respuesta nueva' +
+      '<div class="gmail_quote"><blockquote>previo</blockquote></div></div>';
+    const { main, quoted } = splitEmailQuote(html);
+    expect(main).toContain('Mi respuesta nueva');
+    expect(main).not.toContain('previo');
+    expect(quoted).toContain('previo');
+  });
+
+  it('gmail_attr hermano ANTES del blockquote: corta desde el attr (saca attr + cita)', () => {
+    const html =
+      '<div>Respuesta</div><div class="gmail_attr">El lun escribió:</div>' +
+      '<blockquote class="gmail_quote">previo</blockquote>';
+    const { main, quoted } = splitEmailQuote(html);
+    expect(main).toContain('Respuesta');
+    expect(main).not.toContain('previo');
+    expect(main).not.toContain('escribió');
+    expect(quoted).toContain('previo');
+  });
+
+  it('marcadores vendor (Yahoo/Proton/OWA) se detectan', () => {
+    const y = splitEmailQuote('<div>nuevo</div><div class="yahoo_quoted">viejo</div>');
+    expect(y.quoted).toContain('viejo');
+    const p = splitEmailQuote('<div>nuevo</div><div class="protonmail_quote">viejo</div>');
+    expect(p.quoted).toContain('viejo');
+  });
+
   it('NO colapsa un <blockquote> decorativo sin marca de cita (anti falso-positivo)', () => {
     // Un pull-quote de newsletter: blockquote SIN type="cite" ni clase de cita → NO es una respuesta.
     const html =

@@ -62,9 +62,13 @@ const MAX_PX = 24000;
 
 function resize() {
   const doc = frame.value?.contentWindow?.document;
-  if (!doc?.documentElement) return;
-  const measured = Math.max(doc.documentElement.scrollHeight, doc.body.scrollHeight) + 8;
-  height.value = Math.min(measured, MAX_PX);
+  if (!doc?.body) return;
+  // Medir el BODY (su contenido real), NO documentElement: el <html> llena el viewport del iframe, así
+  // que documentElement.scrollHeight reporta el alto ACTUAL del iframe → al colapsar la cita ("···") el
+  // contenido se achica pero el iframe quedaría enorme (no encoge). body.scrollHeight = alto del
+  // contenido, independiente del tamaño del iframe → encoge y crece bien.
+  const measured = doc.body.scrollHeight + 8;
+  height.value = Math.min(Math.max(measured, 24), MAX_PX);
 }
 function onLoad() {
   resize();
