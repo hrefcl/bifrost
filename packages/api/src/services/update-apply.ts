@@ -16,10 +16,20 @@ function triggerDir(): string {
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
 export interface UpdateState {
-  status: 'idle' | 'in_progress' | 'succeeded' | 'failed' | 'rolledback';
+  // 'queued' = el API encoló el pedido pero el host-updater todavía no lo tomó (lo pone requestUpdate,
+  // así el frontend NO confunde el 'succeeded' de un update ANTERIOR con el recién pedido).
+  status: 'idle' | 'queued' | 'in_progress' | 'succeeded' | 'failed' | 'rolledback';
   from?: string;
   to?: string;
   reason?: string;
+}
+
+/** Escribe state.json de forma atómica (tmp+rename). Lo usa requestUpdate para resetear a 'queued'. */
+function writeState(state: UpdateState): void {
+  const target = join(triggerDir(), 'state.json');
+  const tmp = `${target}.api.tmp`;
+  writeFileSync(tmp, `${JSON.stringify(state)}\n`, { mode: 0o640 });
+  renameSync(tmp, target);
 }
 
 /** Encola un update al build `sha` (el host-updater lo aplica). Valida el sha. Devuelve el tag escrito. */
@@ -27,6 +37,10 @@ export function requestUpdate(sha: string): string {
   if (!SHA_RE.test(sha)) throw new Error(`sha inválido: ${sha}`);
   const tag = `sha-${sha}`;
   mkdirSync(triggerDir(), { recursive: true });
+  // RESET del estado a 'queued' ANTES de plantar el marker: si quedó un 'succeeded' de un update previo,
+  // el frontend lo leería como "ya actualizado" al instante (bug "dijo actualizado pero no pasó nada").
+  // El host-updater lo sobrescribe a 'in_progress'/'succeeded'/… al tomar el marker.
+  writeState({ status: 'queued', to: tag });
   const target = join(triggerDir(), 'requested');
   const tmp = `${target}.tmp`;
   writeFileSync(tmp, `${tag}\n`, { mode: 0o640 });
@@ -46,7 +60,8 @@ export function getUpdateState(): UpdateState {
   return { status: 'idle' };
 }
 
-/** ¿Hay un update ya en curso? (evita re-encolar mientras corre — idempotencia). */
+/** ¿Hay un update ya en curso o encolado? (evita re-encolar entre el click y que el host lo tome). */
 export function isUpdateInProgress(): boolean {
-  return getUpdateState().status === 'in_progress';
+  const s = getUpdateState().status;
+  return s === 'queued' || s === 'in_progress';
 }

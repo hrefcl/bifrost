@@ -154,12 +154,35 @@ ${
 # Dominio del box → lo usa el host-updater (Fase 2) para el healthcheck post-update por Traefik.
 echo "BIFROST_DOMAIN=\${DOMAIN}" >> .env
 # Updater del host (botón "Actualizar" del admin): el script vive en el repo (deploy/example-mailserver/
-# bifrost-update.sh); el cron lo corre cada minuto. Lee el marker que deja el API y hace pull+up+rollback.
-# El API NUNCA toca el socket de Docker. Ver bifrost-update.sh.
+# bifrost-update.sh). Lee el marker que deja el API y hace pull+up+rollback. El API NUNCA toca el socket de
+# Docker. Ver bifrost-update.sh.
 chmod +x bifrost-update.sh 2>/dev/null || true
 install -d -m 0750 update-trigger
+# DISPARO: dos mecanismos complementarios (ambos corren el MISMO script con flock → nunca se solapan):
+#  (a) systemd .path → observa el marker y dispara en ~1-2s (el botón no espera al próximo tick del cron).
+#  (b) cron cada minuto → red de seguridad si el .path fallara. Antes sólo había cron → hasta 60s de latencia
+#      percibida ("demoró mucho en actualizar").
 echo '* * * * * root cd /opt/bifrost/deploy/example-mailserver && ./bifrost-update.sh >> /var/log/bifrost-update.log 2>&1' > /etc/cron.d/bifrost-update
 chmod 644 /etc/cron.d/bifrost-update
+cat > /etc/systemd/system/bifrost-update.service <<'UNIT'
+[Unit]
+Description=Bifrost host-side updater (aplica el build pedido por el admin)
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/bifrost/deploy/example-mailserver
+ExecStart=/opt/bifrost/deploy/example-mailserver/bifrost-update.sh
+UNIT
+cat > /etc/systemd/system/bifrost-update.path <<'UNIT'
+[Unit]
+Description=Observa el marker de update de Bifrost y dispara el updater al instante
+[Path]
+PathExists=/opt/bifrost/deploy/example-mailserver/update-trigger/requested
+Unit=bifrost-update.service
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now bifrost-update.path
 # fail2ban: el API es un PROXY IMAP confiable — TODOS los logins de TODOS los usuarios salen de la IP del
 # contenedor API. Sin este ignoreip, los fallos de password de UN usuario banean la IP del API → lockout de
 # TODO el tenant (incidente real). La red 172.16/12 es interna (no enrutable desde internet), así que esto NO

@@ -25,6 +25,19 @@ describe('update-apply (marker del host-updater)', () => {
     expect(existsSync(`${marker}.tmp`)).toBe(false); // el rename atómico consumió el .tmp
   });
 
+  it('requestUpdate RESETEA el estado a queued, borrando un "succeeded" previo (no falso "ya actualizado")', () => {
+    // Simula el estado dejado por un update ANTERIOR.
+    writeFileSync(
+      join(dir, 'state.json'),
+      JSON.stringify({ status: 'succeeded', to: 'sha-viejo' })
+    );
+    requestUpdate('abc1234');
+    const st = getUpdateState();
+    expect(st.status).toBe('queued'); // ya NO 'succeeded'
+    expect(st.to).toBe('sha-abc1234');
+    expect(isUpdateInProgress()).toBe(true); // queued cuenta como "en curso" → no se re-encola
+  });
+
   it('rechaza un sha inválido (no inyección de tag arbitrario)', () => {
     for (const bad of ['latest', '../evil', 'sha; rm -rf /', 'ABC123', '']) {
       expect(() => requestUpdate(bad)).toThrow(/sha inválido/);
