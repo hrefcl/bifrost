@@ -1,5 +1,12 @@
 /** Contadores de proceso en memoria para /metrics (Prometheus text format). */
-export const counters = { requests: 0, errors5xx: 0, bootstrapAdminGrants: 0 };
+export const counters = {
+  requests: 0,
+  errors5xx: 0,
+  bootstrapAdminGrants: 0,
+  // Bifrost Meet (in-memory single-node — se resetean al reiniciar el proceso; ver DESIGN §13).
+  meetRoomsCreated: 0,
+  meetTokensIssued: 0,
+};
 
 // Histograma de latencia de requests (segundos). Buckets cumulativos estilo Prometheus.
 const BUCKETS = [0.01, 0.05, 0.1, 0.3, 1, 3, 10];
@@ -54,6 +61,12 @@ export function renderMetrics(): string {
       '# HELP webmail_bootstrap_admin_grants_total Admin role granted via first-user bootstrap',
       '# TYPE webmail_bootstrap_admin_grants_total counter',
       `webmail_bootstrap_admin_grants_total ${String(counters.bootstrapAdminGrants)}`,
+      '# HELP webmail_meet_rooms_created_total Bifrost Meet rooms created',
+      '# TYPE webmail_meet_rooms_created_total counter',
+      `webmail_meet_rooms_created_total ${String(counters.meetRoomsCreated)}`,
+      '# HELP webmail_meet_tokens_issued_total Bifrost Meet access tokens issued',
+      '# TYPE webmail_meet_tokens_issued_total counter',
+      `webmail_meet_tokens_issued_total ${String(counters.meetTokensIssued)}`,
       ...histogramLines(),
     ].join('\n') + '\n'
   );

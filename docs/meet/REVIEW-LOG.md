@@ -35,10 +35,31 @@ Sistema multi-equipo: **A**=Claude Code (impl/orquestación) · **B**=Codex (aut
 - **Screen share en MVP** + UI in-call **estilo Google Meet** (v2.3).
 - Claves del repo de referencia (`cv_cloud_formation/LiveKit`) ignoradas por ahora.
 
-## Próximos pasos (próxima sesión)
-1. Confirmar/cerrar gate con B (re-lanzar `codex exec` sobre `docs/meet/DESIGN.md` si hace falta; o aplicar herencia B→D).
-2. **F3.1** backend base (modelo MeetRoom, rutas `/api/meet` + `/api/config/public`, token service, gate, env+resolveFileSecrets). Tests vitest. QA B/C/D.
-3. F3.2 integración · F3.3 frontend (Google Meet + screen share) · F3.4 infra · F3.5 provisioner · F3.6 docs.
-- Tasks #1–#8 registradas en el sistema de tareas de la sesión.
+## Gate de diseño — CERRADO ✅
+- **B (Codex)** re-confirmó el cierre del HIGH de readiness (local resolve `--resolve …127.0.0.1`, no EIP): **9.2 APPROVE, 0 HIGH**.
+- Scores de diseño finales: **B=9.2 · C=9.2 · D=9** → gate (≥9, 0 HIGH) cumplido. Procede implementación.
+- 2 LOW de B incorporados a la implementación: (a) readiness `https://meet.<dom>/` espera **200** (LiveKit root health, no 426) → F3.5; (b) token de booking **nunca** pasa de `endAt+30m` (tope duro) → aplicado en F3.1.
+
+## F3.1 — backend base — APPROVED ✅ (commit en rama)
+Implementado: DTOs shared (MeetRoomDto/MeetTokenResponse/MeetSettings/PublicConfig/MeetUserPreferences) · modelo `MeetRoom` (slug unique global, `{bookingId}` unique parcial, soft-close, purgeAt TTL) · `services/meet/settings.ts` (singleton key='meet') · `services/meet/token-service.ts` (gate `meetEnabled`, grants matrix, identidad opaca, ventana temporal, **TTL tope duro**, backlink, `ensureRoom` fuera de lock no-fatal) · `routes/meet.ts` (`/api/meet/*` + `meetAdminRoutes`) · `GET /api/config/public` · `env.ts` LIVEKIT_* + `resolveFileSecrets` extendido · CSP `MEET_WS_ORIGIN` deploy-time · counters. **31 tests Meet (15 lógica + 16 ruta), 337 suite total, typecheck+lint limpios.**
+
+### QA F3.1 (2 rondas)
+| Ronda | B (Codex) | C (z/GLM) | D (Kimi) | Resultado |
+|-------|-----------|-----------|----------|-----------|
+| v1 | **8.0 NOT APPROVE (1 HIGH)** | 8.5 APPROVE-cond | 7.0 NOT APPROVE | BLOCKED_HIGH |
+| v2 | **9.2 APPROVE (HIGH cerrado)** | 9.0 APPROVE | 9.0 APPROVE | **APPROVED ✅** |
+
+**HIGH (B, cerrado)**: `authorizeAndComputeTtl` podía devolver `ttl:0` en el borde `endAt+30m`; el SDK trata `0` como falsy → `defaultTTL` (≫ tope) → el token sobreviviría el tope duro (confirmado `AccessToken.ts:88 options?.ttl || defaultTTL`; cruce B↔C: C aprobó la matemática sin ver el coalescing, B autoridad primaria lo cazó). **Fix**: no-host con `ttl<1` → `403 window_closed`; `issueAccessToken` clampa `Math.max(1, floor(ttl))`. Test de borde agregado.
+**MEDIUM/LOW cerrados**: token público fail-closed (`skipOnError:false` + key IP+slug) · `GET /public/:slug` valida backlink (404 idéntico, no observable) · salas manuales siempre `personal` · `resolveBacklink` valida `userId` (multi-tenant) · `isSlugCollision` inspecciona `keyPattern` · `ensureRoom` fire-and-forget.
+
+### Tech debt / product decisions de F3.1 → F3.2 (documentados, no bloqueantes)
+- **PD**: host bypassa el tope `endAt+30m` (dueño de la sala; token acotado por `maxDurationMinutes`).
+- **PD**: rol `internal` para cualquier cuenta autenticada (single-box confiable; endurecer si multi-tenant).
+- **TD-MEET-REVOKE**: sin revocación de token al close/rotate (inherente a token+roomCreate; acotado por TTL + `empty_timeout`). Evaluar revocación LiveKit en fase cercana.
+- **F3.2**: salas booking deben forzar `allowExternalOverride=true` + poblar `expiresAt`/`purgeAt` + janitor; `calendarEventId` ¿índice único parcial?
+
+## Próximos pasos
+1. **F3.2** integración agenda/calendario/correo (slug pre-Booking, MeetRoom write requerido idempotente por bookingId, CERO RPC en lock, degradado, reschedule/cancel, email/ICS link).
+2. F3.3 frontend (Google Meet + screen share) · F3.4 infra · F3.5 provisioner · F3.6 docs.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.

@@ -1,4 +1,6 @@
 import type { FastifyInstance } from 'fastify';
+import { getMeetSettings } from '../services/meet/settings.js';
+import { meetEnabled } from '../services/meet/token-service.js';
 
 /**
  * Config PÚBLICA del cliente (sin auth): la lee el login en el boot. Expone si el box trae un
@@ -7,6 +9,18 @@ import type { FastifyInstance } from 'fastify';
  * genérica y el usuario configura su propio IMAP/SMTP (modo reemplazo de Roundcube).
  */
 export default function configRoutes(fastify: FastifyInstance) {
+  // Config pública de la SPA (imagen estática genérica → runtime, no `import.meta.env`; review D-M4).
+  // Expone si Meet está activo y a qué wsUrl/base conectarse. Sin secretos.
+  fastify.get('/public', { config: { requiresAuth: false } }, async () => {
+    const settings = await getMeetSettings();
+    const on = meetEnabled(settings);
+    return {
+      meetEnabled: on,
+      livekitWsUrl: on ? settings.wsUrl : '',
+      meetPublicBaseUrl: on ? settings.publicBaseUrl : '',
+    };
+  });
+
   fastify.get('/mail-server', { config: { requiresAuth: false } }, () => {
     // Se lee de process.env en el request (no del `env` congelado al boot) para que sea testeable y
     // re-configurable sin reiniciar. El schema en config/env.ts lo documenta/valida.

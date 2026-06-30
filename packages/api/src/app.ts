@@ -24,6 +24,7 @@ import configRoutes from './routes/config.js';
 import signatureImageRoutes from './routes/signature-images.js';
 import attachmentRoutes from './routes/attachments.js';
 import metricsRoutes from './routes/metrics.js';
+import meetRoutes, { meetAdminRoutes } from './routes/meet.js';
 import { counters, observeDuration } from './lib/metrics.js';
 
 export async function buildApp() {
@@ -80,6 +81,11 @@ export async function buildApp() {
     done();
   });
 
+  // CSP. `connect-src` suma el origen wss de Meet SÓLO si está configurado (deploy-time, no DB-runtime;
+  // review D-H1/B-MED): con Meet OFF la CSP es byte-idéntica a hoy. `MEET_WS_ORIGIN` lo inyecta el
+  // user-data cuando el perfil Meet se despliega (p.ej. `wss://meet.<dom> https://meet.<dom>`).
+  const meetWsOrigin = (process.env.MEET_WS_ORIGIN ?? '').trim();
+  const connectSrc = ["'self'", ...(meetWsOrigin ? meetWsOrigin.split(/\s+/) : [])];
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -87,7 +93,7 @@ export async function buildApp() {
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
-        connectSrc: ["'self'"],
+        connectSrc,
       },
     },
   });
@@ -135,6 +141,8 @@ export async function buildApp() {
   await app.register(configRoutes, { prefix: '/api/config' });
   await app.register(signatureImageRoutes, { prefix: '/api/signature-images' });
   await app.register(attachmentRoutes, { prefix: '/api/attachments' });
+  await app.register(meetRoutes, { prefix: '/api/meet' });
+  await app.register(meetAdminRoutes, { prefix: '/api/admin/meet' });
 
   return app;
 }
