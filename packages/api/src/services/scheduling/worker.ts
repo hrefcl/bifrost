@@ -19,7 +19,15 @@ export function schedulingProcessor(job: Job): Promise<void> {
       return sendBookingEmail(data.bookingId, data.kind);
     }
     case 'reconcile':
-      return runReconcile().then(() => undefined);
+      // Observabilidad (auto-auditoría): el reconciler descartaba sus conteos. Si reparó algo, es señal
+      // operativa de crashes/races entre Booking↔CalendarEvent — se loguea para no dejarlo invisible.
+      return runReconcile().then((r) => {
+        if (r.linked || r.reschedules || r.orphanCe) {
+          console.warn(
+            `[scheduling] reconcile reparó: linked=${String(r.linked)} reschedules=${String(r.reschedules)} orphanCe=${String(r.orphanCe)}`
+          );
+        }
+      });
     default:
       return Promise.reject(new Error(`scheduling: unknown job name "${job.name}"`));
   }
