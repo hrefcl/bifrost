@@ -135,11 +135,11 @@ export async function setStorageConfig(
 }
 
 /**
- * Siembra la config de storage desde el ENTORNO en el PRIMER boot (turnkey: el provisioner AWS inyecta
- * las claves del IAM user del bucket). Sólo actúa si NO hay config persistida (una instalación nueva) y
- * los env de S3 están completos → así el admin puede sobrescribirla después sin que el boot la pise.
- * NO testea la conexión (no debe bloquear el arranque); si las claves estuvieran mal, el admin lo ve al
- * subir un adjunto y lo corrige en el wizard. Devuelve true si sembró.
+ * Siembra la config de storage desde el ENTORNO en el PRIMER boot (turnkey: el provisioner AWS escribe
+ * en el .env STORAGE_PROVIDER=s3 + bucket/region + S3_USE_INSTANCE_ROLE=1, sin claves — la app usa el
+ * rol del EC2 vía IMDS). Sólo actúa en un install FRESCO (sin config Y sin adjuntos), así no pisa al
+ * admin ni parte adjuntos local/S3. NO testea la conexión (no debe bloquear el arranque); si algo
+ * estuviera mal, el admin lo ve al subir un adjunto y lo corrige en el wizard. Devuelve true si sembró.
  */
 export async function seedStorageConfigFromEnv(): Promise<boolean> {
   if (process.env.STORAGE_PROVIDER !== 's3') return false;

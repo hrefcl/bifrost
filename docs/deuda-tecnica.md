@@ -258,6 +258,16 @@ ningún merge con HIGH abierto o score <9):
   **mXSS (C, MED no-HIGH)** — el re-parse/re-serialize de DOMParser podría des-sanear un fragmento
   crafteado; mitigado por el sandbox, pero lo ideal es re-pasar `main`/`quoted` por el sanitizer del
   backend antes de renderizar. Validar todo contra un corpus real de .eml.
+- **TD-S3-TURNKEY-RESIDUAL (review B/D)** — S3 turnkey con el rol del EC2 (IMDS, sin claves) ya está
+  (B/D empujaron el rol sobre IAM-user). Residuales no-bloqueantes: (1) **admin UI** — el wizard de
+  storage no muestra/permite el modo "rol del EC2" (sólo claves estáticas); en AWS no hace falta tocarlo
+  (lo siembra el boot), pero si el admin abre y guarda, el schema exige claves → soportar instance-role
+  en la ruta/UI; (2) **DeletionPolicy Retain** en bucket+CMK para PROD (B: HIGH para datos reales —
+  borrar el stack hoy borra el bucket/clave → adjuntos perdidos/ilegibles; para el test fresco da igual);
+  (3) **IAM eventual consistency** — la primera escritura S3 podría fallar segundos tras crear el rol;
+  el provisioner debería smoke-testear un put→get→delete antes de declarar éxito; (4) **bucket policy
+  que exija header SSE-KMS** rompería el PutObject (hoy usa default encryption — OK, pero verificar al
+  endurecer); (5) S3 no-AWS (MinIO/R2) sigue por claves estáticas vía el wizard admin.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
