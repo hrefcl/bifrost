@@ -230,6 +230,8 @@ export default {
     s3Title: 'S3 / compatible (MinIO, R2, …)',
     s3Desc:
       'Los archivos se guardan en un bucket S3. Requiere endpoint, bucket, región y credenciales (la clave secreta se cifra y nunca se muestra).',
+    s3InstanceRole:
+      'Esta instancia usa el rol de EC2 para acceder a S3 (sin claves estáticas). Lo configura el aprovisionamiento y no se edita desde acá.',
     endpoint: 'Endpoint (opcional para AWS)',
     bucket: 'Bucket',
     region: 'Región',
