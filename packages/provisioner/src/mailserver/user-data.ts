@@ -160,6 +160,22 @@ chmod +x bifrost-update.sh 2>/dev/null || true
 install -d -m 0750 update-trigger
 echo '* * * * * root cd /opt/bifrost/deploy/example-mailserver && ./bifrost-update.sh >> /var/log/bifrost-update.log 2>&1' > /etc/cron.d/bifrost-update
 chmod 644 /etc/cron.d/bifrost-update
+# fail2ban: el API es un PROXY IMAP confiable — TODOS los logins de TODOS los usuarios salen de la IP del
+# contenedor API. Sin este ignoreip, los fallos de password de UN usuario banean la IP del API → lockout de
+# TODO el tenant (incidente real). La red 172.16/12 es interna (no enrutable desde internet), así que esto NO
+# debilita el anti-bruteforce de IMAP/SMTP directo desde IPs públicas. docker-mailserver copia este archivo a
+# /etc/fail2ban/jail.d/user-jail.local en CADA arranque (los jail.d/*.local se leen último → ganan a jail.local).
+install -d -m 0750 config
+cat > config/fail2ban-jail.cf <<'F2B'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16
+F2B
+chmod 0644 config/fail2ban-jail.cf
+# NOTA (review B/D): 172.16/12 + 192.168/16 cubren TODO el pool de redes bridge que Docker asigna por defecto
+# (moby ipamutils: 172.17-31/16 y 192.168/16). El modelo de Bifrost es ALL-IN-ONE single-tenant: el único
+# origen en esos rangos RFC1918 es un contenedor del propio box (confiable). NO se expone a internet (no
+# spoofeable en TCP) y el bruteforce IMAP/SMTP directo desde IPs públicas se sigue baneando. Si algún día se
+# corre en host/VPC compartido, estrechar a la subnet exacta de la red del compose.
 ${
   input.sesParamName
     ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b). Un helper lo activa SÓLO cuando la
