@@ -77,6 +77,58 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     await app.close();
   });
 
+  it('F6: cuota por defecto se aplica al crear sin quotaBytes; explícita la respeta; no migra existentes', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const DEFAULT = 2 * 1024 * 1024 * 1024; // 2 GB
+
+    // cuenta PRE-existente con cuota explícita (antes de tocar el default)
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('pre@empresa.com'),
+    });
+
+    // fijar la cuota por defecto
+    const setDef = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage-defaults',
+      headers,
+      payload: { defaultQuotaBytes: DEFAULT },
+    });
+    expect(setDef.statusCode).toBe(200);
+    expect(JSON.parse(setDef.body).defaultQuotaBytes).toBe(DEFAULT);
+
+    // la cuenta PRE-existente NO se migra: conserva su cuota original (review B-LOW)
+    const afterDefault = await app.inject({ method: 'GET', url: '/api/admin/accounts', headers });
+    const pre = (
+      JSON.parse(afterDefault.body) as { accounts: { email: string; quotaBytes: number }[] }
+    ).accounts.find((a) => a.email === 'pre@empresa.com');
+    expect(pre?.quotaBytes).toBe(50 * 1024 * 1024);
+
+    // crear SIN quotaBytes → toma el default
+    const { quotaBytes: _omit, ...noQuota } = newAccountBody('sinquota@empresa.com');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: noQuota,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(JSON.parse(created.body).quotaBytes).toBe(DEFAULT);
+
+    // crear CON quotaBytes explícita → respeta el valor enviado (no el default)
+    const explicit = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('conquota@empresa.com'),
+    });
+    expect(JSON.parse(explicit.body).quotaBytes).toBe(50 * 1024 * 1024);
+    await app.close();
+  });
+
   it('POST /accounts con email existente → 409', async () => {
     const app = await buildTestApp();
     const { headers } = await seedAdmin(app);

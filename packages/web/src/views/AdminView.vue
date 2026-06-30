@@ -158,7 +158,9 @@ const blankCreate = () => ({
   smtpHost: '',
   smtpPort: 465,
   smtpSecure: true,
-  quotaMb: 0,
+  // `null` = "usar la cuota por defecto" (F6): si el admin no escribe nada, NO se manda `quotaBytes`
+  // y el backend aplica el default. Un número (incl. 0=ilimitado) se respeta tal cual.
+  quotaMb: null as number | null,
 });
 const form = ref(blankCreate());
 
@@ -173,6 +175,9 @@ const createIncomplete = computed(
 async function createAccount() {
   creating.value = true;
   createError.value = '';
+  // Campo de cuota vacío → NO mandar `quotaBytes` (el backend aplica la cuota por defecto, F6).
+  const q = form.value.quotaMb;
+  const hasQuota = typeof q === 'number' && !Number.isNaN(q);
   try {
     await api.post('/admin/accounts', {
       email: form.value.email.trim(),
@@ -184,7 +189,7 @@ async function createAccount() {
       smtpHost: form.value.smtpHost.trim(),
       smtpPort: form.value.smtpPort,
       smtpSecure: form.value.smtpSecure,
-      quotaBytes: Math.max(0, Math.round(form.value.quotaMb)) * 1024 * 1024,
+      ...(hasQuota ? { quotaBytes: Math.max(0, Math.round(q)) * 1024 * 1024 } : {}),
     });
     showCreate.value = false;
     form.value = blankCreate();
@@ -501,12 +506,49 @@ async function applyUpdate() {
   updating.value = false;
 }
 
+// ============================ ALMACENAMIENTO: defaults + uso (F6) ============================
+const defaultQuotaMb = ref(0);
+const defQuotaSaving = ref(false);
+const defQuotaSaved = ref(false);
+async function loadStorageDefaults() {
+  try {
+    const { data } = await api.get<{ defaultQuotaBytes: number }>('/admin/config/storage-defaults');
+    defaultQuotaMb.value = Math.round(data.defaultQuotaBytes / (1024 * 1024));
+  } catch {
+    /* defaults a 0 (sin límite) si no responde */
+  }
+}
+async function saveStorageDefaults() {
+  defQuotaSaving.value = true;
+  defQuotaSaved.value = false;
+  try {
+    await api.patch('/admin/config/storage-defaults', {
+      defaultQuotaBytes: Math.max(0, Math.round(defaultQuotaMb.value)) * 1024 * 1024,
+    });
+    defQuotaSaved.value = true;
+  } finally {
+    defQuotaSaving.value = false;
+  }
+}
+/** % de uso (0..100) sólo cuando hay cuota; sin cuota (0=ilimitado) no hay barra significativa. */
+function usagePct(a: AdminAccount): number {
+  if (a.quotaBytes <= 0) return 0;
+  return Math.min(100, Math.round((a.usedBytes / a.quotaBytes) * 100));
+}
+
 onMounted(async () => {
   window.addEventListener('keydown', onKeydown);
   mq = window.matchMedia('(max-width: 900px)');
   isNarrow.value = mq.matches;
   mq.addEventListener('change', onMq);
-  await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild(), loadUpdate()]);
+  await Promise.all([
+    loadAccounts(),
+    loadBranding(),
+    loadStorage(),
+    loadStorageDefaults(),
+    loadApiBuild(),
+    loadUpdate(),
+  ]);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
@@ -736,7 +778,12 @@ async function save() {
                 /></label>
                 <label class="fld"
                   ><span>{{ t('admin.accounts.quotaMb') }}</span
-                  ><input v-model.number="form.quotaMb" type="number" min="0" class="adminput"
+                  ><input
+                    v-model.number="form.quotaMb"
+                    type="number"
+                    min="0"
+                    class="adminput"
+                    :placeholder="t('admin.accounts.quotaDefaultPh')"
                 /></label>
                 <label class="fld"
                   ><span>{{ t('admin.accounts.imapHost') }}</span
@@ -1035,6 +1082,61 @@ async function save() {
                   })
                 }}
               </p>
+            </div>
+
+            <!-- F6: cuota por defecto + uso por cuenta -->
+            <div class="storage-extra">
+              <div class="quota-default">
+                <label class="fld-lbl">{{ t('admin.storage.defaultQuota') }}</label>
+                <div class="quota-row">
+                  <input
+                    v-model.number="defaultQuotaMb"
+                    type="number"
+                    min="0"
+                    class="adminput sm"
+                  />
+                  <span class="mb">MB</span>
+                  <button
+                    class="btn-secondary"
+                    :disabled="defQuotaSaving"
+                    @click="saveStorageDefaults"
+                  >
+                    {{ defQuotaSaving ? t('admin.saving') : t('admin.apply') }}
+                  </button>
+                  <span v-if="defQuotaSaved" class="ok-text">{{ t('admin.saved') }}</span>
+                </div>
+                <p class="hint">{{ t('admin.storage.defaultQuotaHint') }}</p>
+              </div>
+
+              <div class="usage-panel">
+                <h3 class="usage-h">{{ t('admin.storage.usageByAccount') }}</h3>
+                <div v-for="a in accounts" :key="a.id" class="usage-item">
+                  <div class="usage-top">
+                    <span class="usage-name">{{ a.displayName }}</span>
+                    <span class="usage-val">
+                      {{ fmtBytes(a.usedBytes) }} /
+                      {{
+                        a.quotaBytes > 0 ? fmtBytes(a.quotaBytes) : t('admin.accounts.unlimited')
+                      }}
+                    </span>
+                  </div>
+                  <div
+                    class="usage-bar"
+                    :class="{ unlimited: a.quotaBytes <= 0 }"
+                    role="progressbar"
+                    :aria-valuenow="usagePct(a)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  >
+                    <span
+                      class="usage-fill"
+                      :class="{ warn: usagePct(a) >= 90 }"
+                      :style="{ width: usagePct(a) + '%' }"
+                    />
+                  </div>
+                </div>
+                <p v-if="accounts.length === 0" class="muted">{{ t('admin.accounts.empty') }}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -1479,6 +1581,74 @@ async function save() {
   font-size: 12px;
   color: var(--text-3);
   margin: 8px 0 0;
+}
+/* ---- F6: defaults + uso ---- */
+.storage-extra {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.usage-h {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 12px;
+}
+.usage-item {
+  margin-bottom: 14px;
+}
+.usage-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+.usage-name {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.usage-val {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.usage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-dim);
+  overflow: hidden;
+}
+.usage-bar.unlimited {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--surface-dim),
+    var(--surface-dim) 6px,
+    var(--hover) 6px,
+    var(--hover) 12px
+  );
+}
+.usage-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s;
+}
+.usage-fill.warn {
+  background: var(--danger);
 }
 
 /* ---- Cuentas ---- */
