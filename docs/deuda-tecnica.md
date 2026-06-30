@@ -268,6 +268,17 @@ ningún merge con HIGH abierto o score <9):
   el provisioner debería smoke-testear un put→get→delete antes de declarar éxito; (4) **bucket policy
   que exija header SSE-KMS** rompería el PutObject (hoy usa default encryption — OK, pero verificar al
   endurecer); (5) S3 no-AWS (MinIO/R2) sigue por claves estáticas vía el wizard admin.
+- **TD-PROVISION-OUTBOUND-SES (la próxima pieza turnkey — alineada con "deliverability existencial")** —
+  el provisioner deja el correo ENTRANTE + S3 + admin andando, pero NO auto-cablea el relay SES para el
+  SALIENTE (AWS bloquea el puerto 25; sin relay no sale correo). Hoy es manual (RELAY_HOST/USER/PASSWORD
+  en el compose, like se hizo en aulion v1). Para turnkey: el CLI debería (a) verificar/crear identidad
+  SES del dominio + DKIM, (b) generar credenciales SMTP de SES (derivadas de un IAM user) y entregarlas
+  al box SIN user-data (SSH post-deploy o Secrets Manager, NO en claro), (c) setear el relay en
+  docker-mailserver, (d) explicarle al cliente el paso de sacar SES del sandbox. VALIDADO en el deploy
+  fresco del 2026-06-30: entrante + S3(rol)+KMS + admin + bootstrap funcionan; falta SES.
+- **TD-PROVISION-ADMIN-PASS-DELIVERY (MED)** — la clave del buzón admin viaja en el user-data del EC2
+  (visible vía ec2:DescribeInstanceAttribute a quien tenga la cuenta). Aceptable single-operator, pero
+  endurecer: entregarla por SSH post-deploy o que el box la genere y la muestre, en vez del user-data.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
