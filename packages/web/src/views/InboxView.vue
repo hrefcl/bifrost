@@ -2,7 +2,7 @@
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
-import AppIcon from '@/components/AppIcon.vue';
+import AppIcon, { type IconName } from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
 import EmailBodyFrame from '@/components/EmailBodyFrame.vue';
 import ThreadMessage from '@/components/ThreadMessage.vue';
@@ -37,7 +37,7 @@ const category = ref<'primary' | 'updates' | 'promotions'>('primary');
 type ListFilter = 'all' | 'unread' | 'starred' | 'attachments';
 // El filtro vive en el store ui (compartido con el embudo del TopBar). Acá lo leemos reactivo.
 const listFilter = computed(() => ui.listFilter);
-const LIST_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
+const LIST_FILTERS: { key: ListFilter; label: string; icon: IconName }[] = [
   { key: 'all', label: 'list.filterAll', icon: 'mail' },
   { key: 'unread', label: 'list.filterUnread', icon: 'dot' },
   { key: 'starred', label: 'list.filterStarred', icon: 'star' },
@@ -68,7 +68,7 @@ const bodyLoading = ref(false);
 // ---- Set estándar estilo Gmail: SIEMPRE visible, mapeado a la carpeta real si existe ----
 interface StdItem {
   key: string;
-  icon: string;
+  icon: IconName;
   special?: SpecialUse;
   virtual?: 'starred' | 'snoozed';
 }
