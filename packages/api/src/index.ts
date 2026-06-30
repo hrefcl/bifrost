@@ -9,6 +9,8 @@ import {
   reconcileEmailTextIndex,
 } from './db/reconcile-indexes.js';
 import { env, isSetupMode } from './config/env.js';
+import { startSchedulingWorker, closeScheduling } from './services/scheduling/queue.js';
+import { schedulingProcessor } from './services/scheduling/worker.js';
 
 let serverApp: Awaited<ReturnType<typeof buildApp>> | undefined;
 let stuckSweep: ReturnType<typeof setInterval> | undefined;
@@ -37,6 +39,11 @@ async function main() {
 
   const app = await buildApp();
   serverApp = app;
+
+  // Worker IN-PROCESO de la cola de agenda (BullMQ): procesa el email de confirmación + el reconciler
+  // que encola el booking público (Fase 3.4). No-op en mock/test. Cableado aquí para cumplir el
+  // contrato de ciclo de vida (review B HIGH de Fase 3.0). El cierre va en doShutdown.
+  startSchedulingWorker(schedulingProcessor);
 
   // Barridos periódicos: (a) revierte borradores colgados en 'sending' a 'failed';
   // (b) recolecta AttachmentBlobs huérfanos (subidas descartadas, drafts borrados/enviados).
@@ -146,6 +153,13 @@ async function doShutdown() {
     await serverApp?.close();
   } catch (err) {
     console.error('Error closing HTTP server:', err);
+  }
+  // Cerrar el worker/cola de agenda y SUS conexiones Redis ANTES de la conexión Redis compartida
+  // (cada paso aislado: un fallo aquí no debe impedir el cierre de Redis/Mongo).
+  try {
+    await closeScheduling();
+  } catch (err) {
+    console.error('Error closing scheduling worker:', err);
   }
   try {
     await closeRedis();

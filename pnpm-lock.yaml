@@ -92,6 +92,9 @@ importers:
       isomorphic-dompurify:
         specifier: ^2.20.0
         version: 2.36.0(@noble/hashes@1.8.0)
+      luxon:
+        specifier: ^3.5.0
+        version: 3.7.2
       mongoose:
         specifier: ^8.9.3
         version: 8.24.1(socks@2.8.9)
@@ -111,6 +114,9 @@ importers:
       '@types/ioredis-mock':
         specifier: ^8.2.7
         version: 8.2.7(ioredis@5.11.1)
+      '@types/luxon':
+        specifier: ^3.4.2
+        version: 3.7.2
       '@types/node':
         specifier: ^22.10.0
         version: 22.20.0
@@ -1651,6 +1657,9 @@ packages:
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
+
+  '@types/luxon@3.7.2':
+    resolution: {integrity: sha512-gW+Oib+vUtGJBtNC8V9Reww0oIpusw+4m81uncg9REGZAJfqOQHfo/nkabnc7w0QReXyPqjrbWMJk6NuAkiX3Q==}
 
   '@types/methods@1.1.4':
     resolution: {integrity: sha512-ymXWVrDiCxTBE3+RIrrP533E70eA+9qu7zdWoHuOmGujkYtzf4HQF96b8nwHLqhuf4ykX61IGRIB38CC6/sImQ==}
@@ -5328,6 +5337,8 @@ snapshots:
       ioredis: 5.11.1
 
   '@types/json-schema@7.0.15': {}
+
+  '@types/luxon@3.7.2': {}
 
   '@types/methods@1.1.4': {}
 
