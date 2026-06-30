@@ -79,6 +79,12 @@ async function readSeedBody(key: string, locale: string): Promise<string | null>
 }
 
 /** Siembra los documentos faltantes. Devuelve cuántos se crearon. Idempotente. */
+// Mínimo legal que DEBE forzarse en cuentas nuevas (abre el modal de aceptación). El resto se siembra
+// `soft` (informativo). Decisión de producto (PM): un webmail nuevo debe exigir Términos + Privacidad
+// antes de usarse. Es seguro para deploys EXISTENTES: el seeder es idempotente (no re-siembra si ya
+// existen), así que sólo afecta instalaciones FRESCAS. El admin puede ajustarlo desde el editor.
+const SEED_BLOCKING_KEYS = new Set(['terms-of-service', 'privacy-policy']);
+
 export async function seedComplianceDocuments(tenantId = 'default'): Promise<number> {
   let created = 0;
   for (const spec of SEEDS) {
@@ -99,7 +105,8 @@ export async function seedComplianceDocuments(tenantId = 'default'): Promise<num
         key: spec.key,
         category: spec.category,
         title: spec.titles.es,
-        enforcement: 'soft', // conservador: no bloquea
+        // Términos + Privacidad bloquean (abren el modal en cuenta nueva); el resto informativo.
+        enforcement: SEED_BLOCKING_KEYS.has(spec.key) ? 'block_full' : 'soft',
         audience: 'all',
         order: spec.order,
         defaultLocale: 'es',
