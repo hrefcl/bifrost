@@ -17,6 +17,9 @@ vi.mock('livekit-server-sdk', () => {
       return {};
     }
     async deleteRoom(_n: string): Promise<void> {}
+    async listRooms(): Promise<unknown[]> {
+      return [];
+    }
   }
   return { AccessToken, RoomServiceClient };
 });
@@ -446,6 +449,134 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
       (JSON.parse(asAdmin.body) as { settings: { maxParticipants: number } }).settings
         .maxParticipants
     ).toBe(12);
+  });
+
+  // ---- F3.7: LiveKit externo/Cloud — credenciales DB + DTO + test endpoint ----
+  async function asAdmin(email: string) {
+    const { user } = await seedUserWithAccount({ email });
+    await User.updateOne({ _id: user._id }, { $set: { role: 'admin' } });
+    return user;
+  }
+
+  it('GET admin NUNCA expone el secret; PATCH set→hasApiSecret+livekitSource db; clear→env (F3.7)', async () => {
+    const u = await asAdmin('admin@test.com');
+    const h = authHeaders(app, u._id.toString());
+    // SET key+secret (DB).
+    const set = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: {
+        enabled: true,
+        wsUrl: 'wss://x.livekit.cloud',
+        publicBaseUrl: 'https://webmail.test',
+        livekitApiKey: 'CLOUDKEY',
+        livekitApiSecret: 'cloudsecret',
+        livekitApiUrl: 'https://x.livekit.cloud',
+      },
+    });
+    expect(set.statusCode).toBe(200);
+    const s1 = JSON.parse(set.body).settings as Record<string, unknown>;
+    expect(s1.hasApiSecret).toBe(true);
+    expect(s1.livekitSource).toBe('db');
+    expect(s1.livekitApiKey).toBe('CLOUDKEY');
+    // El secreto (plano o cifrado) NUNCA sale.
+    expect(JSON.stringify(s1)).not.toContain('cloudsecret');
+    expect(JSON.stringify(s1)).not.toContain('ciphertext');
+    expect('livekitApiSecret' in s1).toBe(false);
+    expect('livekitApiSecretEnc' in s1).toBe(false);
+
+    // GET admin: idem (sin secreto).
+    const get = await app.inject({ method: 'GET', url: '/api/admin/meet/settings', headers: h });
+    const sg = JSON.parse(get.body).settings as Record<string, unknown>;
+    expect(sg.hasApiSecret).toBe(true);
+    expect(JSON.stringify(sg)).not.toContain('cloudsecret');
+
+    // PATCH preserve (omitir secret): hasApiSecret sigue true.
+    const pres = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { region: 'sa-east-1' },
+    });
+    expect((JSON.parse(pres.body).settings as Record<string, unknown>).hasApiSecret).toBe(true);
+
+    // CLEAR (secret=''): borra par DB → vuelve a env (el test tiene LIVEKIT_* en env → source 'env').
+    const clr = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { livekitApiSecret: '' },
+    });
+    const sc = JSON.parse(clr.body).settings as Record<string, unknown>;
+    expect(sc.hasApiSecret).toBe(false);
+    expect(sc.livekitSource).toBe('env');
+    expect(sc.livekitApiKey).toBeUndefined();
+  });
+
+  it('PATCH key="" → limpia el par DB completo (no deja secretEnc huérfano) — review C-F1/D-005', async () => {
+    const u = await asAdmin('admin-clearkey@test.com');
+    const h = authHeaders(app, u._id.toString());
+    // Set par DB completo.
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { livekitApiKey: 'DBKEY', livekitApiSecret: 'dbsecret' },
+    });
+    // CLEAR vía key vacía (sin mandar secret): debe acoplar y borrar AMBOS → vuelve a env.
+    const clr = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { livekitApiKey: '' },
+    });
+    const sc = JSON.parse(clr.body).settings as Record<string, unknown>;
+    expect(sc.hasApiSecret).toBe(false); // DTO honesto: no miente con un secretEnc huérfano.
+    expect(sc.livekitSource).toBe('env');
+    expect(sc.livekitApiKey).toBeUndefined();
+    // Persistido: el GET tampoco reporta secret.
+    const get = await app.inject({ method: 'GET', url: '/api/admin/meet/settings', headers: h });
+    expect((JSON.parse(get.body).settings as Record<string, unknown>).hasApiSecret).toBe(false);
+  });
+
+  it('PATCH secret sin key → 400; apiUrl inválido → 400', async () => {
+    const u = await asAdmin('admin2@test.com');
+    const h = authHeaders(app, u._id.toString());
+    const noKey = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { livekitApiSecret: 'x' }, // sin key y sin key previa
+    });
+    expect(noKey.statusCode).toBe(400);
+    const badUrl = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { livekitApiUrl: 'ftp://evil@host/path' },
+    });
+    expect(badUrl.statusCode).toBe(400);
+  });
+
+  it('POST /api/admin/meet/test → categoría (admin-only, sin secreto en respuesta)', async () => {
+    const u = await asAdmin('admin3@test.com');
+    const h = authHeaders(app, u._id.toString());
+    // Con LIVEKIT_* en env + el mock de RoomServiceClient.listRooms → reachable.
+    await enableMeet();
+    const res = await app.inject({ method: 'POST', url: '/api/admin/meet/test', headers: h, payload: {} });
+    expect(res.statusCode).toBe(200);
+    const b = JSON.parse(res.body) as { ok: boolean; category: string };
+    expect(b.ok).toBe(true);
+    expect(b.category).toBe('reachable');
+    // apiUrl inválido → categoría invalid (no intenta conectar).
+    const bad = await app.inject({
+      method: 'POST',
+      url: '/api/admin/meet/test',
+      headers: h,
+      payload: { livekitApiKey: 'k', livekitApiSecret: 's', livekitApiUrl: 'http://169.254.169.254' },
+    });
+    expect((JSON.parse(bad.body) as { category: string }).category).toBe('invalid');
   });
 
   // ---- rotate / delete ----

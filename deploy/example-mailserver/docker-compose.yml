@@ -126,6 +126,9 @@ services:
       LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-}
       LIVEKIT_API_URL: ${LIVEKIT_API_URL:-http://livekit:7880}
       MEET_PUBLIC_BASE_URL: ${MEET_PUBLIC_BASE_URL:-}
+      # Flag de "Meet provisionado" (capacidad de infra): el provisioner lo setea al habilitar Meet. Gobierna
+      # el aflojamiento de la CSP a `wss:` (api+web) para permitir config runtime del LiveKit desde el admin.
+      MEET_PROVISIONED: ${MEET_PROVISIONED:-}
     secrets: [jwt_secret, encryption_key]
     networks: [mailnet]
 
@@ -135,15 +138,15 @@ services:
     restart: unless-stopped
     depends_on: [api]
     environment:
-      # CSP deploy-time: con Meet ON el connect-src del SPA suma ` <LIVEKIT_WS_URL>` (espacio líder solo si
-      # está seteado) → Meet OFF deja la CSP byte-idéntica (`connect-src 'self'`). El SPA es el documento que
-      # abre el wss, así que ESTA CSP (no la de helmet del API) es la que lo habilita; se deriva de la MISMA
-      # var que dialea el SDK (`LIVEKIT_WS_URL`) → una sola fuente, sin acoplamiento de 3 vars (review C-F1).
-      # COMILLAS DOBLES (review B-HIGH). Nota: `compose-go` interpola post-parse-YAML, así que técnicamente
-      # las simples también interpolan; usamos dobles por claridad/consistencia con la review. El
-      # `# prettier-ignore` evita que el formatter (singleQuote:true) las revierta.
+      # CSP deploy-time del SPA: cuando Meet está PROVISIONADO (flag `MEET_PROVISIONED`, lo setea el provisioner
+      # al habilitar la capacidad Meet — INDEPENDIENTE del wsUrl y del toggle DB), el connect-src suma ` wss:`
+      # → el admin puede apuntar a CUALQUIER LiveKit (bundled/externo/Cloud) EN RUNTIME desde el panel SIN
+      # redeploy (review F3.7 B-H1/D-H1; `script-src 'self'` ya contiene el XSS real → aflojamiento marginal y
+      # deploy-gated). Meet NO provisionado → `connect-src 'self'` byte-idéntico. El SPA es el documento que abre
+      # el wss → ESTA CSP (no la de helmet del API) es la que lo habilita.
+      # COMILLAS DOBLES (review B-HIGH); `# prettier-ignore` evita que el formatter las revierta a simples.
       # prettier-ignore
-      MEET_CSP_CONNECT: "${LIVEKIT_WS_URL:+ }${LIVEKIT_WS_URL:-}"
+      MEET_CSP_CONNECT: "${MEET_PROVISIONED:+ wss:}"
     labels:
       - traefik.enable=true
       - traefik.http.routers.bifrost.rule=Host(`webmail.example.com`) # ← tu dominio webmail

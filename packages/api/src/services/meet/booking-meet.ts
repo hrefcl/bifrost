@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type mongoose from 'mongoose';
-import type { MeetSettings } from '@webmail6/shared';
+import type { StoredMeetSettings } from './settings.js';
 import { MeetRoom, type IMeetRoom } from '../../models/MeetRoom.js';
 import { closeLiveKitRoom, clampMaxParticipants } from './token-service.js';
 
@@ -47,7 +47,7 @@ export async function createBookingMeetRoom(params: {
   userId: mongoose.Types.ObjectId;
   name: string;
   endAt: Date;
-  settings: MeetSettings;
+  settings: StoredMeetSettings;
 }): Promise<BookingMeetRoom> {
   const { bookingId, userId, name, endAt, settings } = params;
 
@@ -156,7 +156,7 @@ export async function migrateMeetRoomToBooking(params: {
  */
 export async function closeMeetRoomForBooking(params: {
   bookingId: mongoose.Types.ObjectId;
-  settings: MeetSettings;
+  settings: StoredMeetSettings;
 }): Promise<void> {
   const { bookingId, settings } = params;
   const room = await MeetRoom.findOneAndUpdate(
@@ -167,6 +167,6 @@ export async function closeMeetRoomForBooking(params: {
   if (room) await closeLiveKitRoom(settings, room.slug);
 }
 
-function meetUrlFor(settings: MeetSettings, slug: string): string {
+function meetUrlFor(settings: StoredMeetSettings, slug: string): string {
   return `${settings.publicBaseUrl.replace(/\/+$/, '')}/meet/${slug}`;
 }

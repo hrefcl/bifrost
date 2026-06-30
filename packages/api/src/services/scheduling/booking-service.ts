@@ -4,7 +4,7 @@ import { withLock } from '../../lib/withLock.js';
 import { Booking, type IBooking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
 import { type IEventType } from '../../models/EventType.js';
-import { getMeetSettings } from '../meet/settings.js';
+import { getStoredMeetSettings } from '../meet/settings.js';
 import { meetEnabled } from '../meet/token-service.js';
 import {
   createBookingMeetRoom,
@@ -245,7 +245,7 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
   // se preasigna para que la `MeetRoom` referencie el `bookingId` ANTES de `Booking.create`, y la URL se
   // hornea en el snapshot inmutable (link estable; el worker de email/ICS lo lee tal cual; reschedule lo
   // hereda). La lectura de settings va fuera del lock (read-only). (review C-H1/C-H2, DESIGN §6)
-  const meetSettings = await getMeetSettings();
+  const meetSettings = await getStoredMeetSettings();
   const wantMeet = eventType.meetEnabled === true && meetEnabled(meetSettings);
   const bookingId = new mongoose.Types.ObjectId();
 
@@ -453,7 +453,7 @@ export async function cancelBooking(
  */
 export async function safeCloseMeetRoom(bookingId: mongoose.Types.ObjectId): Promise<void> {
   try {
-    const meetSettings = await getMeetSettings();
+    const meetSettings = await getStoredMeetSettings();
     await closeMeetRoomForBooking({ bookingId, settings: meetSettings });
   } catch (err) {
     console.error(`[meet] cierre de sala al cancelar falló (no-fatal): ${(err as Error).message}`);

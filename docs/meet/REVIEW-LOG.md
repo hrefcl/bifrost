@@ -110,8 +110,26 @@ Implementado: `deploy/example-mailserver/livekit.yaml` (single-node: mux 7882, t
 ## ⭐ NUEVO ALCANCE PM (2026-06-30) → F3.7: LiveKit EXTERNO / Cloud configurable desde el admin
 El operador podrá apuntar Meet a un LiveKit **externo self-hosted** o **LiveKit Cloud (pago)** desde el panel admin (URL wss + API key/secret + región + límites + "Probar conexión"), además del bundled (F3.4). Decisiones PM: **modo auto por URL** · **grabación solo Cloud/Egress** (self-hosted=roadmap) · **mergear PR #30 (rediseño /admin) primero, luego rebasar Meet** y construir el panel como sección de la consola nueva. **Habilitador backend (independiente de PR #30)**: `apiKey/apiSecret/apiUrl/region` → MeetSettings (DB), token-service lee DB→env-fallback, + endpoint "test connection". Ver corrección/changelog v2.4 en `DESIGN.md`.
 
+## F3.7-backend — LiveKit externo/Cloud: credenciales en MeetSettings (DB) + test-connection
+Implementado: `services/meet/settings.ts` (StoredMeetSettings interno con `livekitApiSecretEnc` cifrado AES-GCM; `getStoredMeetSettings`/`setMeetSettings` con PATCH 3-semánticas: omitir=preserva, `''`=CLEAR atómico key+secret, valor=cifra) · `token-service.ts` refactor (`resolveLivekitCreds` DB-XOR-env atómico + decrypt fail-closed→`error`; `meetEnabled` presence-based total no-throw; `issueAccessToken`/`ensureRoom`/`closeLiveKitRoom` toman StoredMeetSettings) · `routes/meet.ts` (DTO admin allowlist sin secret; PATCH valida secret-requiere-key→400, apiUrl vía `isSafeS3Endpoint`→400; `POST /test` admin+rate-limit 5/min `skipOnError:false`+timeout 3s+categoría) · CSP `wss:` gated por `MEET_PROVISIONED` (deploy flag) en `app.ts` · DTO compartido `MeetSettings` gana `hasApiSecret`/`livekitSource` (secret NUNCA en el shared type). **366 tests api + typecheck + lint limpios; backward-compat total (deploys env-only intactos vía fallback).**
+
+### Gate de diseño F3.7 (Fase 2, 3 rondas) — **APROBADO** ✅
+Resolvió honestamente la arquitectura CSP estática-nginx vs runtime: provisionar Meet (`MEET_PROVISIONED`) afloja la CSP a `wss:` una vez; "sin redeploy" aplica a cambiar server/creds/Cloud después. Correcciones de C: decrypt es SÍNCRONO (B/D dijeron async) → `resolveLivekitCreds` no necesita ser async; `meetEnabled` presence-based (no desencripta en la ruta unauth `/config/public`).
+
+### QA F3.7-backend (impl)
+| Reviewer | Veredicto | HIGH | Hallazgos |
+|----------|-----------|------|-----------|
+| C (z/GLM) | **APPROVE — merge** | **0** | C-F1 (DTO honesty, orphan secretEnc) · C-F2/F3/F4 (NIT) |
+| D (Kimi) | **7.5 APROBADO C/OBS** | **0** | D-002 (MED, F3.5) · D-001/003/004/005 (LOW) |
+| B (Codex) | *en vuelo* | — | — |
+
+**Fixes aplicados (C+D, mismo diff)**: **D-001** `/test` apiUrl `replace(/^ws(s?):\/\//i,'http$1://')` preserva la `s` (Cloud TLS) · **D-003** `/test` rate-limit `skipOnError:false` · **C-F1/D-005** `livekitApiKey:''` acopla el CLEAR del secret (`setMeetSettings`) **+** `hasApiSecret` ⟺ par DB usable (`key.trim() && secretEnc`) → DTO no miente con huérfanos legacy (+test nuevo `key=""`→limpia ambos) · **C-F2** timer del race se limpia en `finally` · **C-F3** categoría: solo `401`/`unauthorized` (no `invalid`, que aparece en errores de red) · **C-F4** fixture `token-service.test.ts` con `hasApiSecret`/`livekitSource`.
+**Residual (auto-auditoría 2026-06-30, LOW)**: en `POST /test`, si el body trae `livekitApiKey+livekitApiSecret` pero OMITE `livekitApiUrl`, el apiUrl cae a `stored.livekitApiUrl/wsUrl` → probaría el server guardado/bundled con las creds candidatas (resultado engañoso). Mitigado por contrato: el panel admin (F3.7-frontend, aún no construido → define el contrato) manda siempre la URL al probar un candidato. Si B lo marca, endurecer (candidato con key+secret ⇒ exige `livekitApiUrl`, sin fallback a stored). Por ahora documentado.
+**Diferido**: **D-002 (MED)** el provisioner no setea `MEET_PROVISIONED` → **acceptance criterion de F3.5** (el plumbing del compose/template ya está; solo falta que el CLI lo ponga =1 al habilitar Meet) · **D-004/C-F2** el race no aborta el `listRooms()` del SDK (no expone AbortSignal) → documentado en código (admin-only+5/min acotan el blast). Aceptados-by-design: CSP `wss:` scheme-source (deploy-gated), SSRF metadata vía DNS-rebinding (admin=operador, principio self-hosted/no-babysitting), RMW race del singleton settings (pre-existente).
+
 ## Próximos pasos
-1. **F3.7 diseño** (Fase 2 + B/C/D): LiveKit externo/Cloud + credenciales DB-editables + panel admin.
-2. F3.5 provisioner (sigue la CORRECCIÓN F3.4 del DESIGN, no las líneas viejas) · F3.6 docs.
+1. **F3.7-backend**: cerrar B (Codex) impl QA ≥9/0 HIGH sobre el diff con fixes → commit.
+2. **F3.7-frontend**: panel admin LiveKit como sección de la consola nueva (requiere PR #30 mergeado + rebase Meet).
+3. F3.5 provisioner (sigue la CORRECCIÓN F3.4 del DESIGN + setea `MEET_PROVISIONED` per D-002) · F3.6 docs.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.

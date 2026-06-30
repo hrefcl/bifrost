@@ -544,6 +544,28 @@ export interface MeetSettings {
   branding?: { displayName?: string };
   auditEnabled: boolean;
   recordingPolicy: 'disabled';
+  // --- LiveKit externo/Cloud (F3.7) — configurable desde el admin ---
+  /** API key de LiveKit (id público; el secret va aparte, cifrado, NUNCA en este DTO). */
+  livekitApiKey?: string;
+  /** URL HTTP server-to-server de la API LiveKit (bundled=http://livekit:7880, Cloud=su URL). */
+  livekitApiUrl?: string;
+  /** Región (metadato de LiveKit Cloud; informativo). */
+  region?: string;
+  /** Resolución máxima sugerida ('720p'|'1080p'); informativo. */
+  maxResolution?: '720p' | '1080p';
+  /** Intención de grabación automática. NO-OP en self-hosted (requiere Cloud/Egress) — ver `livekitSource`. */
+  autoRecord?: boolean;
+  /** Crear salas bajo demanda al primer participante (ya es el comportamiento via grant roomCreate). */
+  onDemand?: boolean;
+  /** ¿Hay un API secret guardado? (el secreto JAMÁS se devuelve; solo su presencia). */
+  hasApiSecret: boolean;
+  /**
+   * De dónde salen las credenciales EFECTIVAS de LiveKit:
+   * 'db' = par admin (DB) válido · 'env' = fallback de entorno (par DB ausente/parcial) ·
+   * 'error' = par DB presente pero NO desencriptable (ENCRYPTION_KEY rotada → Meet falla cerrado, el admin debe re-pegar) ·
+   * 'none' = sin credenciales en ningún lado.
+   */
+  livekitSource: 'db' | 'env' | 'error' | 'none';
 }
 
 /** Config pública leída por la SPA en el boot (sin auth, sin secretos). */

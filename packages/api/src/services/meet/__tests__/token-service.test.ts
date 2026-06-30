@@ -19,6 +19,8 @@ const SETTINGS: MeetSettings = {
   allowExternal: true,
   auditEnabled: true,
   recordingPolicy: 'disabled',
+  hasApiSecret: false,
+  livekitSource: 'env',
 };
 
 describe('buildGrants — matriz de permisos por rol', () => {

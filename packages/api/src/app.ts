@@ -81,12 +81,14 @@ export async function buildApp() {
     done();
   });
 
-  // CSP. `connect-src` suma el origen wss de Meet (= `LIVEKIT_WS_URL`, el MISMO target que dialea el SDK)
-  // SÓLO si está configurado (deploy-time, no DB-runtime; review D-H1/B-MED): con Meet OFF la CSP es
-  // byte-idéntica a hoy. Esta CSP de helmet aplica a respuestas del API; la del SPA (nginx) es la que
-  // realmente habilita el wss del documento (review C-F1/F3: una sola var `LIVEKIT_WS_URL` gobierna ambas).
-  const meetWsOrigin = (process.env.LIVEKIT_WS_URL ?? '').trim();
-  const connectSrc = ["'self'", ...(meetWsOrigin ? meetWsOrigin.split(/\s+/) : [])];
+  // CSP. Cuando Meet está PROVISIONADO (flag deploy-time `MEET_PROVISIONED`, lo setea el provisioner al
+  // habilitar la capacidad Meet — NO depende del wsUrl ni del toggle DB), `connect-src` suma `wss:` para
+  // permitir que el admin apunte a CUALQUIER LiveKit (bundled/externo/Cloud) EN RUNTIME sin redeploy
+  // (review F3.7 B-H1/D-H1). `script-src 'self'` ya contiene el vector XSS real → el aflojamiento a `wss:`
+  // es marginal y deploy-gated. Meet NO provisionado → `'self'` byte-idéntico. Esta CSP de helmet aplica a
+  // respuestas del API; la del SPA (nginx) es la que realmente habilita el wss del documento — NO alinearlas.
+  const meetProvisioned = (process.env.MEET_PROVISIONED ?? '').trim().length > 0;
+  const connectSrc = ["'self'", ...(meetProvisioned ? ['wss:'] : [])];
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {

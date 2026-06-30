@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getMeetSettings } from '../services/meet/settings.js';
+import { getStoredMeetSettings } from '../services/meet/settings.js';
 import { meetEnabled } from '../services/meet/token-service.js';
 
 /**
@@ -12,7 +12,7 @@ export default function configRoutes(fastify: FastifyInstance) {
   // Config pública de la SPA (imagen estática genérica → runtime, no `import.meta.env`; review D-M4).
   // Expone si Meet está activo y a qué wsUrl/base conectarse. Sin secretos.
   fastify.get('/public', { config: { requiresAuth: false } }, async () => {
-    const settings = await getMeetSettings();
+    const settings = await getStoredMeetSettings();
     const on = meetEnabled(settings);
     return {
       meetEnabled: on,

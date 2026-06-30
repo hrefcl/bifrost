@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import type mongoose from 'mongoose';
 import { AccessToken, RoomServiceClient, type VideoGrant } from 'livekit-server-sdk';
-import type { MeetSettings } from '@webmail6/shared';
 import type { IMeetRoom } from '../../models/MeetRoom.js';
 import { Booking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
+import { decrypt } from '../../config/crypto.js';
+import type { StoredMeetSettings } from './settings.js';
 
 /**
  * Servicio de tokens y salas de Bifrost Meet.
@@ -31,36 +32,74 @@ const PERSONAL_TTL_CAP_SEC = 12 * 3600; // techo de salas personales (sin ventan
 const EMPTY_TIMEOUT_SEC = 5 * 60; // LiveKit cierra la sala tras 5m vacía
 const ENSURE_ROOM_TIMEOUT_MS = 3000; // ensureRoom time-boxed (no acopla el token a LiveKit)
 
+/** Credenciales LiveKit RESUELTAS de una sola fuente (DB-XOR-env, atómicas — review F3.7 C-M1). */
+export type LivekitCreds =
+  | { source: 'db' | 'env'; key: string; secret: string; apiUrl: string }
+  | { source: 'error' } // par DB presente pero NO desencriptable (ENCRYPTION_KEY rotada) — falla cerrado
+  | { source: 'none' }; // sin credenciales en ningún lado
+
+function deriveApiUrl(wsUrl: string): string {
+  return wsUrl.replace(/^ws(s?):\/\//i, 'http$1://');
+}
+
+/** Devuelve `explicit` si es no-vacío (tras trim), si no deriva el apiUrl del wsUrl. (`||` no se puede:
+ *  el fallback es por string VACÍO, no solo null — `??` no lo cubre.) */
+function apiUrlOrDerive(explicit: string | undefined, wsUrl: string): string {
+  const t = explicit?.trim();
+  return t && t.length > 0 ? t : deriveApiUrl(wsUrl);
+}
+
 /**
- * ¿Está la feature realmente operativa? Exige el flag del admin, credenciales LiveKit, Y las URLs públicas
- * configuradas (review D-005): sin `publicBaseUrl`/`wsUrl` no se puede hornear un link de unión válido ni
- * conectar el SDK → la feature NO está realmente lista aunque el flag esté en true.
+ * Resuelve el TRIPLE {key, secret, apiUrl} desde UNA sola fuente (review F3.7 C-M1/B/D), SÍNCRONO:
+ *  - Par DB COMPLETO (`livekitApiKey` + `livekitApiSecretEnc`) → DB (decrypt). Si el decrypt LANZA
+ *    (tag GCM no verifica = ENCRYPTION_KEY rotada) → `{source:'error'}`, NUNCA aliasa a env (review C-M2).
+ *  - Par DB ausente o PARCIAL → env (fallback/bootstrap; backward-compat F3.1–F3.4).
+ *  - Nada → `{source:'none'}`.
+ * NUNCA mezcla key DB con apiUrl env ni viceversa.
  */
-export function meetEnabled(settings: MeetSettings): boolean {
-  return (
-    settings.enabled &&
-    hasLivekitCredentials() &&
-    settings.publicBaseUrl.trim().length > 0 &&
-    settings.wsUrl.trim().length > 0
+export function resolveLivekitCreds(s: StoredMeetSettings): LivekitCreds {
+  const dbKey = s.livekitApiKey?.trim();
+  if (dbKey && s.livekitApiSecretEnc) {
+    let secret: string;
+    try {
+      secret = decrypt(s.livekitApiSecretEnc);
+    } catch {
+      return { source: 'error' };
+    }
+    return { source: 'db', key: dbKey, secret, apiUrl: apiUrlOrDerive(s.livekitApiUrl, s.wsUrl) };
+  }
+  const envKey = process.env.LIVEKIT_API_KEY?.trim();
+  const envSecret = process.env.LIVEKIT_API_SECRET?.trim();
+  if (envKey && envSecret) {
+    return {
+      source: 'env',
+      key: envKey,
+      secret: envSecret,
+      apiUrl: apiUrlOrDerive(process.env.LIVEKIT_API_URL, s.wsUrl),
+    };
+  }
+  return { source: 'none' };
+}
+
+/** Fuente efectiva (para el DTO admin). NO expone credenciales. */
+export function livekitSourceOf(s: StoredMeetSettings): 'db' | 'env' | 'error' | 'none' {
+  return resolveLivekitCreds(s).source;
+}
+
+/**
+ * ¿Está la feature realmente operativa? TOTAL y boolean explícito — JAMÁS lanza (se llama en
+ * `/api/config/public` SIN auth). Chequea PRESENCIA de credenciales (par DB presente OR par env presente),
+ * NO desencripta (review F3.7 C-M2/C-L1): el decrypt y el fail-closed ocurren al emitir token. Exige
+ * además el flag del admin + `wsUrl`/`publicBaseUrl` (sin ellos no hay link ni signaling — review D-005).
+ */
+export function meetEnabled(s: StoredMeetSettings): boolean {
+  if (!s.enabled) return false;
+  if (s.wsUrl.trim().length === 0 || s.publicBaseUrl.trim().length === 0) return false;
+  const dbPresent = Boolean(s.livekitApiKey?.trim() && s.livekitApiSecretEnc);
+  const envPresent = Boolean(
+    process.env.LIVEKIT_API_KEY?.trim() && process.env.LIVEKIT_API_SECRET?.trim()
   );
-}
-
-export function hasLivekitCredentials(): boolean {
-  return Boolean(process.env.LIVEKIT_API_KEY?.trim() && process.env.LIVEKIT_API_SECRET?.trim());
-}
-
-function livekitCredentials(): { key: string; secret: string } {
-  const key = process.env.LIVEKIT_API_KEY?.trim();
-  const secret = process.env.LIVEKIT_API_SECRET?.trim();
-  if (!key || !secret) throw new Error('LIVEKIT_API_KEY/SECRET ausentes');
-  return { key, secret };
-}
-
-/** URL HTTP interna de la API de LiveKit (Twirp). Default: deriva de la wsUrl (`wss://`→`https://`). */
-function livekitApiUrl(settings: MeetSettings): string {
-  const explicit = process.env.LIVEKIT_API_URL?.trim();
-  if (explicit) return explicit;
-  return settings.wsUrl.replace(/^ws(s?):\/\//i, 'http$1://');
+  return dbPresent || envPresent;
 }
 
 /** Identidad opaca, no derivada del nombre visible (review B/D). */
@@ -147,7 +186,7 @@ export type AuthzResult =
 export function authorizeAndComputeTtl(params: {
   room: Pick<IMeetRoom, 'mode' | 'allowExternalOverride'>;
   backing: Backing | null;
-  settings: MeetSettings;
+  settings: Pick<StoredMeetSettings, 'maxDurationMinutes' | 'allowExternal'>;
   role: MeetRole;
   now: number;
 }): AuthzResult {
@@ -194,19 +233,31 @@ export function authorizeAndComputeTtl(params: {
   return { allowed: true, ttlSeconds };
 }
 
-/** Emite el AccessToken JWT firmado. `displayName` va como metadata (Participant.name), no como id. */
+/**
+ * Emite el AccessToken JWT firmado con las credenciales RESUELTAS (DB-XOR-env). Si no hay credenciales
+ * usables (`source` 'error'/'none') LANZA `LivekitCredsError` → el caller responde 503 (fail-closed —
+ * review F3.7 B/C-H2: un par DB indesencriptable NO mintea con creds env equivocadas).
+ */
+export class LivekitCredsError extends Error {
+  constructor(public source: 'error' | 'none') {
+    super(`livekit creds unavailable (source=${source})`);
+  }
+}
+
 export async function issueAccessToken(params: {
+  settings: StoredMeetSettings;
   role: MeetRole;
   slug: string;
   identity: string;
   displayName: string;
   ttlSeconds: number;
 }): Promise<string> {
-  const { key, secret } = livekitCredentials();
+  const creds = resolveLivekitCreds(params.settings);
+  if (creds.source !== 'db' && creds.source !== 'env') throw new LivekitCredsError(creds.source);
   // Guardia dura: NUNCA pasar ttl<1 al SDK (un `0` falsy se reemplaza por su default ≫ tope — B-HIGH).
   // El authorizer ya garantiza ttl≥1; esto es defensa-en-profundidad por si cambia el caller.
   const ttl = Math.max(1, Math.floor(params.ttlSeconds));
-  const at = new AccessToken(key, secret, {
+  const at = new AccessToken(creds.key, creds.secret, {
     identity: params.identity,
     name: params.displayName,
     ttl,
@@ -221,13 +272,13 @@ export async function issueAccessToken(params: {
  * primer join). `maxParticipants` ya viene clampeado al techo global por el caller.
  */
 export async function ensureRoom(
-  settings: MeetSettings,
+  settings: StoredMeetSettings,
   slug: string,
   maxParticipants: number
 ): Promise<void> {
-  if (!hasLivekitCredentials()) return;
-  const { key, secret } = livekitCredentials();
-  const client = new RoomServiceClient(livekitApiUrl(settings), key, secret);
+  const creds = resolveLivekitCreds(settings);
+  if (creds.source !== 'db' && creds.source !== 'env') return; // sin creds usables → no-op (no-fatal)
+  const client = new RoomServiceClient(creds.apiUrl, creds.key, creds.secret);
   const op = client.createRoom({
     name: slug,
     emptyTimeout: EMPTY_TIMEOUT_SEC,
@@ -241,10 +292,10 @@ export async function ensureRoom(
 }
 
 /** Cierra la sala en LiveKit (desconecta activos). Best-effort, no-fatal. */
-export async function closeLiveKitRoom(settings: MeetSettings, slug: string): Promise<void> {
-  if (!hasLivekitCredentials()) return;
-  const { key, secret } = livekitCredentials();
-  const client = new RoomServiceClient(livekitApiUrl(settings), key, secret);
+export async function closeLiveKitRoom(settings: StoredMeetSettings, slug: string): Promise<void> {
+  const creds = resolveLivekitCreds(settings);
+  if (creds.source !== 'db' && creds.source !== 'env') return;
+  const client = new RoomServiceClient(creds.apiUrl, creds.key, creds.secret);
   try {
     await withTimeout(client.deleteRoom(slug), ENSURE_ROOM_TIMEOUT_MS);
   } catch {
@@ -253,7 +304,7 @@ export async function closeLiveKitRoom(settings: MeetSettings, slug: string): Pr
 }
 
 /** Clampa el cap por-sala al techo global de MeetSettings (review D-caveat). */
-export function clampMaxParticipants(roomMax: number, settings: MeetSettings): number {
+export function clampMaxParticipants(roomMax: number, settings: Pick<StoredMeetSettings, 'maxParticipants'>): number {
   return Math.max(2, Math.min(roomMax, settings.maxParticipants));
 }
 

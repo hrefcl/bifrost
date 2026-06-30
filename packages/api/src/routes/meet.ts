@@ -1,8 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
+import { RoomServiceClient } from 'livekit-server-sdk';
 import { MeetRoom, serializeMeetRoom, type IMeetRoom } from '../models/MeetRoom.js';
-import { getMeetSettings, setMeetSettings } from '../services/meet/settings.js';
+import {
+  getStoredMeetSettings,
+  setMeetSettings,
+  type StoredMeetSettings,
+} from '../services/meet/settings.js';
 import {
   meetEnabled,
   resolveBacklink,
@@ -12,8 +17,12 @@ import {
   closeLiveKitRoom,
   clampMaxParticipants,
   makeOpaqueIdentity,
+  resolveLivekitCreds,
+  livekitSourceOf,
+  LivekitCredsError,
   type MeetRole,
 } from '../services/meet/token-service.js';
+import { isSafeS3Endpoint } from '../services/storage/s3.js';
 import { requireAdmin } from '../lib/authz.js';
 import { counters } from '../lib/metrics.js';
 import type { MeetSettings } from '@webmail6/shared';
@@ -44,10 +53,61 @@ const settingsPatchSchema = z.object({
   allowExternal: z.boolean().optional(),
   branding: z.object({ displayName: z.string().max(120).optional() }).optional(),
   auditEnabled: z.boolean().optional(),
+  // LiveKit externo/Cloud (F3.7). `livekitApiSecret`: omitido=preserva, ''=clear (couple key+secret),
+  // valor=set (se cifra). `livekitApiUrl` se valida http/https en el PATCH (anti-config rota).
+  livekitApiKey: z.string().max(256).optional(),
+  livekitApiSecret: z.string().max(512).optional(),
+  livekitApiUrl: z.string().max(512).optional(),
+  region: z.string().max(64).optional(),
+  maxResolution: z.enum(['720p', '1080p']).optional(),
+  autoRecord: z.boolean().optional(),
+  onDemand: z.boolean().optional(),
 });
+
+// Body del endpoint de prueba de conexión: usa las creds guardadas, o un candidato (sin persistir).
+const testBodySchema = z.object({
+  livekitApiUrl: z.string().max(512).optional(),
+  livekitApiKey: z.string().max(256).optional(),
+  livekitApiSecret: z.string().max(512).optional(),
+});
+
+/** DTO admin (allowlist): NUNCA expone el secret (ni plano ni cifrado). Solo `hasApiSecret`+`livekitSource`. */
+function toAdminMeetSettings(s: StoredMeetSettings): MeetSettings {
+  return {
+    enabled: s.enabled,
+    wsUrl: s.wsUrl,
+    publicBaseUrl: s.publicBaseUrl,
+    turnDomain: s.turnDomain,
+    maxParticipants: s.maxParticipants,
+    maxDurationMinutes: s.maxDurationMinutes,
+    allowExternal: s.allowExternal,
+    branding: s.branding,
+    auditEnabled: s.auditEnabled,
+    recordingPolicy: 'disabled',
+    livekitApiKey: s.livekitApiKey,
+    livekitApiUrl: s.livekitApiUrl,
+    region: s.region,
+    maxResolution: s.maxResolution,
+    autoRecord: s.autoRecord,
+    onDemand: s.onDemand,
+    // `hasApiSecret` ⟺ PAR DB estructuralmente usable (key+secret), no solo el ciphertext presente —
+    // así el DTO no miente si quedara un `secretEnc` huérfano de datos legacy (review C-F1/D-005).
+    hasApiSecret: Boolean(s.livekitApiKey?.trim() && s.livekitApiSecretEnc),
+    livekitSource: livekitSourceOf(s),
+  };
+}
 
 function newSlug(): string {
   return randomBytes(16).toString('base64url');
+}
+
+/** Primer valor no-vacío (tras trim). Fallback por string VACÍO, no solo null → `??` no lo cubre. */
+function firstNonEmpty(...vals: (string | undefined)[]): string {
+  for (const v of vals) {
+    const t = v?.trim();
+    if (t && t.length > 0) return t;
+  }
+  return '';
 }
 
 /** ¿Es una colisión de índice único sobre `slug`? (NO cualquier E11000 — review C-L2). */
@@ -69,7 +129,7 @@ function notFound(reply: FastifyReply) {
 
 function audit(
   request: { log: FastifyInstance['log'] },
-  settings: MeetSettings,
+  settings: StoredMeetSettings,
   event: string,
   data: Record<string, unknown>
 ) {
@@ -85,7 +145,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
     '/rooms',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const settings = await getMeetSettings();
+      const settings = await getStoredMeetSettings();
       if (!meetEnabled(settings)) return reply.send({ disabled: true });
       const body = createRoomSchema.parse(request.body);
       const userId = request.user.userId;
@@ -130,7 +190,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
 
   // Metadata de una sala propia.
   fastify.get('/rooms/:slug', async (request, reply) => {
-    const settings = await getMeetSettings();
+    const settings = await getStoredMeetSettings();
     if (!meetEnabled(settings)) return reply.send({ disabled: true });
     const { slug } = slugParam.parse(request.params);
     const room = await MeetRoom.findOne({ slug, userId: request.user.userId, status: 'active' });
@@ -143,7 +203,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
     '/rooms/:slug/rotate',
     { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const settings = await getMeetSettings();
+      const settings = await getStoredMeetSettings();
       if (!meetEnabled(settings)) return reply.send({ disabled: true });
       const { slug } = slugParam.parse(request.params);
       const room = await MeetRoom.findOne({ slug, userId: request.user.userId, status: 'active' });
@@ -176,7 +236,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
 
   // Cierra (soft) la sala + deleteRoom best-effort.
   fastify.delete('/rooms/:slug', async (request, reply) => {
-    const settings = await getMeetSettings();
+    const settings = await getStoredMeetSettings();
     if (!meetEnabled(settings)) return reply.send({ disabled: true });
     const { slug } = slugParam.parse(request.params);
     const room = await MeetRoom.findOne({ slug, userId: request.user.userId, status: 'active' });
@@ -193,7 +253,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
     '/rooms/:slug/token',
     { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
     async (request, reply) => {
-      const settings = await getMeetSettings();
+      const settings = await getStoredMeetSettings();
       if (!meetEnabled(settings)) return notFound(reply);
       const { slug } = slugParam.parse(request.params);
       const body = tokenBodySchema.parse(request.body ?? {});
@@ -213,7 +273,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
       config: { requiresAuth: false, rateLimit: { max: 60, timeWindow: '1 minute' } },
     },
     async (request, reply) => {
-      const settings = await getMeetSettings();
+      const settings = await getStoredMeetSettings();
       if (!meetEnabled(settings)) return notFound(reply);
       const parsed = slugParam.safeParse(request.params);
       if (!parsed.success) return notFound(reply);
@@ -257,7 +317,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      const settings = await getMeetSettings();
+      const settings = await getStoredMeetSettings();
       if (!meetEnabled(settings)) return notFound(reply);
       const parsed = slugParam.safeParse(request.params);
       if (!parsed.success) return notFound(reply);
@@ -276,7 +336,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
 async function issueForRoom(
   request: { log: FastifyInstance['log']; ip: string },
   reply: FastifyReply,
-  settings: MeetSettings,
+  settings: StoredMeetSettings,
   room: IMeetRoom,
   role: MeetRole,
   displayName?: string
@@ -298,13 +358,29 @@ async function issueForRoom(
 
   const identity = makeOpaqueIdentity(role);
   const name = (displayName ?? '').trim() || (role === 'host' ? 'Anfitrión' : 'Invitado');
-  const token = await issueAccessToken({
-    role,
-    slug: room.slug,
-    identity,
-    displayName: name,
-    ttlSeconds: authz.ttlSeconds,
-  });
+  let token: string;
+  try {
+    token = await issueAccessToken({
+      settings,
+      role,
+      slug: room.slug,
+      identity,
+      displayName: name,
+      ttlSeconds: authz.ttlSeconds,
+    });
+  } catch (err) {
+    // Credenciales LiveKit no usables (par DB indesencriptable / ausentes) → FAIL-CLOSED 503 (review
+    // F3.7 B/C-H2): no se mintea con creds equivocadas. El admin ve `livekitSource:'error'` en el panel.
+    if (err instanceof LivekitCredsError) {
+      request.log.error({ meet: 'token.creds_unavailable', source: err.source, slug: room.slug });
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: 'meet_unavailable',
+      });
+    }
+    throw err;
+  }
 
   // ensureRoom FUERA de cualquier lock y NO-bloqueante (review C-L6): fire-and-forget para no sumar
   // hasta 3s de latencia al token bajo un burst de joins. La sala igual se auto-crea al primer join
@@ -339,12 +415,105 @@ export function meetAdminRoutes(fastify: FastifyInstance) {
     await requireAdmin(request.user.userId);
   });
 
+  // GET → DTO admin (NUNCA el secret; solo hasApiSecret + livekitSource).
   fastify.get('/settings', async () => {
-    return { settings: await getMeetSettings() };
+    return { settings: toAdminMeetSettings(await getStoredMeetSettings()) };
   });
 
-  fastify.patch('/settings', async (request) => {
+  fastify.patch('/settings', async (request, reply) => {
     const patch = settingsPatchSchema.parse(request.body);
-    return { settings: await setMeetSettings(patch) };
+    // Validaciones de integridad del par/URL antes de persistir:
+    // - setear un secret (valor no vacío) exige una key (par completo) — actual o en el mismo patch.
+    if (patch.livekitApiSecret !== undefined && patch.livekitApiSecret !== '') {
+      const current = await getStoredMeetSettings();
+      const keyAfter = patch.livekitApiKey ?? current.livekitApiKey;
+      if (!keyAfter || keyAfter.trim().length === 0) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'livekit_api_key_required_with_secret',
+        });
+      }
+    }
+    // - el apiUrl, si se setea, debe ser http/https sin userinfo (anti-config rota / SSRF básico).
+    if (
+      patch.livekitApiUrl !== undefined &&
+      patch.livekitApiUrl !== '' &&
+      !isSafeS3Endpoint(patch.livekitApiUrl)
+    ) {
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'invalid_livekit_api_url' });
+    }
+    const stored = await setMeetSettings(patch);
+    return { settings: toAdminMeetSettings(stored) };
   });
+
+  // Prueba de conexión al LiveKit configurado (o un candidato sin persistir). Admin-only + rate-limit
+  // estricto (~5/min) + URL http/https sin userinfo + timeout abortable + respuesta por CATEGORÍA
+  // (nunca el mensaje raw del SDK ni el secret en logs — review F3.7 M4). NOTA: alcanza hosts internos
+  // por diseño (el livekit bundled es `http://livekit:7880`, IP privada de docker) → asume admin confiable.
+  fastify.post(
+    '/test',
+    // `skipOnError:false` (review D-003): fail-closed si el store del rate-limit falla → no se vuelve
+    // un escáner interno sin límite aunque sea admin-only.
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute', skipOnError: false } } },
+    async (request, reply) => {
+      const body = testBodySchema.parse(request.body ?? {});
+      const stored = await getStoredMeetSettings();
+      // Resolver las creds a probar: candidato del body si vino completo; si no, las efectivas guardadas.
+      let apiUrl: string;
+      let key: string;
+      let secret: string;
+      if (body.livekitApiKey && body.livekitApiSecret) {
+        // wss→https / ws→http PRESERVANDO la 's' (review D-001: `/^ws/`→'http' rompía TLS de Cloud).
+        apiUrl = firstNonEmpty(
+          body.livekitApiUrl,
+          stored.livekitApiUrl,
+          stored.wsUrl.replace(/^ws(s?):\/\//i, 'http$1://')
+        );
+        key = body.livekitApiKey;
+        secret = body.livekitApiSecret;
+      } else {
+        const creds = resolveLivekitCreds(stored);
+        if (creds.source !== 'db' && creds.source !== 'env') {
+          return reply.send({ ok: false, category: 'invalid' });
+        }
+        apiUrl = firstNonEmpty(body.livekitApiUrl, creds.apiUrl);
+        key = creds.key;
+        secret = creds.secret;
+      }
+      if (!isSafeS3Endpoint(apiUrl)) {
+        return reply.send({ ok: false, category: 'invalid' });
+      }
+      let result: { ok: boolean; category: string; activeRooms?: number };
+      // El timer del race se LIMPIA en `finally` (review C-F2: el setTimeout perdedor dejaba un timer de
+      // 3s residual). Nota: el race acota la RESPUESTA, no aborta el `listRooms()` subyacente — el SDK no
+      // expone AbortSignal; el socket queda hasta su propio timeout. Aceptable: admin-only + 5/min.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        const client = new RoomServiceClient(apiUrl, key, secret);
+        const rooms = await Promise.race([
+          client.listRooms(),
+          new Promise<never>((_, rej) => {
+            timer = setTimeout(() => {
+              rej(new Error('timeout'));
+            }, 3000);
+          }),
+        ]);
+        result = { ok: true, category: 'reachable', activeRooms: rooms.length };
+      } catch (err) {
+        // Categoría genérica — nunca el mensaje raw (delata topología) ni el secret. Solo 401/unauthorized
+        // → 'unauthorized' (review C-F3: 'invalid' aparece en errores de red → mislabel de host alcanzable).
+        const msg = err instanceof Error ? err.message.toLowerCase() : '';
+        const category =
+          msg.includes('401') || msg.includes('unauthorized') ? 'unauthorized' : 'unreachable';
+        request.log.warn({ meet: 'test.fail', category });
+        result = { ok: false, category };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      return reply.send(result);
+    }
+  );
 }
