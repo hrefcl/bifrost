@@ -2,6 +2,28 @@
 
 **Estado:** IN_REVIEW_DOC (v2.3 tras B/C/D ronda 3)
 
+> **⚠️ CORRECCIÓN F3.4 (autoritativa — sobre-escribe las menciones viejas de §3/§8).** La implementación
+> de infra (commit F3.4, B=9.0/C=9.0/D=8.5) corrigió 2 puntos que el texto original de §3/§8/§10 describe
+> mal. **F3.5 debe seguir ESTO, no las líneas viejas:**
+> - **IP externa de LiveKit**: NO existe `rtc.external_ips` en livekit v1.8.x. Se usa **`rtc.use_external_ip: true`**
+>   (autodetección STUN, válida) + un **`rtc.node_ip: <EIP>`** opcional (comentado en `livekit.yaml`) que F3.5/
+>   user-data descomenta+sustituye con la Elastic IP (vía CFN `GetAtt ElasticIP.PublicIp`, NO IMDS). Verificar
+>   el campo contra la imagen pinneada.
+> - **CSP / origen wss**: NO se usa `MEET_WS_ORIGIN`. Hay **una sola fuente: `LIVEKIT_WS_URL`** — de ella derivan
+>   la CSP del SPA (nginx, `MEET_CSP_CONNECT="${LIVEKIT_WS_URL:+ }${LIVEKIT_WS_URL:-}"`, comillas DOBLES en compose
+>   porque las simples NO interpolan) **y** el `connect-src` de helmet (api). El provisioner siembra `settings.wsUrl ← LIVEKIT_WS_URL`.
+> - Imagen pinneada concreta: `livekit/livekit-server:v1.8.4`; `nginx:1.27-alpine` en `Dockerfile.web`.
+>
+> **Changelog v2.3→v2.4 (alcance PM, 2026-06-30):** **LiveKit EXTERNO / Cloud configurable desde el admin.**
+> Además del LiveKit bundled (mismo EC2, F3.4), el operador podrá apuntar a un LiveKit **externo self-hosted** o
+> **LiveKit Cloud (pago)** desde el panel admin (mockup): URL wss + API key/secret + región + límites + "Probar
+> conexión". Decisiones PM: (1) **modo auto por URL** (sin selector explícito; si apunta al bundled→self-hosted,
+> si a otro host/*.livekit.cloud→externo). (2) **Grabación = solo Cloud/Egress** (toggle guardado; self-hosted=roadmap),
+> región/resolución informativas. (3) **Coordinación: mergear PR #30 (rediseño /admin Google-Workspace) primero,
+> luego rebasar Meet** y construir el panel como SECCIÓN de la consola nueva. **Habilitador backend (independiente
+> de PR #30): mover `apiKey/apiSecret/apiUrl/region` a MeetSettings (DB), token-service lee DB→env-fallback, +
+> endpoint "test connection".** → nueva fase F3.7 (diseño Fase 2 + B/C/D antes de implementar).
+
 > **Changelog v2.2→v2.3** (alcance PM): **pantalla compartida (screen share) entra al MVP** + **UX in-call estilo Google Meet** (grilla oscura, active-speaker spotlight, barra de control inferior con mic/cam/compartir-pantalla/salir). El grant `canPublish` ya habilita screen share (track `screen_share`) → sin permiso backend extra. Cambio aditivo de frontend (F3.3); no afecta arquitectura ni HIGHs cerrados.
 
 > **Changelog v2.1→v2.2** (cierra 1 HIGH nuevo de B + polish B/C): **readiness de user-data LOCAL/interno** (`curl --resolve meet.<dom>:443:127.0.0.1 -k` → Traefik local, NO la EIP que aún no está asociada; verificación pública post-deploy) · **backlink check en token** (404 si el `Booking`/`CalendarEvent` de respaldo falta/cancelado — orphan slug por crash) · **degraded-mode cubre CUALQUIER error de `MeetRoom.create`** (nunca aborta booking, nunca `video` sin URL); "atómico"→saga bajo lock con compensación · **TTL/expiry alineados a +30m**; `expiresAt` se hace cumplir pasivamente (LiveKit `empty_timeout` + janitor de status) · **`ensureRoom` clampa `maxParticipants` por-sala ≤ techo global** (+test).

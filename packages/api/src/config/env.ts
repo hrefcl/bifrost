@@ -82,8 +82,6 @@ const envSchema = z.object({
   LIVEKIT_API_URL: z.string().optional(),
   // Base pública de los links de unión (`https://webmail.<dom>`).
   MEET_PUBLIC_BASE_URL: z.string().optional(),
-  // Origen wss a sumar al connect-src de la CSP de helmet cuando Meet está activo (deploy-time).
-  MEET_WS_ORIGIN: z.string().optional(),
 });
 
 const partialSchema = z.object({

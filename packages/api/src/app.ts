@@ -81,10 +81,11 @@ export async function buildApp() {
     done();
   });
 
-  // CSP. `connect-src` suma el origen wss de Meet SÓLO si está configurado (deploy-time, no DB-runtime;
-  // review D-H1/B-MED): con Meet OFF la CSP es byte-idéntica a hoy. `MEET_WS_ORIGIN` lo inyecta el
-  // user-data cuando el perfil Meet se despliega (p.ej. `wss://meet.<dom> https://meet.<dom>`).
-  const meetWsOrigin = (process.env.MEET_WS_ORIGIN ?? '').trim();
+  // CSP. `connect-src` suma el origen wss de Meet (= `LIVEKIT_WS_URL`, el MISMO target que dialea el SDK)
+  // SÓLO si está configurado (deploy-time, no DB-runtime; review D-H1/B-MED): con Meet OFF la CSP es
+  // byte-idéntica a hoy. Esta CSP de helmet aplica a respuestas del API; la del SPA (nginx) es la que
+  // realmente habilita el wss del documento (review C-F1/F3: una sola var `LIVEKIT_WS_URL` gobierna ambas).
+  const meetWsOrigin = (process.env.LIVEKIT_WS_URL ?? '').trim();
   const connectSrc = ["'self'", ...(meetWsOrigin ? meetWsOrigin.split(/\s+/) : [])];
   await app.register(helmet, {
     contentSecurityPolicy: {

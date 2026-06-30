@@ -96,8 +96,22 @@ Implementado: dep `livekit-client` (chunk lazy de /meet, no infla el bundle) · 
 - **UI follow-up**: panel admin de MeetSettings, prefs "Reuniones" en Settings, checkbox en CalendarView, link en paso confirmado de PublicBooking, e2e Playwright de la llamada (necesita harness mock de LiveKit).
 - D-006 (refresh full rebuild, keys estables), C-L4 (timeout axios global), C-L7 (solo último screen-share en spotlight) — diferidos.
 
+## F3.4 — infra docker compose + livekit.yaml — APPROVED ✅ (commit en rama)
+Implementado: `deploy/example-mailserver/livekit.yaml` (single-node: mux 7882, turn udp 3478, `room.max_participants` global, `use_external_ip` + `node_ip` comentado para F3.5) · servicio `livekit` en compose (`profiles:[meet]`, imagen pinneada `v1.8.4`, publica 7881/tcp+7882/udp+3478/udp, 7880 NUNCA público (solo Traefik), `mem_limit 1g`+`cpus 1.0`) · api gana env LIVEKIT_* (defaults vacíos → Meet OFF boot OK) · CSP deploy-time (nginx template + `NGINX_ENVSUBST_FILTER`, Meet OFF byte-idéntico) · `.env.example` Meet block (todo vacío) · `nginx:1.27-alpine` pinneado. **api 349 + provisioner 64 tests verdes.**
+
+### QA F3.4 (2 rondas)
+| Ronda | B (Codex) | C (z/GLM) | D (Kimi) | Resultado |
+|-------|-----------|-----------|----------|-----------|
+| v1 | **6.0 NOT APPROVE (2 HIGH)** | APPROVE (5 nits) | 8.5 APPROVE | BLOCKED_HIGH |
+| v2 | **9.0 APPROVE** | 9.0 APPROVE | 8.5 APPROVE | **APPROVED ✅** |
+
+**2 HIGH cerrados (B)**: (1) compose con comillas SIMPLES → no interpola → `LIVEKIT_KEYS`/`MEET_CSP_CONNECT` literales (riesgo credencial estática) → comillas DOBLES; (2) `livekit.yaml` con placeholder `external_ips` falso + campo equivocado (v1.8.x usa `use_external_ip`/`node_ip`, NO `external_ips` — la DESIGN doc estaba mal, B acertó). **C-F1 (acoplamiento 3 vars wsUrl)** cerrado: colapsado a fuente única `LIVEKIT_WS_URL` (CSP web + helmet derivan de ella; `MEET_WS_ORIGIN` eliminado). Nits cerrados: nginx pinneado, max_participants comment, .env.example vacío. **DESIGN.md sincronizado** (era el último residual; evita que F3.5 resucite los bugs).
+
+## ⭐ NUEVO ALCANCE PM (2026-06-30) → F3.7: LiveKit EXTERNO / Cloud configurable desde el admin
+El operador podrá apuntar Meet a un LiveKit **externo self-hosted** o **LiveKit Cloud (pago)** desde el panel admin (URL wss + API key/secret + región + límites + "Probar conexión"), además del bundled (F3.4). Decisiones PM: **modo auto por URL** · **grabación solo Cloud/Egress** (self-hosted=roadmap) · **mergear PR #30 (rediseño /admin) primero, luego rebasar Meet** y construir el panel como sección de la consola nueva. **Habilitador backend (independiente de PR #30)**: `apiKey/apiSecret/apiUrl/region` → MeetSettings (DB), token-service lee DB→env-fallback, + endpoint "test connection". Ver corrección/changelog v2.4 en `DESIGN.md`.
+
 ## Próximos pasos
-1. **F3.4** infra: servicio `livekit` en compose (profile meet, mailnet, imagen pinneada, límites mem/cpu), `livekit.yaml`, CSP deploy-time, `.env.example`.
-2. F3.5 provisioner (CFN 2º SG + Route53 + piso instancia + user-data) · F3.6 docs.
+1. **F3.7 diseño** (Fase 2 + B/C/D): LiveKit externo/Cloud + credenciales DB-editables + panel admin.
+2. F3.5 provisioner (sigue la CORRECCIÓN F3.4 del DESIGN, no las líneas viejas) · F3.6 docs.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.
