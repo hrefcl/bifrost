@@ -39,7 +39,20 @@ export interface UserDataInput {
    * cuenta ya conoce la clave y puede cambiarla); endurecer entregándola por SSH post-deploy (deuda).
    */
   adminMailboxPassword?: string;
+  /**
+   * Habilitar Bifrost Meet (LiveKit self-hosted). Si true: genera claves LiveKit en el host, escribe
+   * `MEET_PROVISIONED=1`+`COMPOSE_PROFILES=meet`+`LIVEKIT_*` al `.env` y sustituye `node_ip` con la EIP
+   * (marcador {@link MEET_EIP_MARKER}, que CFN reemplaza por la IP real). OFF ⇒ user-data byte-idéntico.
+   */
+  enableMeet?: boolean;
 }
+
+/**
+ * Marcador que el user-data deja (sólo con Meet ON) donde va la Elastic IP para `rtc.node_ip` de
+ * LiveKit. `buildStackTemplate` lo sustituye por `GetAtt ElasticIP.PublicIp` vía `Fn::Join` (la IP la
+ * inyecta CFN, NO IMDS). No contiene `${` → atraviesa bash sin interpolar.
+ */
+export const MEET_EIP_MARKER = '@@MEET_EXTERNAL_IP@@';
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
 function sh(value: string): string {
@@ -141,8 +154,33 @@ ${
 } > .env`
     : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
 }
+${
+  input.enableMeet
+    ? `# 6.b) Bifrost Meet (LiveKit self-hosted) — activado por el provisioner. Claves LiveKit GENERADAS en
+# el host (no viajan en el user-data; api y livekit derivan de las MISMAS dos vars → el JWT valida).
+# El .env activa el profile (COMPOSE_PROFILES=meet) + el flag de provisión (MEET_PROVISIONED=1, que
+# afloja la CSP del SPA a wss: y habilita config runtime del LiveKit desde el admin). El sed pone
+# node_ip = EIP (ICE DETERMINISTA) y apaga la autodetección STUN. La EIP la inyecta CFN (Fn::Join sobre
+# el marcador), NO IMDS (el EIPAssociation asocia DESPUÉS de señalizar → IMDS daría la IP efímera).
+LIVEKIT_API_KEY="LK$(openssl rand -hex 12)"
+LIVEKIT_API_SECRET="$(openssl rand -hex 32)"
+MEET_EXTERNAL_IP="${MEET_EIP_MARKER}"
+{
+  echo "MEET_PROVISIONED=1"
+  echo "COMPOSE_PROFILES=meet"
+  echo "LIVEKIT_WS_URL=wss://meet.\${DOMAIN}"
+  echo "LIVEKIT_API_URL=http://livekit:7880"
+  echo "MEET_PUBLIC_BASE_URL=https://webmail.\${DOMAIN}"
+  echo "LIVEKIT_API_KEY=\${LIVEKIT_API_KEY}"
+  echo "LIVEKIT_API_SECRET=\${LIVEKIT_API_SECRET}"
+} >> .env
+if [ -n "$MEET_EXTERNAL_IP" ]; then
+  sed -i "s|^  # node_ip: __MEET_EXTERNAL_IP__.*|  node_ip: \${MEET_EXTERNAL_IP}|; s|^  use_external_ip: true|  use_external_ip: false|" livekit.yaml
+fi`
+    : ''
+}
 
-# 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).
+# 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web; + LiveKit si Meet).
 docker compose pull
 docker compose up -d
 
@@ -174,6 +212,19 @@ if [ -z "$ok" ]; then
   signal_fail
   exit 1
 fi
+${
+  input.enableMeet
+    ? `# Readiness Meet — LOCAL y NO-FATAL: el endpoint wss de LiveKit por Traefik debe estar ruteado. Meet
+# es OPCIONAL → un hipo NO debe tumbar el provision del correo (un CRASH de livekit ya lo atrapa el
+# check de contenedor-exited de arriba). La verificación PÚBLICA (https://meet.<dom> por DNS) es un
+# check post-deploy del CLI/outputs, no gatea cfn-signal. 426 (Upgrade Required) = router OK sin WS.
+meet_code=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 --resolve "meet.\${DOMAIN}:443:127.0.0.1" "https://meet.\${DOMAIN}/" 2>/dev/null || true)
+case "$meet_code" in
+  200|426|101) echo "bifrost-provision: Meet ruteado por Traefik (code $meet_code)" >> /var/log/bifrost-provision.log ;;
+  *) echo "AVISO: Meet aún no responde local por Traefik (code $meet_code); revisá 'docker compose logs livekit traefik'." >&2 ;;
+esac`
+    : ''
+}
 
 ${
   input.adminMailbox && input.adminMailboxPassword

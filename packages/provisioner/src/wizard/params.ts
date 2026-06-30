@@ -26,6 +26,8 @@ export interface WizardAnswers {
   sshCidr?: string;
   /** Zona Route53 para gestionar el DNS desde el stack (opt-in). Vacío = no tocar DNS. */
   hostedZoneId?: string;
+  /** Habilitar Bifrost Meet (LiveKit): 2º SG (puertos media), A meet./turn.meet., EIP→node_ip, piso. */
+  enableMeet?: boolean;
 }
 
 /** Nombre de bucket derivado del dominio (S3: minúsculas, sin puntos consecutivos, único-ish). */
@@ -51,5 +53,8 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     { key: 'S3Mode', value: a.useS3 ? 'create' : 'none' },
     { key: 'S3BucketName', value: a.useS3 ? (a.s3BucketName ?? deriveBucketName(a.domain)) : '' },
     { key: 'HostedZoneId', value: a.hostedZoneId ?? '' },
+    // 'enabled' activa el 2º SG (puertos media LiveKit), los A meet./turn.meet. y la inyección de la
+    // EIP en node_ip. Default 'disabled' → base byte-idéntica (instalación funciona igual con Meet OFF).
+    { key: 'MeetMode', value: a.enableMeet ? 'enabled' : 'disabled' },
   ];
 }

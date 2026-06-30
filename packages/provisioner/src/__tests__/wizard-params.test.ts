@@ -62,4 +62,22 @@ describe('assembleStackParams', () => {
     expect(get(p, 'ExistingSubnetId')).toBe('subnet-1');
     expect(get(p, 'SshCidr')).toBe('203.0.113.5/32');
   });
+
+  it('NUNCA incluye UserData como parámetro → el deploy DEBE embeber userData (buildStackTemplate(userData)) [B/D-HIGH F3.5]', () => {
+    // El userData se EMBEBE en el template (Fn::Base64/Fn::Join), no va como param (tope 4096 de CFN).
+    // Si el deploy construyera el template SIN userData, el param requerido `UserData` quedaría sin
+    // valor → CFN rechaza. Este invariante obliga a usar buildStackTemplate(userData) en el deploy.
+    const keys = assembleStackParams({ ...baseAnswers, enableMeet: true }).map((p) => p.key);
+    expect(keys).not.toContain('UserData');
+  });
+
+  it('MeetMode: default disabled (Meet OFF); enableMeet → enabled', () => {
+    expect(get(assembleStackParams(baseAnswers), 'MeetMode')).toBe('disabled');
+    expect(get(assembleStackParams({ ...baseAnswers, enableMeet: false }), 'MeetMode')).toBe(
+      'disabled'
+    );
+    expect(get(assembleStackParams({ ...baseAnswers, enableMeet: true }), 'MeetMode')).toBe(
+      'enabled'
+    );
+  });
 });
