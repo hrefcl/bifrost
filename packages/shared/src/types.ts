@@ -46,6 +46,8 @@ export interface User {
   displayName: string;
   role: 'user' | 'admin';
   avatarUrl?: string;
+  /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
+  username?: string;
   preferences: UserPreferences;
   createdAt: string;
   updatedAt: string;
@@ -257,6 +259,10 @@ export interface CalendarEvent {
   inviteStatus?: 'needs-action' | 'accepted' | 'declined' | 'tentative';
   status: 'confirmed' | 'tentative' | 'cancelled';
   sourceEmailId?: string;
+  /** Origen del evento. 'booking' = bloque creado por una reserva de la agenda (proyección). */
+  source?: 'manual' | 'booking';
+  /** Si `source==='booking'`: id de la Booking que lo originó (para reconciler/cancelación). */
+  bookingId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -317,4 +323,157 @@ export interface Paginated<T> {
     total?: number;
     hasMore: boolean;
   };
+}
+
+// ===================================================================================
+// Agenda inteligente (scheduling tipo Calendly nativo) — DTOs públicos del contrato.
+// Diseño aprobado B9/D9: docs/agenda-inteligente-propuesta.md + docs/agenda-ui-funcional.md.
+// Los campos server-only (managementToken hash, idempotencyKeyHash, icsUid, pendingReschedule)
+// viven SÓLO en el modelo Mongoose, nunca en estos DTOs.
+// ===================================================================================
+
+export type MeetingLocationType = 'in_person' | 'phone' | 'video' | 'custom';
+export interface MeetingLocation {
+  type: MeetingLocationType;
+  /** Dirección / teléfono / URL de videollamada según `type`. */
+  value?: string;
+}
+
+export interface CustomQuestion {
+  id: string;
+  label: string;
+  type: 'text' | 'textarea' | 'phone';
+  required: boolean;
+}
+
+/** Tipo de reunión publicable (event type, plantilla con su propio enlace). */
+export interface EventType {
+  id: string;
+  userId: string;
+  /** Único por usuario; segmento del enlace público `/u/:username/:slug`. */
+  slug: string;
+  title: string;
+  description?: string;
+  durationMinutes: number;
+  color?: string;
+  location: MeetingLocation;
+  bufferBeforeMin: number;
+  bufferAfterMin: number;
+  minimumNoticeMin: number;
+  dateRangeDays: number;
+  /** Paso de la grilla de slots; default = durationMinutes. */
+  slotIncrementMin?: number;
+  /** Máx reservas/día (cuenta por día del anfitrión, sólo confirmadas). 0/ausente = sin límite. */
+  dailyLimit?: number;
+  availabilityScheduleId: string;
+  cancellationPolicyText?: string;
+  reschedulePolicyText?: string;
+  /** Anticipación mínima (min) para cancelar/reagendar. */
+  cancelMinNoticeMin?: number;
+  customQuestions: CustomQuestion[];
+  active: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Intervalo de disponibilidad en hora de pared del anfitrión, "HH:MM" (mismo día, end>start). */
+export interface AvailabilityInterval {
+  start: string;
+  end: string;
+}
+/** Regla semanal. `weekday`: 0=Domingo … 6=Sábado (convención JS Date.getDay). */
+export interface WeeklyRule {
+  weekday: number;
+  intervals: AvailabilityInterval[];
+}
+/** Excepción de fecha ("YYYY-MM-DD"). REEMPLAZA la regla del día: `intervals:[]` = no disponible. */
+export interface AvailabilityOverride {
+  date: string;
+  intervals: AvailabilityInterval[];
+  note?: string;
+}
+export interface AvailabilitySchedule {
+  id: string;
+  userId: string;
+  name: string;
+  /** IANA, p.ej. "America/Santiago". */
+  timezone: string;
+  weeklyRules: WeeklyRule[];
+  overrides: AvailabilityOverride[];
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type BookingStatus = 'confirmed' | 'cancelled' | 'rescheduled';
+export interface BookingInvitee {
+  name: string;
+  email: string;
+  timezone: string;
+  phone?: string;
+}
+export interface BookingAnswer {
+  questionId: string;
+  label: string;
+  answer: string;
+}
+/** Parámetros congelados al reservar — para que editar/borrar el EventType no altere reservas hechas. */
+export interface BookingSnapshot {
+  timezone: string;
+  durationMinutes: number;
+  bufferBeforeMin: number;
+  bufferAfterMin: number;
+  minimumNoticeMin: number;
+  title: string;
+  location: MeetingLocation;
+}
+export interface Booking {
+  id: string;
+  eventTypeId: string;
+  userId: string;
+  snapshot: BookingSnapshot;
+  /** Instantes UTC (ISO). */
+  startAt: string;
+  endAt: string;
+  invitee: BookingInvitee;
+  answers: BookingAnswer[];
+  status: BookingStatus;
+  cancelReason?: string;
+  cancelledBy?: 'invitee' | 'host';
+  calendarEventId?: string;
+  rescheduledFromId?: string;
+  rescheduledToId?: string;
+  source: 'public' | 'host' | 'api';
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Config de empresa (singleton en SystemConfig key='scheduling'). */
+export interface SchedulingSettings {
+  enabled: boolean;
+  publicLinksEnabled: boolean;
+  defaults: { timezone: string; durationMinutes: number; dateRangeDays: number };
+  maxEventTypesPerUser?: number;
+  auditEnabled: boolean;
+}
+
+// --- DTOs de la página PÚBLICA (sin datos privados del host) ---
+export interface PublicEventType {
+  slug: string;
+  title: string;
+  description?: string;
+  durationMinutes: number;
+  color?: string;
+  location: MeetingLocation;
+  customQuestions: CustomQuestion[];
+}
+export interface PublicSchedulingProfile {
+  username: string;
+  displayName: string;
+  avatarUrl?: string;
+  eventTypes: PublicEventType[];
+}
+/** Slot disponible devuelto al invitado (inicio en UTC ISO; la UI lo muestra en su tz). */
+export interface AvailableSlot {
+  start: string;
 }

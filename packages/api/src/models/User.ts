@@ -7,6 +7,8 @@ export interface IUser extends Document {
   /** 'admin' sólo lo designa el setup inicial o el CLI de recuperación (nunca el auto-registro). */
   role: 'user' | 'admin';
   avatarUrl?: string;
+  /** Slug público de la agenda (`/u/:username`). Opcional; lo define el usuario. Único cuando existe. */
+  username?: string;
   preferences: UserPreferences;
   createdAt: Date;
   updatedAt: Date;
@@ -21,6 +23,9 @@ const UserSchema = new Schema<IUser>(
     // inicial o el CLI admin:grant designan 'admin'.
     role: { type: String, enum: ['user', 'admin'], default: 'user', index: true },
     avatarUrl: { type: String },
+    // username público de la agenda. SIN `unique` aquí (rompería con múltiples docs sin username):
+    // la unicidad la da un índice PARCIAL `$type:'string'` abajo (review B-MED).
+    username: { type: String },
     preferences: {
       language: { type: String, default: 'es' },
       timezone: { type: String, default: 'America/Mexico_City' },
@@ -70,5 +75,12 @@ UserSchema.pre('validate', function (next) {
 // Borraba TODOS los usuarios a los 2 años de creados sin considerar actividad
 // (createdAt nunca cambia) → pérdida de datos catastrófica (H-DATA-TTL). La
 // retención, si se necesitara, debe ser una política explícita opt-in.
+
+// Unicidad del username SÓLO cuando es string (índice parcial): evita el choque de múltiples
+// usuarios sin username y no requiere `sparse`. Review B-MED v2.8.
+UserSchema.index(
+  { username: 1 },
+  { unique: true, partialFilterExpression: { username: { $type: 'string' } } }
+);
 
 export const User = mongoose.model<IUser>('User', UserSchema);
