@@ -246,6 +246,39 @@ ningún merge con HIGH abierto o score <9):
   del hilo (MED de C); (5) **normalización de Message-ID** (MED de C) — hoy se conservan `<>` y no se
   lowercasea el dominio; un cliente no-compliant podría no joinear; (6) **fallback por Subject**
   (Re:/Fwd: normalizado) para mensajes sin References/In-Reply-To (decisión de scope, JWZ lo hace).
+- **TD-QUOTE-COLLAPSE (MED, review B 6.5/C 7/D 6)** — el colapso de citas "···" cubre los markers de
+  alta confianza (Gmail/Apple/Thunderbird/Yahoo/Proton/OWA) con corte cut-from-node, falla "hacia
+  mostrar de más" y el sandbox sin allow-scripts neutraliza mXSS. Refinamientos pendientes: (1)
+  **recall de Outlook desktop/Word** (estilos border-top, `#OLK_SRC_BODY_SECTION`, `x_`-prefijados) y
+  **Zimbra** (`hr[data-marker="__DIVIDER__"]`) — talon los reconoce; (2) **forwards** — `#appendonsend`/
+  `.OutlookMessageHeader` pueden marcar un FORWARD cuyo contenido es payload legítimo → si el usuario
+  pone "FYI" arriba, se escondería el forward (B: MED, HIGH en bottom-posting/inline-reply donde el
+  texto nuevo va DEBAJO del marcador y se ocultaría); (3) **fallback textual** estilo talon
+  (delimitadores "On … wrote:"/"El … escribió:" + heurística de líneas) para citas sin markers; (4)
+  **mXSS (C, MED no-HIGH)** — el re-parse/re-serialize de DOMParser podría des-sanear un fragmento
+  crafteado; mitigado por el sandbox, pero lo ideal es re-pasar `main`/`quoted` por el sanitizer del
+  backend antes de renderizar. Validar todo contra un corpus real de .eml.
+- **TD-S3-TURNKEY-RESIDUAL (review B/D)** — S3 turnkey con el rol del EC2 (IMDS, sin claves) ya está
+  (B/D empujaron el rol sobre IAM-user). Residuales no-bloqueantes: (1) **admin UI** — el wizard de
+  storage no muestra/permite el modo "rol del EC2" (sólo claves estáticas); en AWS no hace falta tocarlo
+  (lo siembra el boot), pero si el admin abre y guarda, el schema exige claves → soportar instance-role
+  en la ruta/UI; (2) **DeletionPolicy Retain** en bucket+CMK para PROD (B: HIGH para datos reales —
+  borrar el stack hoy borra el bucket/clave → adjuntos perdidos/ilegibles; para el test fresco da igual);
+  (3) **IAM eventual consistency** — la primera escritura S3 podría fallar segundos tras crear el rol;
+  el provisioner debería smoke-testear un put→get→delete antes de declarar éxito; (4) **bucket policy
+  que exija header SSE-KMS** rompería el PutObject (hoy usa default encryption — OK, pero verificar al
+  endurecer); (5) S3 no-AWS (MinIO/R2) sigue por claves estáticas vía el wizard admin.
+- **TD-PROVISION-OUTBOUND-SES (la próxima pieza turnkey — alineada con "deliverability existencial")** —
+  el provisioner deja el correo ENTRANTE + S3 + admin andando, pero NO auto-cablea el relay SES para el
+  SALIENTE (AWS bloquea el puerto 25; sin relay no sale correo). Hoy es manual (RELAY_HOST/USER/PASSWORD
+  en el compose, like se hizo en aulion v1). Para turnkey: el CLI debería (a) verificar/crear identidad
+  SES del dominio + DKIM, (b) generar credenciales SMTP de SES (derivadas de un IAM user) y entregarlas
+  al box SIN user-data (SSH post-deploy o Secrets Manager, NO en claro), (c) setear el relay en
+  docker-mailserver, (d) explicarle al cliente el paso de sacar SES del sandbox. VALIDADO en el deploy
+  fresco del 2026-06-30: entrante + S3(rol)+KMS + admin + bootstrap funcionan; falta SES.
+- **TD-PROVISION-ADMIN-PASS-DELIVERY (MED)** — la clave del buzón admin viaja en el user-data del EC2
+  (visible vía ec2:DescribeInstanceAttribute a quien tenga la cuenta). Aceptable single-operator, pero
+  endurecer: entregarla por SSH post-deploy o que el box la genere y la muestre, en vez del user-data.
 - **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
   feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
   Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`

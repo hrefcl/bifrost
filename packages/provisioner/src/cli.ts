@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { input, confirm, select, number } from '@inquirer/prompts';
+import { input, confirm, select, number, password } from '@inquirer/prompts';
 import { writeFileSync } from 'node:fs';
 import { EC2Client } from '@aws-sdk/client-ec2';
 import { CloudFormationClient } from '@aws-sdk/client-cloudformation';
@@ -9,8 +9,16 @@ import { listPublicHostedZones, matchHostedZone } from './aws/route53.js';
 import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
 import { buildStackTemplate, templateToYaml, templateToJson } from './infra/stack-template.js';
-import { assembleStackParams, type WizardAnswers } from './wizard/params.js';
-import { deployStack, getStackStatus, getStackOutputs } from './aws/cloudformation.js';
+import { assembleStackParams, deriveBucketName, type WizardAnswers } from './wizard/params.js';
+import {
+  deployStack,
+  getStackStatus,
+  getStackOutputs,
+  stackExists,
+  deleteStack,
+  waitForStackDeleted,
+} from './aws/cloudformation.js';
+import { emptyBucket } from './aws/s3.js';
 import { estimateMonthlyCost } from './cost.js';
 import { recommendInstance } from './catalog/instance-types.js';
 import { mailHostname, validateDomain } from './domain.js';
@@ -38,7 +46,9 @@ function printInstructions(file: string, stackName: string, region: string): voi
   );
   console.log('  • Consola web: CloudFormation → Create stack → "Upload a template file" → elegí');
   console.log(`      ${file} → Next → completá los parámetros → Create.`);
-  console.log('  • Teardown: borrá el stack (CloudFormation → Delete) y se va TODO.');
+  console.log(
+    '  • Teardown: `bifrost-provision destroy` (vacía el bucket y borra TODO el stack), o CloudFormation → Delete.'
+  );
 }
 
 async function main(): Promise<void> {
@@ -55,8 +65,8 @@ async function main(): Promise<void> {
   const instanceType = await input({ message: 'Tipo de EC2', default: rec.type });
   const useS3 = await confirm({
     message:
-      '¿Crear bucket S3 cifrado? (la APP aún no lo usa — fase futura; crea recursos facturables)',
-    default: false,
+      '¿Guardar los adjuntos en S3 cifrado? (la palanca de costo: bucket+KMS, la app lo usa vía el rol del EC2; recursos facturables)',
+    default: true,
   });
   const sshCidr = await input({
     message: 'CIDR permitido para SSH (recomendado TU_IP/32; Enter = 0.0.0.0/0 ABIERTO a internet)',
@@ -66,6 +76,17 @@ async function main(): Promise<void> {
     console.log('⚠ SSH quedará ABIERTO a internet (0.0.0.0/0). Considerá restringir a tu IP/32.');
   }
   const mailboxes = (await number({ message: '¿Cuántos buzones/empleados?', default: 50 })) ?? 50;
+
+  // Cuenta admin turnkey: se crea el buzón en docker-mailserver y al primer login queda admin (bootstrap).
+  const adminMailbox = await input({
+    message: 'Email del usuario ADMIN (se crea el buzón)',
+    default: `admin@${domain}`,
+  });
+  const adminMailboxPassword = await password({
+    message: 'Clave del admin (mínimo 8 caracteres)',
+    mask: true,
+    validate: (v) => v.length >= 8 || 'Mínimo 8 caracteres',
+  });
 
   const connect = await confirm({
     message:
@@ -137,13 +158,18 @@ async function main(): Promise<void> {
     hostedZoneId = hz.trim();
   }
 
-  // Armar user-data + parámetros + template, y escribir el YAML (el entregable).
+  // Armar user-data + parámetros + template, y escribir el YAML (el entregable). Si se eligió S3, el
+  // user-data cablea el .env a storage=s3 con el bucket (mismo nombre que recibe el CFN) + rol del EC2.
+  const s3Bucket = useS3 ? deriveBucketName(domain) : undefined;
   const userData = buildUserData({
     domain,
     mailHostname: mailHostname(domain),
     adminEmail: `admin@${domain}`,
     stackName,
     region,
+    s3Bucket,
+    adminMailbox,
+    adminMailboxPassword,
   });
   const answers: WizardAnswers = {
     domain,
@@ -253,7 +279,62 @@ async function main(): Promise<void> {
   printInstructions(file, stackName, region);
 }
 
-main().catch((err: unknown) => {
-  console.error('Error en el wizard:', err instanceof Error ? err.message : String(err));
+/**
+ * Teardown: `bifrost-provision destroy [stackName]`. Borra TODA la infraestructura del stack (es UN
+ * stack de CloudFormation → no hay huérfanos). Vacía el bucket S3 antes (CFN no borra un bucket no
+ * vacío). Cierra el círculo provision↔destroy para poder probar desde cero.
+ */
+async function destroy(): Promise<void> {
+  console.log('Bifrost — teardown: borra TODA la infraestructura de un stack\n');
+  const argStack = process.argv.at(3); // string | undefined
+  const region = await input({ message: 'Región AWS del stack', default: 'us-east-1' });
+  const stackName =
+    argStack ??
+    `bifrost-${slug(await input({ message: 'Dominio del stack a borrar (ej: aulion.app)' }))}`;
+  const cfn = new CloudFormationClient({ region });
+
+  if (!(await stackExists(cfn, stackName))) {
+    console.log(`No existe el stack "${stackName}" en ${region}. Nada que borrar.`);
+    return;
+  }
+  const outputs = await getStackOutputs(cfn, stackName);
+  const bucket = outputs.S3Bucket;
+  // Salvaguarda anti-typo: los stacks de Bifrost se llaman `bifrost-<dominio>`. Si el nombre no sigue
+  // la convención, avisar fuerte (no bloquear: alguien pudo usar un nombre custom) para no nukear otro.
+  if (!stackName.startsWith('bifrost-')) {
+    console.log(
+      `\n⚠ "${stackName}" NO sigue la convención bifrost-<dominio>. Asegurate de que sea el stack correcto.`
+    );
+  }
+  const ok = await confirm({
+    message: `⚠ Esto BORRA TODO el stack "${stackName}" (EC2, EIP, SG, VPC, rol, DNS${
+      bucket ? `, el bucket ${bucket} + su CMK KMS` : ''
+    }). IRREVERSIBLE. ¿Continuar?`,
+    default: false,
+  });
+  if (!ok) {
+    console.log('Cancelado.');
+    return;
+  }
+  if (bucket) {
+    process.stdout.write(`Vaciando el bucket ${bucket}… `);
+    const n = await emptyBucket(region, bucket);
+    console.log(`${String(n)} objetos/versiones borrados.`);
+  }
+  await deleteStack(cfn, stackName);
+  console.log('Borrando el stack (puede tardar varios minutos)…');
+  await waitForStackDeleted(cfn, stackName, {
+    onTick: (s) => {
+      console.log(`  ${s}…`);
+    },
+  });
+  console.log(
+    `\n✅ Infraestructura eliminada.${bucket ? ' (La CMK de KMS queda programada para borrado ~7 días, deshabilitada.)' : ''}`
+  );
+}
+
+const entry = process.argv[2] === 'destroy' ? destroy : main;
+entry().catch((err: unknown) => {
+  console.error('Error:', err instanceof Error ? err.message : String(err));
   process.exit(1);
 });

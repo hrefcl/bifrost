@@ -9,8 +9,8 @@
  * Seguridad: el user-data NO embebe secretos (se generan en el host con `openssl`). Docker se instala
  * desde el repo APT firmado por Docker (GPG verificado), no por `curl … | sh` sin checksum.
  *
- * STORAGE: arranca LOCAL (en el EBS) — funciona out-of-the-box. El S3 cifrado aún NO se auto-cablea
- * a la app (S3Storage exige instance-role + bootstrap por env: fase aparte registrada en el doc).
+ * STORAGE: si el deploy eligió S3 (input.s3Bucket), el .env cablea storage=s3 autenticado con el ROL
+ * del EC2 (IMDS, sin claves estáticas) y el API siembra la config en el primer boot. Si no, LOCAL (EBS).
  */
 export interface UserDataInput {
   domain: string;
@@ -27,8 +27,18 @@ export interface UserDataInput {
   ref?: string;
   /** Nombre del stack CloudFormation (para cfn-signal). */
   stackName: string;
-  /** Región AWS (para cfn-signal). */
+  /** Región AWS (para cfn-signal y el bucket S3). */
   region: string;
+  /** Bucket S3 de adjuntos (si S3Mode=create). Si se da, el .env cablea storage=s3 con el rol del EC2. */
+  s3Bucket?: string;
+  /** Buzón admin a crear en docker-mailserver (login turnkey). La 1ª vez que entra queda admin (bootstrap). */
+  adminMailbox?: string;
+  /**
+   * Clave del buzón admin. SEGURIDAD: viaja en el user-data (cloud-init), visible para quien tenga
+   * ec2:DescribeInstanceAttribute en la cuenta. Aceptable en un box single-operator (el dueño de la
+   * cuenta ya conoce la clave y puede cambiarla); endurecer entregándola por SSH post-deploy (deuda).
+   */
+  adminMailboxPassword?: string;
 }
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
@@ -77,9 +87,19 @@ apt_retry install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin 
 mkdir -p /etc/systemd/system/docker.service.d
 printf '[Service]\nEnvironment="DOCKER_MIN_API_VERSION=1.24"\n' > /etc/systemd/system/docker.service.d/min-api.conf
 systemctl daemon-reload
-systemctl enable --now docker
+# CRÍTICO: 'enable --now' NO reinicia un daemon que el apt-install ya dejó corriendo → el drop-in de
+# DOCKER_MIN_API_VERSION NO se aplicaría (el daemon seguiría con min 1.40 → Traefik 404). Hay que
+# RESTART explícito para que tome el Environment. [bug hallado en el 2º deploy real a AWS]
+systemctl enable docker
+systemctl restart docker
 # Esperar a que el daemon esté listo antes de usarlo (race de arranque del servicio).
 for _ in $(seq 1 30); do docker info >/dev/null 2>&1 && break || sleep 2; done
+# Confirmar que el min API quedó en 1.24 (si no, Traefik no leerá labels → fail-fast con aviso a CFN).
+MINAPI=$(docker version --format '{{.Server.MinAPIVersion}}' 2>/dev/null || echo "")
+if [ "$MINAPI" != "1.24" ]; then
+  echo "ERROR: Docker MinAPIVersion=$MINAPI (esperado 1.24); Traefik no leería labels." >&2
+  signal_fail; exit 1
+fi
 
 # 4) Código (reusa el stack all-in-one ya existente en el repo).
 install -d -m 0750 /opt/bifrost
@@ -109,7 +129,18 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
 openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
-echo "STORAGE_PROVIDER=local" > .env   # S3 aún no cableado a la app (ver doc)
+${
+  input.s3Bucket
+    ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.
+# En el primer boot el API siembra la config a S3 (services/storage/config.ts).
+{
+  echo "STORAGE_PROVIDER=s3"
+  echo "S3_BUCKET=${sh(input.s3Bucket)}"
+  echo "S3_REGION=${sh(input.region)}"
+  echo "S3_USE_INSTANCE_ROLE=1"
+} > .env`
+    : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
+}
 
 # 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).
 docker compose pull
@@ -143,6 +174,21 @@ if [ -z "$ok" ]; then
   signal_fail
   exit 1
 fi
+
+${
+  input.adminMailbox && input.adminMailboxPassword
+    ? `# 7.b) Crear el BUZÓN ADMIN en docker-mailserver → login turnkey desde el minuto cero. La 1ª vez
+# que ese usuario entra al webmail, el bootstrap del API lo hace admin (no hay admin previo).
+# 'setup' puede tardar en estar listo tras el boot del mailserver → reintentar; si el buzón ya existe,
+# tolerar el error (idempotente).
+ADMIN_MAILBOX="${sh(input.adminMailbox)}"
+ADMIN_MAILBOX_PASS="${sh(input.adminMailboxPassword)}"
+for _ in $(seq 1 36); do docker compose exec -T mailserver setup email list >/dev/null 2>&1 && break || sleep 5; done
+docker compose exec -T mailserver setup email add "$ADMIN_MAILBOX" "$ADMIN_MAILBOX_PASS" \\
+  || echo "buzón admin ya existía o setup no estaba listo"
+echo "bifrost-provision: buzón admin $ADMIN_MAILBOX listo" >> /var/log/bifrost-provision.log`
+    : ''
+}
 
 echo "bifrost-provision: stack levantado para $DOMAIN" > /var/log/bifrost-provision.log
 

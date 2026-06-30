@@ -43,9 +43,50 @@ export interface S3Options {
   endpoint?: string;
   bucket: string;
   region: string;
-  accessKeyId: string;
+  /** Claves estáticas (S3 no-AWS: MinIO/R2, o si el admin las configura). Omitir con useInstanceRole. */
+  accessKeyId?: string;
   /** Secret en CLARO (ya descifrado por el caller). Nunca se loguea. */
-  secretAccessKey: string;
+  secretAccessKey?: string;
+  /** EC2: sacar credenciales TEMPORALES del rol de la instancia (IMDSv2). Sin secretos estáticos. */
+  useInstanceRole?: boolean;
+}
+
+interface ImdsCreds {
+  AccessKeyId: string;
+  SecretAccessKey: string;
+  Token: string;
+  Expiration: string;
+}
+
+const IMDS = 'http://169.254.169.254';
+const IMDS_TIMEOUT_MS = 2000;
+
+/**
+ * Credenciales temporales del rol del EC2 vía IMDSv2 (best-practice AWS: nada de claves estáticas en
+ * disco/env/git; rotan solas vía STS). El destino 169.254.169.254 está HARDCODEADO acá (jamás viene de
+ * input del usuario — el endpoint S3 admin-controlled lo bloquea isSafeS3Endpoint).
+ */
+async function fetchImdsCreds(): Promise<ImdsCreds> {
+  const tokenRes = await fetch(`${IMDS}/latest/api/token`, {
+    method: 'PUT',
+    headers: { 'x-aws-ec2-metadata-token-ttl-seconds': '21600' },
+    signal: AbortSignal.timeout(IMDS_TIMEOUT_MS),
+  });
+  if (!tokenRes.ok) throw new Error('IMDS token no disponible (¿el box tiene rol IAM?)');
+  const token = await tokenRes.text();
+  const h = { 'x-aws-ec2-metadata-token': token };
+  const roleRes = await fetch(`${IMDS}/latest/meta-data/iam/security-credentials/`, {
+    headers: h,
+    signal: AbortSignal.timeout(IMDS_TIMEOUT_MS),
+  });
+  if (!roleRes.ok) throw new Error('IMDS: sin rol IAM asociado a la instancia');
+  const role = (await roleRes.text()).trim().split('\n')[0];
+  const credRes = await fetch(`${IMDS}/latest/meta-data/iam/security-credentials/${role}`, {
+    headers: h,
+    signal: AbortSignal.timeout(IMDS_TIMEOUT_MS),
+  });
+  if (!credRes.ok) throw new Error('IMDS: no se pudieron leer las credenciales del rol');
+  return (await credRes.json()) as ImdsCreds;
 }
 
 /**
@@ -53,27 +94,57 @@ export interface S3Options {
  * firmar con SigV4 sobre `fetch` (mucho más liviano que el SDK de AWS). Path-style
  * (`endpoint/bucket/key`): el más portable entre implementaciones S3-compatible.
  *
+ * Credenciales: estáticas (accessKeyId/secret, p.ej. MinIO/R2) o, en EC2, TEMPORALES del rol de la
+ * instancia (useInstanceRole → IMDSv2, con cache+refresh antes de expirar). El rol es el camino
+ * recomendado en AWS (sin secretos estáticos) — review B/D.
+ *
  * NOTA: la integración real contra un bucket no se puede verificar en CI (no hay S3). Los tests
  * mockean `fetch` y verifican método/URL/cuerpo; la validación contra un bucket real es
  * responsabilidad del operador (ver deploy/example-mailserver).
  */
 export class S3Storage implements StorageProvider {
   readonly type = 's3' as const;
-  private readonly client: AwsClient;
+  private readonly opts: S3Options;
   private readonly base: string;
+  private cachedClient?: AwsClient;
+  private credsExpireAt = Infinity; // estáticas: nunca expiran. IMDS: epoch ms de Expiration.
 
   constructor(opts: S3Options) {
-    this.client = new AwsClient({
-      accessKeyId: opts.accessKeyId,
-      secretAccessKey: opts.secretAccessKey,
-      region: opts.region,
-      service: 's3',
-      // aws4fetch reintenta 10× con backoff ante 5xx por defecto (~25s). Un upload/lectura no
-      // debe colgar tanto: lo acotamos a 2 reintentos.
-      retries: 2,
-    });
+    this.opts = opts;
     const root = (opts.endpoint ?? `https://s3.${opts.region}.amazonaws.com`).replace(/\/+$/, '');
     this.base = `${root}/${encodeURIComponent(opts.bucket)}`;
+    if (!opts.useInstanceRole) {
+      // Estáticas: cliente único, sin refresh.
+      this.cachedClient = new AwsClient({
+        accessKeyId: opts.accessKeyId ?? '',
+        secretAccessKey: opts.secretAccessKey ?? '',
+        region: opts.region,
+        service: 's3',
+        retries: 2,
+      });
+    }
+  }
+
+  /** Cliente firmador con credenciales vigentes. Con rol del EC2, refresca vía IMDS antes de expirar. */
+  private async client(): Promise<AwsClient> {
+    // Refrescar si es rol del EC2 y falta el cliente o las temp-creds vencen en <60s.
+    if (
+      this.opts.useInstanceRole &&
+      (!this.cachedClient || Date.now() > this.credsExpireAt - 60_000)
+    ) {
+      const c = await fetchImdsCreds();
+      this.cachedClient = new AwsClient({
+        accessKeyId: c.AccessKeyId,
+        secretAccessKey: c.SecretAccessKey,
+        sessionToken: c.Token,
+        region: this.opts.region,
+        service: 's3',
+        retries: 2,
+      });
+      this.credsExpireAt = new Date(c.Expiration).getTime();
+    }
+    if (!this.cachedClient) throw new Error('S3 sin credenciales (ni estáticas ni rol del EC2)');
+    return this.cachedClient;
   }
 
   /** URL del objeto. La key es opaca (uuid server-side); se codifica por seguridad. */
@@ -85,7 +156,9 @@ export class S3Storage implements StorageProvider {
     // Buffer es Uint8Array<ArrayBufferLike>; BodyInit espera Uint8Array<ArrayBuffer>. Copiamos
     // a un ArrayBuffer fresco para satisfacer el tipo (y evitar SharedArrayBuffer).
     const body8 = new Uint8Array(body);
-    const res = await this.client.fetch(this.url(key), {
+    const res = await (
+      await this.client()
+    ).fetch(this.url(key), {
       method: 'PUT',
       body: body8,
       headers: { 'content-length': String(body.length) },
@@ -97,7 +170,9 @@ export class S3Storage implements StorageProvider {
   }
 
   async get(key: string): Promise<Buffer> {
-    const res = await this.client.fetch(this.url(key), {
+    const res = await (
+      await this.client()
+    ).fetch(this.url(key), {
       method: 'GET',
       signal: AbortSignal.timeout(S3_TIMEOUT_MS),
     });
@@ -132,7 +207,9 @@ export class S3Storage implements StorageProvider {
   }
 
   async delete(key: string): Promise<void> {
-    const res = await this.client.fetch(this.url(key), {
+    const res = await (
+      await this.client()
+    ).fetch(this.url(key), {
       method: 'DELETE',
       signal: AbortSignal.timeout(S3_TIMEOUT_MS),
     });

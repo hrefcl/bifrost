@@ -36,8 +36,10 @@ export async function providerForType(type: StorageType): Promise<StorageProvide
         endpoint: cfg.s3.endpoint,
         bucket: cfg.s3.bucket,
         region: cfg.s3.region,
+        useInstanceRole: cfg.s3.useInstanceRole,
         accessKeyId: cfg.s3.accessKeyId,
-        secretAccessKey: decrypt(cfg.s3.secretAccessKey),
+        // El secret sólo existe en modo estáticas; con rol del EC2 no hay nada que descifrar.
+        secretAccessKey: cfg.s3.secretAccessKey ? decrypt(cfg.s3.secretAccessKey) : undefined,
       });
     }
     default:
