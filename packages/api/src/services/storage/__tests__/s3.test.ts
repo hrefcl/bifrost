@@ -44,6 +44,47 @@ describe('S3Storage (fetch mockeado — verifica request firmada; no toca S3 rea
     expect(calls[0].auth).toContain('AKIAEXAMPLE');
   });
 
+  it('useInstanceRole: saca credenciales TEMPORALES del IMDS y firma con session token (sin claves estáticas)', async () => {
+    const seen: { url: string; method: string; secToken: string | null }[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: Request | string, init?: RequestInit) => {
+        // aws4fetch llama con un Request (S3); el fetch del IMDS llama con (urlString, init).
+        const url = typeof input === 'string' ? input : input.url;
+        const method = typeof input === 'string' ? (init?.method ?? 'GET') : input.method;
+        const headers = typeof input === 'string' ? new Headers(init?.headers) : input.headers;
+        seen.push({ url, method, secToken: headers.get('x-amz-security-token') });
+        if (url.endsWith('/latest/api/token')) return Promise.resolve(new Response('TOKEN123'));
+        if (url.endsWith('/iam/security-credentials/'))
+          return Promise.resolve(new Response('bifrost-role'));
+        if (url.endsWith('/iam/security-credentials/bifrost-role'))
+          return Promise.resolve(
+            new Response(
+              JSON.stringify({
+                AccessKeyId: 'ASIATEMP',
+                SecretAccessKey: 'temp-secret',
+                Token: 'SESSIONTOKEN',
+                Expiration: new Date(Date.now() + 3600_000).toISOString(),
+              })
+            )
+          );
+        return Promise.resolve(new Response(null, { status: 200 })); // el PUT a S3
+      })
+    );
+    await new S3Storage({
+      endpoint: 'https://minio.test',
+      bucket: 'mybucket',
+      region: 'us-east-1',
+      useInstanceRole: true,
+    }).put('k', Buffer.from('x'));
+
+    // Pegó al IMDS (token + rol + creds) antes del S3, y el PUT a S3 lleva el session token temporal.
+    expect(seen.some((c) => c.url.includes('169.254.169.254/latest/api/token'))).toBe(true);
+    const s3Put = seen.find((c) => c.url === 'https://minio.test/mybucket/k');
+    expect(s3Put?.method).toBe('PUT');
+    expect(s3Put?.secToken).toBe('SESSIONTOKEN');
+  });
+
   it('get: devuelve los bytes del objeto', async () => {
     const payload = new Uint8Array(Buffer.from('contenido remoto'));
     const calls = stubFetch(200, payload);

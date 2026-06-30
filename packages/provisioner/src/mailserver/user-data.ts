@@ -9,8 +9,8 @@
  * Seguridad: el user-data NO embebe secretos (se generan en el host con `openssl`). Docker se instala
  * desde el repo APT firmado por Docker (GPG verificado), no por `curl … | sh` sin checksum.
  *
- * STORAGE: arranca LOCAL (en el EBS) — funciona out-of-the-box. El S3 cifrado aún NO se auto-cablea
- * a la app (S3Storage exige instance-role + bootstrap por env: fase aparte registrada en el doc).
+ * STORAGE: si el deploy eligió S3 (input.s3Bucket), el .env cablea storage=s3 autenticado con el ROL
+ * del EC2 (IMDS, sin claves estáticas) y el API siembra la config en el primer boot. Si no, LOCAL (EBS).
  */
 export interface UserDataInput {
   domain: string;
@@ -27,8 +27,10 @@ export interface UserDataInput {
   ref?: string;
   /** Nombre del stack CloudFormation (para cfn-signal). */
   stackName: string;
-  /** Región AWS (para cfn-signal). */
+  /** Región AWS (para cfn-signal y el bucket S3). */
   region: string;
+  /** Bucket S3 de adjuntos (si S3Mode=create). Si se da, el .env cablea storage=s3 con el rol del EC2. */
+  s3Bucket?: string;
 }
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
@@ -109,7 +111,18 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
 openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
-echo "STORAGE_PROVIDER=local" > .env   # S3 aún no cableado a la app (ver doc)
+${
+  input.s3Bucket
+    ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.
+# En el primer boot el API siembra la config a S3 (services/storage/config.ts).
+{
+  echo "STORAGE_PROVIDER=s3"
+  echo "S3_BUCKET=${sh(input.s3Bucket)}"
+  echo "S3_REGION=${sh(input.region)}"
+  echo "S3_USE_INSTANCE_ROLE=1"
+} > .env`
+    : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
+}
 
 # 7) Levantar el stack (Traefik+TLS, docker-mailserver, Mongo+Redis, Bifrost API/Web).
 docker compose pull

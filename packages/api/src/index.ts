@@ -35,6 +35,11 @@ async function main() {
   await reconcileEmailTextIndex();
   await redis.ping();
 
+  // Turnkey: en el PRIMER boot de un deploy AWS con S3, siembra el storage=S3 desde el entorno
+  // (el provisioner inyecta las claves del IAM user del bucket). Idempotente: no pisa config existente.
+  const { seedStorageConfigFromEnv } = await import('./services/storage/config.js');
+  await seedStorageConfigFromEnv().catch(() => undefined);
+
   const app = await buildApp();
   serverApp = app;
 

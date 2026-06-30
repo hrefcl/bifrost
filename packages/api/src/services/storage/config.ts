@@ -12,8 +12,10 @@ export interface S3StoredSettings {
   endpoint?: string;
   bucket: string;
   region: string;
-  accessKeyId: string;
-  secretAccessKey: EncryptedPayload;
+  /** EC2: usar el rol de la instancia (IMDS) en vez de claves estáticas. Si true, no hay keys. */
+  useInstanceRole?: boolean;
+  accessKeyId?: string;
+  secretAccessKey?: EncryptedPayload;
 }
 
 export interface StorageConfig {
@@ -32,8 +34,9 @@ export type StorageConfigInput =
         endpoint?: string;
         bucket: string;
         region: string;
-        accessKeyId: string;
-        secretAccessKey: string;
+        useInstanceRole?: boolean;
+        accessKeyId?: string;
+        secretAccessKey?: string;
       };
     };
 
@@ -44,7 +47,8 @@ export interface PublicStorageConfig {
     endpoint?: string;
     bucket: string;
     region: string;
-    accessKeyId: string;
+    useInstanceRole: boolean;
+    accessKeyId?: string;
     secretConfigured: boolean;
   };
   updatedBy?: string;
@@ -75,8 +79,9 @@ export function toPublicStorageConfig(cfg: StorageConfig): PublicStorageConfig {
       endpoint: cfg.s3.endpoint,
       bucket: cfg.s3.bucket,
       region: cfg.s3.region,
+      useInstanceRole: cfg.s3.useInstanceRole ?? false,
       accessKeyId: cfg.s3.accessKeyId,
-      secretConfigured: true,
+      secretConfigured: cfg.s3.secretAccessKey !== undefined,
     };
   }
   return base;
@@ -102,17 +107,24 @@ export async function setStorageConfig(
   const meta = { updatedBy, updatedAt: new Date().toISOString() };
   let value: StorageConfig;
   if (input.providerType === 's3') {
-    value = {
-      providerType: 's3',
-      s3: {
-        endpoint: input.s3.endpoint,
-        bucket: input.s3.bucket,
-        region: input.s3.region,
-        accessKeyId: input.s3.accessKeyId,
-        secretAccessKey: encrypt(input.s3.secretAccessKey),
-      },
-      ...meta,
-    };
+    // Dos modos: rol del EC2 (sin claves) o claves estáticas (cifra el secret). El admin/seed elige.
+    const s3: S3StoredSettings = input.s3.useInstanceRole
+      ? {
+          endpoint: input.s3.endpoint,
+          bucket: input.s3.bucket,
+          region: input.s3.region,
+          useInstanceRole: true,
+        }
+      : {
+          endpoint: input.s3.endpoint,
+          bucket: input.s3.bucket,
+          region: input.s3.region,
+          accessKeyId: input.s3.accessKeyId,
+          ...(input.s3.secretAccessKey
+            ? { secretAccessKey: encrypt(input.s3.secretAccessKey) }
+            : {}),
+        };
+    value = { providerType: 's3', s3, ...meta };
   } else {
     // local activo, pero conservamos la config s3 ya guardada (para leer blobs s3 históricos).
     const existing = await getStorageConfig();
@@ -120,4 +132,49 @@ export async function setStorageConfig(
   }
   await SystemConfig.findOneAndUpdate({ key: KEY }, { $set: { value } }, { upsert: true });
   return toPublicStorageConfig(value);
+}
+
+/**
+ * Siembra la config de storage desde el ENTORNO en el PRIMER boot (turnkey: el provisioner AWS inyecta
+ * las claves del IAM user del bucket). Sólo actúa si NO hay config persistida (una instalación nueva) y
+ * los env de S3 están completos → así el admin puede sobrescribirla después sin que el boot la pise.
+ * NO testea la conexión (no debe bloquear el arranque); si las claves estuvieran mal, el admin lo ve al
+ * subir un adjunto y lo corrige en el wizard. Devuelve true si sembró.
+ */
+export async function seedStorageConfigFromEnv(): Promise<boolean> {
+  if (process.env.STORAGE_PROVIDER !== 's3') return false;
+  const bucket = process.env.S3_BUCKET?.trim();
+  const region = process.env.S3_REGION?.trim();
+  if (!bucket || !region) return false;
+
+  // No pisar una config existente (el admin manda). Y NUNCA sembrar sobre un install que ya tiene
+  // adjuntos LOCALES: mover sólo los nuevos a S3 dejaría los viejos en disco (split-brain, HIGH de B).
+  const existing = await SystemConfig.findOne({ key: KEY }).lean();
+  if (existing) return false;
+  const { AttachmentBlob } = await import('../../models/AttachmentBlob.js');
+  if ((await AttachmentBlob.estimatedDocumentCount()) > 0) return false; // no es un install fresco
+
+  const useInstanceRole = process.env.S3_USE_INSTANCE_ROLE === '1';
+  const endpoint = process.env.S3_ENDPOINT?.trim();
+  if (useInstanceRole) {
+    await setStorageConfig(
+      {
+        providerType: 's3',
+        s3: { bucket, region, useInstanceRole: true, ...(endpoint ? { endpoint } : {}) },
+      },
+      'system:env-seed'
+    );
+    return true;
+  }
+  const accessKeyId = process.env.S3_ACCESS_KEY_ID?.trim();
+  const secretAccessKey = process.env.S3_SECRET_ACCESS_KEY;
+  if (!accessKeyId || !secretAccessKey) return false;
+  await setStorageConfig(
+    {
+      providerType: 's3',
+      s3: { bucket, region, accessKeyId, secretAccessKey, ...(endpoint ? { endpoint } : {}) },
+    },
+    'system:env-seed'
+  );
+  return true;
 }

@@ -9,7 +9,7 @@ import { listPublicHostedZones, matchHostedZone } from './aws/route53.js';
 import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
 import { buildStackTemplate, templateToYaml, templateToJson } from './infra/stack-template.js';
-import { assembleStackParams, type WizardAnswers } from './wizard/params.js';
+import { assembleStackParams, deriveBucketName, type WizardAnswers } from './wizard/params.js';
 import { deployStack, getStackStatus, getStackOutputs } from './aws/cloudformation.js';
 import { estimateMonthlyCost } from './cost.js';
 import { recommendInstance } from './catalog/instance-types.js';
@@ -55,8 +55,8 @@ async function main(): Promise<void> {
   const instanceType = await input({ message: 'Tipo de EC2', default: rec.type });
   const useS3 = await confirm({
     message:
-      '¿Crear bucket S3 cifrado? (la APP aún no lo usa — fase futura; crea recursos facturables)',
-    default: false,
+      '¿Guardar los adjuntos en S3 cifrado? (la palanca de costo: bucket+KMS, la app lo usa vía el rol del EC2; recursos facturables)',
+    default: true,
   });
   const sshCidr = await input({
     message: 'CIDR permitido para SSH (recomendado TU_IP/32; Enter = 0.0.0.0/0 ABIERTO a internet)',
@@ -137,13 +137,16 @@ async function main(): Promise<void> {
     hostedZoneId = hz.trim();
   }
 
-  // Armar user-data + parámetros + template, y escribir el YAML (el entregable).
+  // Armar user-data + parámetros + template, y escribir el YAML (el entregable). Si se eligió S3, el
+  // user-data cablea el .env a storage=s3 con el bucket (mismo nombre que recibe el CFN) + rol del EC2.
+  const s3Bucket = useS3 ? deriveBucketName(domain) : undefined;
   const userData = buildUserData({
     domain,
     mailHostname: mailHostname(domain),
     adminEmail: `admin@${domain}`,
     stackName,
     region,
+    s3Bucket,
   });
   const answers: WizardAnswers = {
     domain,

@@ -111,6 +111,13 @@ services:
       # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
       # (webmail NATIVO del dominio). El sed del provisioner lo convierte a mail.<tu-dominio>.
       MAIL_SERVER_HOST: mail.example.com
+      # Storage de adjuntos: por defecto LOCAL (disco). Si el provisioner habilitó S3, el .env del box
+      # trae STORAGE_PROVIDER=s3 + bucket/region + S3_USE_INSTANCE_ROLE=1 (sin claves: usa el rol del
+      # EC2 vía IMDS). En el primer boot el API siembra la config a S3 (services/storage/config.ts).
+      STORAGE_PROVIDER: ${STORAGE_PROVIDER:-local}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_REGION: ${S3_REGION:-}
+      S3_USE_INSTANCE_ROLE: ${S3_USE_INSTANCE_ROLE:-}
     secrets: [jwt_secret, encryption_key]
     networks: [mailnet]
 

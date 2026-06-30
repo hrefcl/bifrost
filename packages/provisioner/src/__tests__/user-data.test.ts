@@ -10,6 +10,24 @@ describe('buildUserData (cloud-init)', () => {
     region: 'us-east-1',
   };
 
+  it('sin s3Bucket → storage LOCAL (sin claves ni S3 en el .env)', () => {
+    const s = buildUserData(base);
+    expect(s).toContain('STORAGE_PROVIDER=local');
+    expect(s).not.toContain('STORAGE_PROVIDER=s3');
+    expect(s).not.toContain('S3_BUCKET');
+  });
+
+  it('con s3Bucket → storage S3 con el ROL del EC2 (IMDS), SIN claves estáticas en el .env', () => {
+    const s = buildUserData({ ...base, s3Bucket: 'bifrost-acme-com-data' });
+    expect(s).toContain('STORAGE_PROVIDER=s3');
+    expect(s).toContain('S3_BUCKET=bifrost-acme-com-data');
+    expect(s).toContain('S3_REGION=us-east-1');
+    expect(s).toContain('S3_USE_INSTANCE_ROLE=1');
+    // Cero claves estáticas (el rol del EC2 las provee temporales vía IMDS).
+    expect(s).not.toContain('S3_ACCESS_KEY_ID');
+    expect(s).not.toContain('S3_SECRET');
+  });
+
   it('instala deps + docker (repo APT firmado, NO curl|sh), clona el stack y levanta compose', () => {
     const s = buildUserData(base);
     // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).

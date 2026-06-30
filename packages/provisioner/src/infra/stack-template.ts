@@ -330,7 +330,13 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
             Statement: [
               {
                 Effect: 'Allow',
-                Action: ['s3:GetObject', 's3:PutObject', 's3:DeleteObject', 's3:ListBucket'],
+                Action: [
+                  's3:GetObject',
+                  's3:PutObject',
+                  's3:DeleteObject',
+                  's3:ListBucket',
+                  's3:GetBucketLocation',
+                ],
                 Resource: [
                   { 'Fn::GetAtt': ['S3Bucket', 'Arn'] },
                   { 'Fn::Sub': '${S3Bucket.Arn}/*' },
@@ -338,7 +344,7 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
               },
               {
                 Effect: 'Allow',
-                Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey'],
+                Action: ['kms:Encrypt', 'kms:Decrypt', 'kms:GenerateDataKey', 'kms:DescribeKey'],
                 Resource: { 'Fn::GetAtt': ['KmsKey', 'Arn'] },
               },
             ],
@@ -404,6 +410,11 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
         Condition: 'CreateS3',
         Description: 'Bucket de datos cifrado',
         Value: { Ref: 'S3Bucket' },
+      },
+      S3Region: {
+        Condition: 'CreateS3',
+        Description: 'Región del bucket (para el provider S3 vía rol del EC2)',
+        Value: { Ref: 'AWS::Region' },
       },
     },
   };
