@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { input, confirm, select, number } from '@inquirer/prompts';
+import { input, confirm, select, number, password } from '@inquirer/prompts';
 import { writeFileSync } from 'node:fs';
 import { EC2Client } from '@aws-sdk/client-ec2';
 import { CloudFormationClient } from '@aws-sdk/client-cloudformation';
@@ -76,6 +76,17 @@ async function main(): Promise<void> {
     console.log('⚠ SSH quedará ABIERTO a internet (0.0.0.0/0). Considerá restringir a tu IP/32.');
   }
   const mailboxes = (await number({ message: '¿Cuántos buzones/empleados?', default: 50 })) ?? 50;
+
+  // Cuenta admin turnkey: se crea el buzón en docker-mailserver y al primer login queda admin (bootstrap).
+  const adminMailbox = await input({
+    message: 'Email del usuario ADMIN (se crea el buzón)',
+    default: `admin@${domain}`,
+  });
+  const adminMailboxPassword = await password({
+    message: 'Clave del admin (mínimo 8 caracteres)',
+    mask: true,
+    validate: (v) => v.length >= 8 || 'Mínimo 8 caracteres',
+  });
 
   const connect = await confirm({
     message:
@@ -157,6 +168,8 @@ async function main(): Promise<void> {
     stackName,
     region,
     s3Bucket,
+    adminMailbox,
+    adminMailboxPassword,
   });
   const answers: WizardAnswers = {
     domain,

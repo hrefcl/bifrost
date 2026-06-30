@@ -31,6 +31,14 @@ export interface UserDataInput {
   region: string;
   /** Bucket S3 de adjuntos (si S3Mode=create). Si se da, el .env cablea storage=s3 con el rol del EC2. */
   s3Bucket?: string;
+  /** Buzón admin a crear en docker-mailserver (login turnkey). La 1ª vez que entra queda admin (bootstrap). */
+  adminMailbox?: string;
+  /**
+   * Clave del buzón admin. SEGURIDAD: viaja en el user-data (cloud-init), visible para quien tenga
+   * ec2:DescribeInstanceAttribute en la cuenta. Aceptable en un box single-operator (el dueño de la
+   * cuenta ya conoce la clave y puede cambiarla); endurecer entregándola por SSH post-deploy (deuda).
+   */
+  adminMailboxPassword?: string;
 }
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
@@ -156,6 +164,21 @@ if [ -z "$ok" ]; then
   signal_fail
   exit 1
 fi
+
+${
+  input.adminMailbox && input.adminMailboxPassword
+    ? `# 7.b) Crear el BUZÓN ADMIN en docker-mailserver → login turnkey desde el minuto cero. La 1ª vez
+# que ese usuario entra al webmail, el bootstrap del API lo hace admin (no hay admin previo).
+# 'setup' puede tardar en estar listo tras el boot del mailserver → reintentar; si el buzón ya existe,
+# tolerar el error (idempotente).
+ADMIN_MAILBOX="${sh(input.adminMailbox)}"
+ADMIN_MAILBOX_PASS="${sh(input.adminMailboxPassword)}"
+for _ in $(seq 1 36); do docker compose exec -T mailserver setup email list >/dev/null 2>&1 && break || sleep 5; done
+docker compose exec -T mailserver setup email add "$ADMIN_MAILBOX" "$ADMIN_MAILBOX_PASS" \\
+  || echo "buzón admin ya existía o setup no estaba listo"
+echo "bifrost-provision: buzón admin $ADMIN_MAILBOX listo" >> /var/log/bifrost-provision.log`
+    : ''
+}
 
 echo "bifrost-provision: stack levantado para $DOMAIN" > /var/log/bifrost-provision.log
 

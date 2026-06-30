@@ -28,6 +28,21 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('S3_SECRET');
   });
 
+  it('con adminMailbox → crea el buzón admin en docker-mailserver (login turnkey)', () => {
+    const s = buildUserData({
+      ...base,
+      adminMailbox: 'admin@acme.com',
+      adminMailboxPassword: 'super-clave-8+',
+    });
+    expect(s).toContain('setup email add');
+    expect(s).toContain('admin@acme.com');
+    expect(s).toContain('mailserver setup email list'); // espera a que el mailserver esté listo
+  });
+
+  it('sin adminMailbox → no toca docker-mailserver', () => {
+    expect(buildUserData(base)).not.toContain('setup email add');
+  });
+
   it('instala deps + docker (repo APT firmado, NO curl|sh), clona el stack y levanta compose', () => {
     const s = buildUserData(base);
     // Espera a internet ANTES de bajar paquetes (race de la ruta de una VPC nueva).
