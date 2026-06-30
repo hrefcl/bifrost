@@ -13,6 +13,7 @@ import { EventType } from '../../models/EventType.js';
 import { Booking } from '../../models/Booking.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
 import { setSchedulingSettings } from '../../services/scheduling/settings.js';
+import { SystemConfig } from '../../models/SystemConfig.js';
 
 describe('Fase 3.3 — APIs host de agenda', () => {
   let app: FastifyInstance;
@@ -142,6 +143,21 @@ describe('Fase 3.3 — APIs host de agenda', () => {
     // Al subir el límite, vuelve a permitir.
     await setSchedulingSettings({ maxEventTypesPerUser: 5 });
     expect((await seedEventType(uid, sched.id, 'dos')).statusCode).toBe(200);
+  });
+
+  it('event-types: maxEventTypesPerUser=null persistido NO bloquea la creación (hallazgo E2E retry)', async () => {
+    // Mongo persiste un `undefined` como `null`; el guard `!== undefined` dejaba pasar el null y
+    // `count >= null` → `count >= 0` → 409 "máximo de null" para TODOS tras guardar settings.
+    const { user } = await seedUserWithAccount({ email: 'a@test.com' });
+    const uid = user._id.toString();
+    const sched = await seedSchedule(uid);
+    await SystemConfig.updateOne(
+      { key: 'scheduling' },
+      { $set: { value: { enabled: true, maxEventTypesPerUser: null } } },
+      { upsert: true }
+    );
+    // Crear un tipo NO debe dar 409 (el límite null = sin límite).
+    expect((await seedEventType(uid, sched.id, 'uno')).statusCode).toBe(200);
   });
 
   it('event-types: reactivar (active:true) NO evade maxEventTypesPerUser → 409 (re-auditoría)', async () => {

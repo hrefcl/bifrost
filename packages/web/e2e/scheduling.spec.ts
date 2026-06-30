@@ -6,19 +6,24 @@ import { test, expect, type Page, type APIResponse } from '@playwright/test';
  *
  * Cubre el hueco que la review B/D señaló: el backend tiene 304 tests, pero el flujo de reserva del
  * INVITADO no tenía verificación ejecutable en navegador. Aquí:
- *   - setup del host (cuenta primaria + horario + tipo + username) y enable de la feature → vía API
- *     (como haría un admin/host real; no es lo que queremos *verificar*).
+ *   - setup del host (cuenta primaria + horario + tipo + username) y enable de la feature → vía API.
  *   - el flujo del invitado (perfil → elegir día/hora → datos → confirmación → gestión/cancelar) →
  *     recorre la UI pública REAL en un contexto SIN sesión (invitado de verdad).
  *
- * Las páginas públicas usan texto español fijo (no i18n), así que las aserciones son deterministas.
- * Corre al final del orden serial (s > m,l,c,a); deja la feature apagada al terminar (hygiene).
+ * COBERTURA — qué NO prueba (honestidad, review B):
+ *   - El servidor E2E usa buildApp() y con REDIS_URL=mock BullMQ es no-op: NO arranca el worker.
+ *     Por tanto el ENVÍO de correo/ICS (async) NO se ejercita aquí — está cubierto por unit tests de
+ *     email.ts/ics.ts. Este E2E NO es evidencia de que el correo se envíe.
+ *   - Tampoco cubre reschedule, concurrencia, ni el setup por la UI host (se hace por API).
+ *
+ * Robustez (review B): zona horaria del invitado fijada (= host) para que "mañana" sea determinista;
+ * ids únicos por corrida para sobrevivir a retries de CI; se asertan las responses (no sólo texto);
+ * el finally restaura los settings previos. Corre último en el orden serial.
  */
 
 const PASS = 'irrelevant-the-imap-is-faked';
-const HOST_EMAIL = 'host-sched-e2e@example.com';
 const ADMIN_EMAIL = 'admin-e2e@example.com'; // pre-sembrado como admin en e2e/server.ts
-const USERNAME = 'hoste2e';
+const HOST_TZ = 'America/Santiago';
 
 interface LoginResult {
   accessToken: string;
@@ -51,20 +56,27 @@ const okJson = async (resp: APIResponse): Promise<unknown> => {
   return resp.json();
 };
 
+const bearer = (t: string) => ({ Authorization: `Bearer ${t}` });
+
 test('agenda pública: invitado reserva, ve confirmación y cancela por token', async ({
   page,
   browser,
 }) => {
+  // Ids ÚNICOS por corrida (incl. retries de CI): un host nuevo evita choques de username (índice
+  // único global) y de slug (único por usuario) — review B "estado/retries".
+  const uniq = `${Date.now().toString(36)}${test.info().workerIndex}`;
+  const HOST_EMAIL = `host-sched-${uniq}@example.com`;
+  const USERNAME = `hoste2e${uniq}`;
+
   // ───────── 1) Setup del host vía API ─────────
   const host = await apiLogin(page, HOST_EMAIL);
-  const H = { Authorization: `Bearer ${host.accessToken}` };
+  const H = bearer(host.accessToken);
 
   await okJson(
     await page.request.patch('/api/schedule/profile', { headers: H, data: { username: USERNAME } })
   );
 
-  // Disponibilidad los 7 días 09:00–17:00 (hora del host) → "mañana" siempre tiene huecos,
-  // sin importar la hora actual ni la zona del runner.
+  // Disponibilidad los 7 días 09:00–17:00 (hora del host) → "mañana" siempre tiene huecos.
   const weeklyRules = [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({
     weekday,
     intervals: [{ start: '09:00', end: '17:00' }],
@@ -72,7 +84,7 @@ test('agenda pública: invitado reserva, ve confirmación y cancela por token', 
   const sched = (await okJson(
     await page.request.post('/api/schedule/availability', {
       headers: H,
-      data: { name: 'Laboral', timezone: 'America/Santiago', weeklyRules, overrides: [] },
+      data: { name: 'Laboral', timezone: HOST_TZ, weeklyRules, overrides: [] },
     })
   )) as { id: string };
 
@@ -89,37 +101,60 @@ test('agenda pública: invitado reserva, ve confirmación y cancela por token', 
     })
   );
 
-  // ───────── 2) Admin habilita la feature ─────────
+  // ───────── 2) Admin: capturar settings previos y habilitar la feature ─────────
   const admin = await apiLogin(page, ADMIN_EMAIL);
+  const A = bearer(admin.accessToken);
+  const prevSettings = (await okJson(
+    await page.request.get('/api/admin/scheduling/settings', { headers: A })
+  )) as { enabled: boolean; publicLinksEnabled: boolean };
   await okJson(
     await page.request.patch('/api/admin/scheduling/settings', {
-      headers: { Authorization: `Bearer ${admin.accessToken}` },
+      headers: A,
       data: { enabled: true, publicLinksEnabled: true },
     })
   );
 
-  // ───────── 3) Invitado (contexto SIN sesión) recorre la UI pública ─────────
-  const guestCtx = await browser.newContext();
+  // ───────── 3) Invitado (contexto SIN sesión, tz = host para "mañana" determinista) ─────────
+  const guestCtx = await browser.newContext({ timezoneId: HOST_TZ });
   const g = await guestCtx.newPage();
   try {
-    // 3a) Perfil público → lista el tipo de reunión (el título es un botón, no un heading; el <h1>
-    // del perfil es el displayName del host).
+    // 3a) Perfil público → lista el tipo de reunión (el título es un botón; el <h1> es el displayName).
     await g.goto(`/u/${USERNAME}`);
     const typeButton = g.getByRole('button', { name: /Charla 30 min/ });
     await expect(typeButton).toBeVisible({ timeout: 15_000 });
     await typeButton.click();
 
-    // 3b) Vista de reserva: navegar a "mañana" (garantiza huecos) y elegir el primero.
-    await expect(g.getByRole('heading', { name: 'Charla 30 min' })).toBeVisible();
+    // 3b) Vista de reserva: navegar a "mañana" esperando la request de slots; elegir el primero.
+    await expect(g.getByRole('heading', { name: 'Charla 30 min' })).toBeVisible({
+      timeout: 15_000,
+    });
+    const slotsResp = g.waitForResponse(
+      (r) => r.url().includes('/slots') && r.request().method() === 'GET'
+    );
     await g.getByRole('button', { name: '›' }).click();
+    const slotsData = (await (await slotsResp).json()) as { slots: { start: string }[] };
+    expect(slotsData.slots.length, 'mañana debe tener huecos').toBeGreaterThan(0);
     const firstSlot = g.locator('.slot').first();
     await expect(firstSlot).toBeVisible({ timeout: 15_000 });
     await firstSlot.click();
 
-    // 3c) Datos del invitado → confirmar.
-    await g.locator('.formstep input[type="text"]').first().fill('Invitado E2E');
-    await g.locator('.formstep input[type="email"]').fill('invitado-e2e@example.com');
+    // 3c) Datos del invitado → confirmar, asertando la response 201 del POST /book.
+    await g.getByLabel('Nombre').fill('Invitado E2E');
+    await g.getByLabel('Email').fill('invitado-e2e@example.com');
+    const bookResp = g.waitForResponse(
+      (r) => r.url().includes('/book') && r.request().method() === 'POST'
+    );
     await g.getByRole('button', { name: /Confirmar reunión/ }).click();
+    const booked = await bookResp;
+    expect(booked.status(), 'POST /book → 201').toBe(201);
+    const bookedBody = (await booked.json()) as {
+      booking: { status: string; invitee: { email: string }; snapshot: { title: string } };
+      managementToken: string;
+    };
+    expect(bookedBody.booking.status).toBe('confirmed');
+    expect(bookedBody.booking.invitee.email).toBe('invitado-e2e@example.com');
+    expect(bookedBody.booking.snapshot.title).toBe('Charla 30 min');
+    expect(bookedBody.managementToken, 'token de gestión presente en creación').toBeTruthy();
 
     // 3d) Confirmación + enlace de gestión.
     await expect(g.getByRole('heading', { name: /Reunión confirmada/ })).toBeVisible({
@@ -128,21 +163,33 @@ test('agenda pública: invitado reserva, ve confirmación y cancela por token', 
     const manageLink = g.getByRole('link', { name: /Gestionar reserva/ });
     await expect(manageLink).toBeVisible();
     const manageHref = await manageLink.getAttribute('href');
-    expect(manageHref).toMatch(/\/booking\/.+/);
+    expect(manageHref, 'href de gestión').toBeTruthy();
+    if (!manageHref) throw new Error('sin enlace de gestión');
+    expect(manageHref).toContain(`/booking/${bookedBody.managementToken}`);
 
-    // 3e) Gestión por token → ver y cancelar.
-    await g.goto(manageHref!);
+    // 3e) Gestión por token → ver y cancelar, asertando la response del cancel y el estado final.
+    await g.goto(manageHref);
     await expect(g.getByText('Charla 30 min')).toBeVisible({ timeout: 15_000 });
     await expect(g.getByText('Invitado E2E')).toBeVisible();
+    const cancelResp = g.waitForResponse(
+      (r) => r.url().includes('/cancel') && r.request().method() === 'POST'
+    );
     g.once('dialog', (d) => void d.accept()); // confirm() nativo de cancelar
     await g.getByRole('button', { name: 'Cancelar' }).click();
+    const cancelled = await cancelResp;
+    expect(cancelled.status(), 'POST /cancel → 200').toBe(200);
+    expect((JSON.parse(await cancelled.text()) as { status: string }).status).toBe('cancelled');
+    // La UI refleja el estado: mensaje + badge "Cancelada" + ya no se ofrece cancelar.
     await expect(g.getByText('Reunión cancelada.')).toBeVisible({ timeout: 15_000 });
+    await expect(g.locator('.badge.cancelled')).toBeVisible();
+    await expect(g.getByRole('button', { name: 'Cancelar' })).toHaveCount(0);
   } finally {
     await guestCtx.close();
-    // Hygiene: apagar la feature para no contaminar el estado global del harness serial.
+    // Restaura los settings PREVIOS (re-login admin por si el token de 60s expiró) — review B.
+    const adminAgain = await apiLogin(page, ADMIN_EMAIL);
     await page.request.patch('/api/admin/scheduling/settings', {
-      headers: { Authorization: `Bearer ${admin.accessToken}` },
-      data: { enabled: false },
+      headers: bearer(adminAgain.accessToken),
+      data: { enabled: prevSettings.enabled, publicLinksEnabled: prevSettings.publicLinksEnabled },
     });
   }
 });

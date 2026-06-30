@@ -24,7 +24,7 @@ export async function getSchedulingSettings(): Promise<SchedulingSettings> {
   } | null>();
   const v = doc?.value ?? {};
   // Merge defensivo con los defaults (un doc viejo puede no tener todas las claves).
-  return {
+  const out: SchedulingSettings = {
     enabled: v.enabled ?? DEFAULT_SCHEDULING_SETTINGS.enabled,
     publicLinksEnabled: v.publicLinksEnabled ?? DEFAULT_SCHEDULING_SETTINGS.publicLinksEnabled,
     defaults: {
@@ -34,9 +34,16 @@ export async function getSchedulingSettings(): Promise<SchedulingSettings> {
       dateRangeDays:
         v.defaults?.dateRangeDays ?? DEFAULT_SCHEDULING_SETTINGS.defaults.dateRangeDays,
     },
-    maxEventTypesPerUser: v.maxEventTypesPerUser,
     auditEnabled: v.auditEnabled ?? DEFAULT_SCHEDULING_SETTINGS.auditEnabled,
   };
+  // `maxEventTypesPerUser` es OPCIONAL: sólo se incluye si es un número real. Mongo persiste un
+  // `undefined` como `null`, y un `null` filtrado rompía el límite (`count >= null` → `count >= 0` →
+  // siempre true, bloqueando TODA creación de tipos tras guardar settings). Omitir la clave si no es
+  // número evita re-persistir null y normaliza el DTO. (Hallazgo E2E retry-robusto.)
+  if (typeof v.maxEventTypesPerUser === 'number') {
+    out.maxEventTypesPerUser = v.maxEventTypesPerUser;
+  }
+  return out;
 }
 
 /** Patch admite `defaults` PARCIAL (se mergea contra el actual) — no exige el objeto completo. */

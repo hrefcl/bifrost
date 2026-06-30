@@ -138,8 +138,10 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
       return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: slug.reason });
     await assertOwnedSchedule(request.user.userId, body.availabilityScheduleId);
     // Límite por usuario (review B-MED): si el admin lo configuró, contar tipos activos antes de crear.
+    // `typeof === 'number'` (no `!== undefined`): un `null` persistido coercionaba `count >= null` a
+    // `count >= 0` → siempre bloqueaba (hallazgo E2E).
     const settings = await getSchedulingSettings();
-    if (settings.maxEventTypesPerUser !== undefined) {
+    if (typeof settings.maxEventTypesPerUser === 'number') {
       const count = await EventType.countDocuments({
         userId: request.user.userId,
         active: true,
@@ -197,7 +199,7 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
     // maxEventTypesPerUser reactivando en lugar de crear (re-auditoría hostil — bypass del límite).
     if (body.active === true) {
       const settings = await getSchedulingSettings();
-      if (settings.maxEventTypesPerUser !== undefined) {
+      if (typeof settings.maxEventTypesPerUser === 'number') {
         const current = await EventType.findOne({ _id: id, userId: request.user.userId }).select(
           'active'
         );
