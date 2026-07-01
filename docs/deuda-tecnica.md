@@ -479,3 +479,11 @@ necesario). TDs residuales:
   por el disconnect con stopTracks=true; el guard staleGen antes de cada setXEnabled minimiza la ventana.
 - **TD-MEET-TURN-TLS (roadmap, ya documentado)**: TURN/TLS:443 diferido; redes que sólo abren 443/TCP pueden
   no conectar media (fast-follow del diseño).
+- **TD-MEET-UDP-BUFFER (LOW, operador-3AM)**: LiveKit loguea al arrancar `UDP receive buffer is too small
+  for a production set-up (current: 425984, suggested: 5000000)`. A ALTA escala (muchos streams concurrentes)
+  causa pérdida de paquetes UDP → media degradado. Investigado: el container NO puede subir
+  `net.core.rmem_max` — Docker lo rechaza ("unsafe procfs") y está namespaced per-netns (el sysctl del HOST
+  no lo alcanza). La ÚNICA forma limpia sería `network_mode: host` para el container livekit, que rompe el
+  ruteo Traefik (meet.<dom> → livekit:7880 por bridge) y el wiring del api → desproporcionado. Aceptable para
+  el modelo de Bifrost (PYME, pocas llamadas concurrentes; el buffer default alcanza). Fix futuro sólo si se
+  apunta a escala alta: livekit en host-net + re-cablear Traefik/api al host, o un sidecar.
