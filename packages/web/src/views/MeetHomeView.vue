@@ -5,7 +5,7 @@
  * con un link o código. La sala de la llamada en sí vive en `/meet/:slug` (MeetJoinView, guestOk). El gate
  * de disponibilidad usa la misma config pública que la agenda (useMeetConfig → /config/public.meetEnabled).
  */
-import { ref, onMounted } from 'vue';
+import { ref, onMounted, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { api } from '@/lib/http';
@@ -48,9 +48,19 @@ async function newMeeting() {
   creating.value = true;
   errorMsg.value = '';
   try {
-    const { data } = await api.post<{ room: CreatedRoom }>('/meet/rooms', {
+    // El backend responde 200 `{disabled:true}` si Meet se apagó (TOCTOU: la config pública pudo cargar
+    // antes de que el admin lo deshabilite). Manejar la unión, no asumir que todo 200 trae `room`. [B/D-MED]
+    const { data } = await api.post<{ room?: CreatedRoom; disabled?: boolean }>('/meet/rooms', {
       name: t('meet.instantName'),
     });
+    if (data.disabled) {
+      meetAvailable.value = false; // Meet quedó apagado → la vista muestra el aviso de deshabilitado
+      return;
+    }
+    if (!data.room) {
+      errorMsg.value = t('meet.createError');
+      return;
+    }
     created.value = data.room;
   } catch {
     errorMsg.value = t('meet.createError');
@@ -65,6 +75,7 @@ function enterCreated() {
 }
 
 function joinExisting() {
+  errorMsg.value = ''; // limpiar un error previo (p.ej. de un intento fallido) [D-LOW]
   const slug = meetSlugFromInput(joinInput.value);
   if (!slug) {
     errorMsg.value = t('meet.joinInvalid');
@@ -73,16 +84,22 @@ function joinExisting() {
   void router.push({ name: 'public-meet-room', params: { slug } });
 }
 
+// Timer del feedback "Copiado": se limpia entre clicks y al desmontar (sin timers huérfanos). [B/D-LOW]
+let copiedTimer: ReturnType<typeof setTimeout> | null = null;
 async function copyLink() {
   if (!created.value) return;
   try {
     await navigator.clipboard.writeText(created.value.meetUrl);
     copied.value = true;
-    setTimeout(() => (copied.value = false), 1800);
+    if (copiedTimer) clearTimeout(copiedTimer);
+    copiedTimer = setTimeout(() => (copied.value = false), 1800);
   } catch {
     /* clipboard bloqueado: el usuario puede copiar a mano del input */
   }
 }
+onBeforeUnmount(() => {
+  if (copiedTimer) clearTimeout(copiedTimer);
+});
 </script>
 
 <template>

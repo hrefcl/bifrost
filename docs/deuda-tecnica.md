@@ -489,3 +489,21 @@ necesario). TDs residuales:
   ruteo Traefik (meet.<dom> → livekit:7880 por bridge) y el wiring del api → desproporcionado. Aceptable para
   el modelo de Bifrost (PYME, pocas llamadas concurrentes; el buffer default alcanza). Fix futuro sólo si se
   apunta a escala alta: livekit en host-net + re-cablear Traefik/api al host, o un sidecar.
+
+## Auto-auditoría 2026-07-01b (UI de Meet desplegada)
+
+- **TD-MEET-ROOM-PROLIFERATION (LOW-MED, escalabilidad 10x)**: el botón "Nueva reunión" de `MeetHomeView`
+  hace `POST /api/meet/rooms` que SIEMPRE crea una `MeetRoom` personal nueva (mode `personal`, SIN `expiresAt`).
+  Cada click acumula una sala en Mongo que nunca se purga (el TTL `purgeAt` sólo aplica a `per_event`). A 10x
+  usuarios creando reuniones repetidamente, la colección crece sin techo y no hay UI para listar/borrar las
+  propias salas. Impacto real bajo hoy (docs livianos, sin media hasta el primer join), pero es basura que se
+  acumula. Fix propuesto: (a) semántica get-or-create de UNA sala personal por usuario (estilo "personal room"
+  de Google Meet) reutilizable + botón "rotar link"; o (b) TTL/GC de salas personales sin uso reciente; o
+  (c) UI de "mis salas" con borrar. (a) es la de mejor UX. Requiere cambio de backend en `POST /meet/rooms`.
+- **TD-MEET-UI-NONADMIN-UNVERIFIED (LOW)**: la UI de Meet (`/meet`, botón nav) se verificó en vivo SÓLO como
+  admin. El backend `POST /meet/rooms` usa `request.user.userId` sin gate de rol y el botón nav gatea por
+  `meetEnabled` (no por rol) → un usuario NO-admin DEBERÍA verlo y poder crear salas. No verificado end-to-end
+  con un buzón no-admin (requiere provisionar uno). Sin riesgo de authz aparente (salas scoped a userId).
+- **VERIFICADO (no es deuda, se registra por trazabilidad)**: llamada 2-partes end-to-end ARRANCANDO desde la
+  UI nueva (Nueva reunión → Entrar ahora → 2º browser por el link compartido → ambos connected + 2 video tiles),
+  Playwright contra Aulion build 162. El render (botón nav + /meet + crear) y la llamada real ambos pasan.

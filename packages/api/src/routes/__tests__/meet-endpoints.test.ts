@@ -303,6 +303,27 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
     expect(res.statusCode).toBe(403);
   });
 
+  it('POST /rooms {allowExternal:true} NO puede saltear allowExternal=false del admin (externo → 403) [review B-HIGH]', async () => {
+    await enableMeet({ allowExternal: false });
+    const { user } = await seedUserWithAccount({ email: 'attacker@test.com' });
+    // Un usuario común intenta forzar el override vía el payload (API/devtools).
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/meet/rooms',
+      headers: authHeaders(app, user._id.toString()),
+      payload: { name: 'sala', allowExternal: true },
+    });
+    expect(create.statusCode).toBe(201);
+    const { room } = JSON.parse(create.body) as { room: { slug: string } };
+    // El override NO se aplicó → un invitado externo sigue bloqueado (la política del admin manda).
+    const ext = await app.inject({
+      method: 'POST',
+      url: `/api/meet/public/${room.slug}/token`,
+      payload: {},
+    });
+    expect(ext.statusCode).toBe(403);
+  });
+
   // ---- Backlink (booking) ----
   it('sala booking con backlink CANCELADO → token 404 (slug huérfano no mintea)', async () => {
     await enableMeet();
