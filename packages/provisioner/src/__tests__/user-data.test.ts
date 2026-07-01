@@ -210,10 +210,26 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('STORAGE_PROVIDER=s3');
   });
 
+  it('NO excede el límite de 16384 bytes de user-data de EC2 (con TODAS las features on)', () => {
+    // Regresión: con Meet+SES+S3+admin el user-data verboso llegaba a ~18.4KB → EC2 rechaza el CREATE
+    // ("User data is limited to 16384 bytes"). stripUserDataComments lo compacta. Margen de seguridad.
+    const full = buildUserData({
+      ...base,
+      enableMeet: true,
+      sesParamName: '/bifrost/acme-com/ses-smtp',
+      s3Bucket: 'bifrost-acme-com-data',
+      adminMailbox: 'admin@acme.com',
+      adminMailboxPassword: 'clave-test-8+',
+    });
+    expect(Buffer.byteLength(full, 'utf8')).toBeLessThan(16384);
+  });
+
   it('los exit explícitos (readiness, ref) señalizan a CFN — exit NO dispara el trap ERR', () => {
     const s = buildUserData(base);
     // El readiness check (contenedor muerto) hace signal_fail ANTES del exit 1 → CFN falla ya,
     // no por timeout de 15 min del CreationPolicy. [shellcheck re-audit]
-    expect(s).toMatch(/docker compose ps >&2\n(?:\s*#[^\n]*\n)+\s*signal_fail\n\s*exit 1/);
+    // (Los comentarios intermedios se eliminan por stripUserDataComments para no exceder los 16KB de EC2 →
+    // el `#…` es opcional; lo que importa es signal_fail antes del exit 1.)
+    expect(s).toMatch(/docker compose ps >&2\n(?:\s*#[^\n]*\n)*\s*signal_fail\n\s*exit 1/);
   });
 });
