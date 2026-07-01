@@ -66,10 +66,42 @@ function sh(value: string): string {
   return value.replace(/["\\$`]/g, '\\$&');
 }
 
+/**
+ * Compacta el user-data para no superar el LÍMITE DE 16384 BYTES de EC2 (con Meet+SES+S3+admin el script
+ * verboso lo excede). Quita SÓLO comentarios de línea completa y líneas en blanco del CUERPO del cloud-init;
+ * es HEREDOC-AWARE: todo lo que va dentro de `<<'DELIM' … DELIM` (shebangs, config, el helper SES) se
+ * PRESERVA intacto. Conserva el shebang `#!` y `#cloud-config`. No toca comandos ni strings.
+ */
+export function stripUserDataComments(s: string): string {
+  const lines = s.split('\n');
+  const out: string[] = [];
+  let heredoc: string | null = null;
+  for (const line of lines) {
+    if (heredoc !== null) {
+      out.push(line);
+      if (line.trim() === heredoc) heredoc = null; // cierre del heredoc
+      continue;
+    }
+    const t = line.trimStart();
+    // Comentario de cuerpo → se descarta (menos el shebang y #cloud-config).
+    if (t.startsWith('#') && !t.startsWith('#!') && !t.startsWith('#cloud')) continue;
+    // Apertura de heredoc: delimitador al FINAL de la línea (cat > f <<'DELIM').
+    const m = /<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?\s*$/.exec(line);
+    if (m) {
+      out.push(line);
+      heredoc = m[1];
+      continue;
+    }
+    if (line.trim() === '') continue; // colapsa líneas en blanco del cuerpo
+    out.push(line);
+  }
+  return out.join('\n') + '\n';
+}
+
 export function buildUserData(input: UserDataInput): string {
   const repo = input.repoUrl ?? 'https://github.com/hrefcl/bifrost.git';
   const ref = input.ref ?? 'main';
-  return `#!/bin/bash
+  return stripUserDataComments(`#!/bin/bash
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
@@ -392,5 +424,5 @@ echo "bifrost-provision: stack levantado para $DOMAIN" > /var/log/bifrost-provis
 
 # 8) ÉXITO → señalizar a CloudFormation (sin esto, CreationPolicy expira y el stack falla).
 cfn-signal -e 0 --stack "$STACK" --resource Instance --region "$REGION"
-`;
+`);
 }
