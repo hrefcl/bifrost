@@ -129,6 +129,17 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_REGION: ${S3_REGION:-}
       S3_USE_INSTANCE_ROLE: ${S3_USE_INSTANCE_ROLE:-}
+      # Bifrost Meet (opcional). TODO con default vacío → con Meet OFF el API arranca igual y la feature
+      # queda apagada (meetEnabled() exige estas + el flag del admin). El provisioner llena el .env al
+      # activar Meet. `LIVEKIT_API_URL` apunta al contenedor livekit por DNS interno de la red.
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:-}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:-}
+      LIVEKIT_WS_URL: ${LIVEKIT_WS_URL:-}
+      LIVEKIT_API_URL: ${LIVEKIT_API_URL:-http://livekit:7880}
+      MEET_PUBLIC_BASE_URL: ${MEET_PUBLIC_BASE_URL:-}
+      # Flag de "Meet provisionado" (capacidad de infra): el provisioner lo setea al habilitar Meet. Gobierna
+      # el aflojamiento de la CSP a `wss:` (api+web) para permitir config runtime del LiveKit desde el admin.
+      MEET_PROVISIONED: ${MEET_PROVISIONED:-}
       # Dir donde el API deja el MARKER de "actualizar" (Fase 2). El host-updater (fuera del contenedor)
       # lo lee y hace el pull+up. El API NUNCA toca el socket de Docker.
       UPDATE_TRIGGER_DIR: /app/update-trigger
@@ -144,6 +155,16 @@ services:
     image: ghcr.io/hrefcl/bifrost/web:${BIFROST_TAG:-latest}
     restart: unless-stopped
     depends_on: [api]
+    environment:
+      # CSP deploy-time del SPA: cuando Meet está PROVISIONADO (flag `MEET_PROVISIONED`, lo setea el provisioner
+      # al habilitar la capacidad Meet — INDEPENDIENTE del wsUrl y del toggle DB), el connect-src suma ` wss:`
+      # → el admin puede apuntar a CUALQUIER LiveKit (bundled/externo/Cloud) EN RUNTIME desde el panel SIN
+      # redeploy (review F3.7 B-H1/D-H1; `script-src 'self'` ya contiene el XSS real → aflojamiento marginal y
+      # deploy-gated). Meet NO provisionado → `connect-src 'self'` byte-idéntico. El SPA es el documento que abre
+      # el wss → ESTA CSP (no la de helmet del API) es la que lo habilita.
+      # COMILLAS DOBLES (review B-HIGH); `# prettier-ignore` evita que el formatter las revierta a simples.
+      # prettier-ignore
+      MEET_CSP_CONNECT: "${MEET_PROVISIONED:+ wss:}"
     labels:
       - traefik.enable=true
       - traefik.http.routers.bifrost.rule=Host(`webmail.example.com`) # ← tu dominio webmail
@@ -151,6 +172,40 @@ services:
       - traefik.http.routers.bifrost.tls=true
       - traefik.http.routers.bifrost.tls.certresolver=letsencrypt
       - traefik.http.services.bifrost.loadbalancer.server.port=80
+    networks: [mailnet]
+
+  # --- Bifrost Meet (LiveKit self-hosted) — OPCIONAL via profile "meet" ---------
+  # Con Meet OFF (sin COMPOSE_PROFILES=meet) este servicio NUNCA arranca → la base queda intacta.
+  # Al activar Meet, el provisioner setea COMPOSE_PROFILES=meet + las LIVEKIT_* en el .env.
+  livekit:
+    image: livekit/livekit-server:v1.8.4 # PINNED (no :latest → no major-bump sorpresa)
+    profiles: ['meet']
+    restart: unless-stopped
+    depends_on: [traefik]
+    command: ['--config', '/etc/livekit.yaml']
+    environment:
+      # Claves vía env (no hardcodeadas en el yaml): "<api_key>: <secret>". COMILLAS DOBLES obligatorias:
+      # Compose NO interpola `${...}` dentro de comillas simples (review B-HIGH) → con simples quedaría el
+      # literal y LiveKit aceptaría una credencial estática conocida.
+      # prettier-ignore
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-}: ${LIVEKIT_API_SECRET:-}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - '7881:7881/tcp' # ICE/TCP (fallback)
+      - '7882:7882/udp' # mux UDP single-port
+      - '3478:3478/udp' # TURN/STUN UDP embebido
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.meet.rule=Host(`meet.example.com`) # ← meet.<tu-dominio>
+      - traefik.http.routers.meet.entrypoints=websecure
+      - traefik.http.routers.meet.tls=true
+      - traefik.http.routers.meet.tls.certresolver=letsencrypt
+      - traefik.http.services.meet.loadbalancer.server.port=7880
+    # Límites de recursos: en el EC2 COMPARTIDO, acotar LiveKit para no privar a mailserver/mongo
+    # (review NEW-9; al activar Meet el provisioner sube el piso de instancia a t4g.large).
+    mem_limit: 1g
+    cpus: 1.0
     networks: [mailnet]
 
 secrets:

@@ -1,0 +1,39 @@
+# =============================================================================
+# Bifrost Meet — config de LiveKit (single-node, self-hosted en el MISMO EC2).
+#
+# Las API keys NO van acá: se inyectan por env `LIVEKIT_KEYS` ("clave: secreto") desde el .env
+# (el provisioner las genera con `openssl rand` al activar Meet).
+# =============================================================================
+
+port: 7880 # signaling HTTP/WS (detrás de Traefik; nunca público directo)
+
+rtc:
+  tcp_port: 7881 # ICE/TCP (fallback cuando UDP está bloqueado)
+  udp_port: 7882 # mux UDP single-port (single-node) → SG trivial (1 puerto)
+  # `use_external_ip` autodetecta la IP pública por STUN (en EC2 con EIP asociada devuelve la EIP). Es
+  # un default VÁLIDO y funcional para dev/local y como fallback (review B/C: NO existe `external_ips`
+  # en la config de v1.8.x). Para ICE DETERMINISTA en prod, F3.5/user-data DESCOMENTA `node_ip` y lo
+  # sustituye con la Elastic IP real (vía CFN GetAtt, NO IMDS — el EIPAssociation ocurre después):
+  use_external_ip: true
+  # node_ip: __MEET_EXTERNAL_IP__   # ← F3.5 lo activa con la EIP estática (verificar el campo vs la imagen pinneada)
+
+room:
+  # Default de participantes para salas AUTO-CREADAS sin valor explícito (al primer join, antes de que el
+  # backend llame ensureRoom): cierra el bypass del cap unbounded (review NEW-1). NO es un clamp duro —
+  # una CreateRoom(maxParticipants=N) del backend SÍ puede exceder este número (review C-F4). El provisioner
+  # debe alinear este valor si el admin permite un MeetSettings.maxParticipants > 20.
+  max_participants: 20
+  empty_timeout: 300 # cierra una sala 5m después de quedar vacía (limpieza pasiva)
+
+turn:
+  enabled: true
+  udp_port: 3478 # TURN/STUN UDP embebido (no coturn)
+  # TLS/5349 DIFERIDO (limitación MVP documentada): redes que sólo abren 443/TCP pueden no conectar
+  # media. Fast-follow: TURN/TLS:443 passthrough.
+
+logging:
+  level: info
+  json: false
+
+# Sin redis: single-node. Los límites de memoria/CPU se imponen a nivel del contenedor (compose),
+# no acá, para no privar a mailserver/mongo en el EC2 compartido.

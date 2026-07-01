@@ -11,9 +11,21 @@
  */
 
 import { stringify as yamlStringify } from 'yaml';
+import { MEET_EIP_MARKER } from '../mailserver/user-data.js';
 
 /** Puertos abiertos: 22 (SSH, CIDR configurable) + correo/web (a internet). */
 const MAIL_PORTS = [25, 80, 443, 143, 465, 587, 993] as const;
+
+/**
+ * Puertos MEDIA de LiveKit (2º SG, sólo con Meet ON). MÍNIMOS — NUNCA 1-65535. El 7880 (API/signaling)
+ * jamás se publica (sólo Traefik lo alcanza por la red docker). Single-node usa mux 1 UDP (7882) +
+ * 1 TCP de fallback (7881) + TURN/STUN embebido UDP (3478). TURN/TLS 5349 DIFERIDO (roadmap).
+ */
+const MEET_PORTS = [
+  { IpProtocol: 'tcp', FromPort: 7881, ToPort: 7881 }, // ICE/TCP fallback
+  { IpProtocol: 'udp', FromPort: 7882, ToPort: 7882 }, // mux UDP single-port
+  { IpProtocol: 'udp', FromPort: 3478, ToPort: 3478 }, // TURN/STUN UDP embebido
+] as const;
 
 /**
  * Construye el template CloudFormation. Si se pasa `userData`, lo EMBEBE en el Instance
@@ -71,6 +83,9 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       // Zona Route53 para gestionar el DNS (A/MX/SPF/DMARC) desde el stack. Vacío = NO gestionar DNS
       // acá (el CLI imprime los registros para cargarlos a mano — seguro si la zona ya tiene records).
       HostedZoneId: { Type: 'String', Default: '' },
+      // 'enabled' = Bifrost Meet (LiveKit): suma el 2º SG (puertos media), los A meet./turn.meet. y la
+      // inyección de la EIP en node_ip. Default 'disabled' (SEGURO): base byte-idéntica, Meet OFF.
+      MeetMode: { Type: 'String', Default: 'disabled', AllowedValues: ['enabled', 'disabled'] },
       // Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador
       // del CLI post-stack). Vacío = outbound SES deshabilitado. Con valor, el rol del box puede LEERLO
       // (ssm:GetParameter + kms:Decrypt) para cablear el relay cuando el outbound esté `ready`. §3/§7b.
@@ -100,6 +115,15 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       CreateS3: { 'Fn::Equals': [{ Ref: 'S3Mode' }, 'create'] },
       // Gestionar el DNS desde el stack sólo si se dio una zona (opt-in; el default es no tocar DNS).
       ManageDns: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
+      // Bifrost Meet activo → 2º SG + records meet./turn.meet. + EIP en node_ip.
+      EnableMeet: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+      // DNS de Meet sólo si AMBOS: se gestiona el DNS Y Meet está activo (records meet./turn.meet.).
+      ManageMeetDns: {
+        'Fn::And': [
+          { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+        ],
+      },
       // Outbound SES habilitado: dar al rol del box permiso de leer la credencial SMTP de SSM.
       EnableSes: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'SesParamName' }, ''] }] },
     },
@@ -163,6 +187,19 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           Tags: projectTags,
         },
       },
+      // 2º SG CONDICIONAL (sólo Meet ON): puertos MEDIA de LiveKit. Recurso SEPARADO a propósito → el SG
+      // base queda BYTE-IDÉNTICO con Meet OFF (los tests lo asertan). Se asocia a la instancia vía lista
+      // condicional (abajo). Puertos mínimos (7881/tcp, 7882/udp, 3478/udp) — NUNCA 1-65535.
+      MeetSecurityGroup: {
+        Type: 'AWS::EC2::SecurityGroup',
+        Condition: 'EnableMeet',
+        Properties: {
+          GroupDescription: 'Bifrost Meet (LiveKit media)',
+          VpcId: { 'Fn::If': ['CreateNetwork', { Ref: 'VPC' }, { Ref: 'ExistingVpcId' }] },
+          SecurityGroupIngress: MEET_PORTS.map((p) => ({ ...p, CidrIp: '0.0.0.0/0' })),
+          Tags: projectTags,
+        },
+      },
       ElasticIP: {
         Type: 'AWS::EC2::EIP',
         Properties: { Domain: 'vpc', Tags: projectTags },
@@ -177,7 +214,12 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           InstanceType: { Ref: 'InstanceType' },
           KeyName: { Ref: 'KeyName' },
           SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
-          SecurityGroupIds: [{ Ref: 'SecurityGroup' }],
+          // SG base SIEMPRE; el 2º SG (Meet) sólo con Meet ON. `AWS::NoValue` ELIMINA el elemento con
+          // Meet OFF → la lista efectiva es `[SecurityGroup]`, idéntica al stack pre-Meet.
+          SecurityGroupIds: [
+            { Ref: 'SecurityGroup' },
+            { 'Fn::If': ['EnableMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
+          ],
           // IMDSv2 obligatorio (HttpTokens required) — cierra el SSRF a credenciales de IMDSv1.
           // HopLimit=2: la API corre en un CONTENEDOR Docker → alcanzar el IMDS suma un hop de red; con
           // el default 1, las requests IMDSv2 desde el contenedor fallan y el S3-por-rol no autentica.
@@ -447,6 +489,32 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
               TTL: '300',
               ResourceRecords: ['"v=DMARC1; p=quarantine"'],
             },
+            // A meet.<dom> y turn.meet.<dom> → EIP, SÓLO con Meet ON (ManageMeetDns). `AWS::NoValue`
+            // elimina el elemento con Meet OFF → el grupo de records queda idéntico al pre-Meet.
+            {
+              'Fn::If': [
+                'ManageMeetDns',
+                {
+                  Name: { 'Fn::Sub': 'meet.${DomainName}' },
+                  Type: 'A',
+                  TTL: '300',
+                  ResourceRecords: [{ Ref: 'ElasticIP' }],
+                },
+                { Ref: 'AWS::NoValue' },
+              ],
+            },
+            {
+              'Fn::If': [
+                'ManageMeetDns',
+                {
+                  Name: { 'Fn::Sub': 'turn.meet.${DomainName}' },
+                  Type: 'A',
+                  TTL: '300',
+                  ResourceRecords: [{ Ref: 'ElasticIP' }],
+                },
+                { Ref: 'AWS::NoValue' },
+              ],
+            },
           ],
         },
       },
@@ -465,6 +533,11 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
         Description: 'Región del bucket (para el provider S3 vía rol del EC2)',
         Value: { Ref: 'AWS::Region' },
       },
+      MeetUrl: {
+        Condition: 'EnableMeet',
+        Description: 'URL pública de Bifrost Meet (apuntá meet.<dom> y turn.meet.<dom> a la IP)',
+        Value: { 'Fn::Sub': 'https://meet.${DomainName}' },
+      },
     },
   };
 
@@ -474,13 +547,36 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
     const params = template.Parameters as Record<string, unknown>;
     delete params.UserData;
     const resources = template.Resources as Record<string, { Properties: Record<string, unknown> }>;
-    resources.Instance.Properties.UserData = { 'Fn::Base64': userData };
+    resources.Instance.Properties.UserData = { 'Fn::Base64': embedUserData(userData) };
   }
 
   return template;
 }
 
+/**
+ * Embebe el user-data en el template. Si contiene el marcador de la EIP (Meet ON), lo sustituye por
+ * `GetAtt ElasticIP.PublicIp` vía **`Fn::Join`** — NO `Fn::Sub`: `Fn::Sub` interpolaría TODOS los
+ * `${VAR}` del bash del cloud-init (cada variable rompería salvo escaparla `${!VAR}`, frágil). `Fn::Join`
+ * concatena las partes literales SIN tocar el `$`. Misma propiedad que el diseño exige: la IP la inyecta
+ * CFN desde la EIP asignada (NO IMDS — el EIPAssociation asocia DESPUÉS de que user-data señaliza, así
+ * que IMDS devolvería la IP efímera de launch). `GetAtt ElasticIP.PublicIp` crea la dependencia
+ * implícita Instance→ElasticIP, así que CFN asigna la EIP primero y su PublicIp ya se conoce. Sin
+ * marcador (Meet OFF) → Base64 del literal, idéntico al embedding pre-Meet.
+ */
+function embedUserData(userData: string): unknown {
+  if (!userData.includes(MEET_EIP_MARKER)) return userData;
+  const parts = userData.split(MEET_EIP_MARKER);
+  const eip = { 'Fn::If': ['EnableMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''] };
+  const joinList: unknown[] = [];
+  parts.forEach((part, i) => {
+    joinList.push(part);
+    if (i < parts.length - 1) joinList.push(eip);
+  });
+  return { 'Fn::Join': ['', joinList] };
+}
+
 export const MAIL_INGRESS_PORTS = MAIL_PORTS;
+export const MEET_INGRESS_PORTS = MEET_PORTS;
 
 /** El template como YAML de CloudFormation (el entregable que el CLI ofrece correr o entregar). */
 export function templateToYaml(template: Record<string, unknown> = buildStackTemplate()): string {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildUserData } from '../mailserver/user-data.js';
+import { buildUserData, MEET_EIP_MARKER } from '../mailserver/user-data.js';
 
 describe('buildUserData (cloud-init)', () => {
   const base = {
@@ -26,6 +26,35 @@ describe('buildUserData (cloud-init)', () => {
     // Cero claves estáticas (el rol del EC2 las provee temporales vía IMDS).
     expect(s).not.toContain('S3_ACCESS_KEY_ID');
     expect(s).not.toContain('S3_SECRET');
+  });
+
+  it('sin enableMeet → NADA de Meet (base byte-idéntica: ni profile, ni flag, ni claves LiveKit)', () => {
+    const s = buildUserData(base);
+    expect(s).not.toContain('COMPOSE_PROFILES=meet');
+    expect(s).not.toContain('MEET_PROVISIONED');
+    expect(s).not.toContain('LIVEKIT_API_SECRET');
+    expect(s).not.toContain(MEET_EIP_MARKER);
+    expect(s).not.toContain('node_ip');
+  });
+
+  it('con enableMeet → profile + flag de provisión + claves LiveKit en el .env + node_ip por EIP', () => {
+    const s = buildUserData({ ...base, enableMeet: true });
+    // .env: profile (arranca livekit) + flag (afloja CSP / config runtime).
+    expect(s).toContain('COMPOSE_PROFILES=meet');
+    expect(s).toContain('MEET_PROVISIONED=1');
+    // Origen único wsUrl + base pública + API interna.
+    expect(s).toContain('LIVEKIT_WS_URL=wss://meet.${DOMAIN}');
+    expect(s).toContain('LIVEKIT_API_URL=http://livekit:7880');
+    expect(s).toContain('MEET_PUBLIC_BASE_URL=https://webmail.${DOMAIN}');
+    // Claves generadas EN EL HOST (openssl), no embebidas en el user-data.
+    expect(s).toContain('LIVEKIT_API_KEY=');
+    expect(s).toContain('LIVEKIT_API_SECRET=');
+    expect(s).toMatch(/openssl rand -hex 32/); // secret
+    // node_ip determinista: sustituye el marcador (que CFN reemplaza por la EIP) + apaga STUN.
+    expect(s).toContain(MEET_EIP_MARKER);
+    expect(s).toContain('use_external_ip: false');
+    expect(s).toContain('node_ip:');
+    expect(s).toContain('livekit.yaml');
   });
 
   it('con adminMailbox → crea el buzón admin en docker-mailserver (login turnkey)', () => {

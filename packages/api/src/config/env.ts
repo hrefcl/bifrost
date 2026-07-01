@@ -13,13 +13,25 @@ const CRITICAL_VARS = ['MONGODB_URI', 'REDIS_URL', 'JWT_SECRET', 'ENCRYPTION_KEY
 const FILE_BACKED_VARS = [...CRITICAL_VARS, 'COMPLIANCE_HMAC_SECRET'] as const;
 
 /**
+ * Secretos OPCIONALES con soporte `<VAR>_FILE` (no críticos para el boot). Bifrost Meet sólo necesita
+ * LIVEKIT_* cuando la feature está activa; con Meet OFF estos no existen y el boot debe seguir OK
+ * (review D-H5). Se resuelven con el MISMO mecanismo de docker-secrets que los críticos.
+ */
+const OPTIONAL_FILE_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const;
+
+/**
  * Soporte de docker-secrets (`<VAR>_FILE`): si está seteado `<VAR>_FILE` y `<VAR>` está vacío, lee
  * el secreto del archivo y lo carga en `<VAR>`. Es la convención estándar de Docker Compose secrets
  * (el compose monta el secreto y pasa `JWT_SECRET_FILE`/`ENCRYPTION_KEY_FILE`, NO el valor en claro).
  * Debe correr ANTES de evaluar setup-mode / parsear el schema. Exportada para poder testearla.
+ *
+ * Los críticos LANZAN si el archivo no se puede leer (boot fail-fast). Los opcionales (LIVEKIT_*)
+ * también lanzan si `_FILE` está seteado pero ilegible — un archivo de secreto roto debe ser visible,
+ * no silenciado; pero su AUSENCIA total no rompe nada (Meet OFF no setea `_FILE`).
  */
 export function resolveFileSecrets(): void {
-  for (const key of FILE_BACKED_VARS) {
+  // Críticos + COMPLIANCE_HMAC_SECRET (FILE_BACKED_VARS) + LIVEKIT_* opcionales (OPTIONAL_FILE_VARS).
+  for (const key of [...FILE_BACKED_VARS, ...OPTIONAL_FILE_VARS]) {
     const filePath = process.env[`${key}_FILE`];
     const current = process.env[key];
     if (filePath && (!current || current.trim() === '')) {
@@ -66,6 +78,17 @@ const envSchema = z.object({
   // seteado, el login del webmail defaultea a este servidor y OCULTA "Configuración del servidor" → se
   // comporta como webmail NATIVO del dominio. Vacío = instalación genérica (modo "traé tu IMAP").
   MAIL_SERVER_HOST: z.string().optional(),
+
+  // --- Bifrost Meet (opcional; todo ausente con Meet OFF → boot OK) ---
+  // Credenciales LiveKit (también vía `*_FILE` docker-secret, resueltas arriba).
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
+  // wsUrl de signaling para el SDK del cliente (`wss://meet.<dom>`).
+  LIVEKIT_WS_URL: z.string().optional(),
+  // URL HTTP interna de la API LiveKit (Twirp). Default: derivada de LIVEKIT_WS_URL.
+  LIVEKIT_API_URL: z.string().optional(),
+  // Base pública de los links de unión (`https://webmail.<dom>`).
+  MEET_PUBLIC_BASE_URL: z.string().optional(),
 });
 
 const partialSchema = z.object({

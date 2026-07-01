@@ -3,9 +3,11 @@ import { parse as yamlParse } from 'yaml';
 import {
   buildStackTemplate,
   MAIL_INGRESS_PORTS,
+  MEET_INGRESS_PORTS,
   templateToYaml,
   templateToJson,
 } from '../infra/stack-template.js';
+import { MEET_EIP_MARKER } from '../mailserver/user-data.js';
 
 interface TplView {
   Parameters: Record<string, unknown>;
@@ -211,5 +213,114 @@ describe('buildStackTemplate (CloudFormation)', () => {
     // emite `&anchor`/`*alias` que CFN rechaza ("YAML aliases are not allowed").
     expect(yaml).not.toMatch(/: &\w/); // ninguna línea define un anchor
     expect(yaml).not.toMatch(/: \*\w/); // ninguna usa un alias
+  });
+});
+
+describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
+  it('MeetMode param default disabled; conditions EnableMeet/ManageMeetDns presentes', () => {
+    expect(t.Parameters.MeetMode).toMatchObject({
+      Default: 'disabled',
+      AllowedValues: ['enabled', 'disabled'],
+    });
+    expect(t.Conditions.EnableMeet).toEqual({ 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] });
+    // ManageMeetDns = hay zona Route53 Y Meet ON.
+    expect(t.Conditions.ManageMeetDns).toEqual({
+      'Fn::And': [
+        { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+      ],
+    });
+  });
+
+  it('2º SG (MeetSecurityGroup) condicional EnableMeet con EXACTAMENTE los puertos media (mínimos)', () => {
+    const sg = t.Resources.MeetSecurityGroup;
+    expect(sg?.Condition).toBe('EnableMeet');
+    const ingress = sg?.Properties.SecurityGroupIngress as {
+      IpProtocol: string;
+      FromPort: number;
+      ToPort: number;
+      CidrIp: string;
+    }[];
+    // Exactamente 3 reglas: 7881/tcp, 7882/udp, 3478/udp. NUNCA un rango 1-65535.
+    expect(ingress).toHaveLength(3);
+    expect(ingress).toEqual(
+      expect.arrayContaining([
+        { IpProtocol: 'tcp', FromPort: 7881, ToPort: 7881, CidrIp: '0.0.0.0/0' },
+        { IpProtocol: 'udp', FromPort: 7882, ToPort: 7882, CidrIp: '0.0.0.0/0' },
+        { IpProtocol: 'udp', FromPort: 3478, ToPort: 3478, CidrIp: '0.0.0.0/0' },
+      ])
+    );
+    // Cada regla es un solo puerto (FromPort===ToPort) — sin rangos amplios.
+    for (const r of ingress) expect(r.FromPort).toBe(r.ToPort);
+    // El export coincide con lo que arma el SG.
+    expect(MEET_INGRESS_PORTS.map((p) => p.FromPort)).toEqual([7881, 7882, 3478]);
+  });
+
+  it('el SG BASE queda BYTE-IDÉNTICO con Meet (sin puertos media ni UDP); 7880 jamás expuesto', () => {
+    const base = t.Resources.SecurityGroup?.Properties.SecurityGroupIngress as {
+      IpProtocol: string;
+      FromPort: number;
+    }[];
+    const basePorts = base.map((x) => x.FromPort);
+    // El SG base NO gana ningún puerto de Meet (van en el 2º SG separado).
+    for (const p of [7880, 7881, 7882, 3478]) expect(basePorts).not.toContain(p);
+    // El SG base no tiene NINGUNA regla UDP (sólo TCP de correo/web/SSH).
+    expect(base.every((x) => x.IpProtocol === 'tcp')).toBe(true);
+  });
+
+  it('la Instance asocia el 2º SG SOLO con Meet ON (AWS::NoValue lo elimina con Meet OFF)', () => {
+    expect(t.Resources.Instance?.Properties.SecurityGroupIds).toEqual([
+      { Ref: 'SecurityGroup' },
+      { 'Fn::If': ['EnableMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
+    ]);
+  });
+
+  it('Route53 suma A meet. y turn.meet. (cond. ManageMeetDns con AWS::NoValue); base intacta', () => {
+    const records = t.Resources.DnsRecords?.Properties.RecordSets as Record<string, unknown>[];
+    const meetRecords = records.filter(
+      (r) => typeof r === 'object' && r !== null && 'Fn::If' in r
+    );
+    expect(meetRecords).toHaveLength(2);
+    for (const r of meetRecords) {
+      const branch = (r as { 'Fn::If': unknown[] })['Fn::If'];
+      expect(branch[0]).toBe('ManageMeetDns');
+      expect(branch[2]).toEqual({ Ref: 'AWS::NoValue' });
+    }
+    // Los 5 records base (A mail, A webmail, MX, SPF, DMARC) siguen incondicionales.
+    const baseRecords = records.filter((r) => !('Fn::If' in r));
+    expect(baseRecords).toHaveLength(5);
+  });
+
+  it('Output MeetUrl condicional EnableMeet', () => {
+    const out = (t.Outputs.MeetUrl ?? {}) as { Condition?: string; Value?: unknown };
+    expect(out.Condition).toBe('EnableMeet');
+    expect(out.Value).toEqual({ 'Fn::Sub': 'https://meet.${DomainName}' });
+  });
+
+  it('user-data CON marcador EIP → Fn::Join inyecta GetAtt ElasticIP.PublicIp (NO Fn::Sub, NO IMDS)', () => {
+    const script = `#!/bin/bash\nMEET_EXTERNAL_IP="${MEET_EIP_MARKER}"\necho "$DOMAIN"`;
+    const emb = buildStackTemplate(script) as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+    };
+    const ud = emb.Resources.Instance.Properties.UserData as { 'Fn::Base64': { 'Fn::Join': unknown[] } };
+    expect(ud['Fn::Base64']).toHaveProperty('Fn::Join');
+    const [sep, parts] = ud['Fn::Base64']['Fn::Join'] as [string, unknown[]];
+    expect(sep).toBe('');
+    // La EIP se inyecta como GetAtt condicional (no IMDS); el `$DOMAIN` bash queda LITERAL (no Fn::Sub).
+    expect(parts[1]).toEqual({
+      'Fn::If': ['EnableMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''],
+    });
+    expect((parts[0] as string)).toContain('MEET_EXTERNAL_IP="');
+    expect((parts[2] as string)).toContain('echo "$DOMAIN"'); // bash var intacta, NO interpolada
+    // El marcador crudo ya NO aparece (fue sustituido).
+    expect(JSON.stringify(ud)).not.toContain(MEET_EIP_MARKER);
+  });
+
+  it('user-data SIN marcador → embedding literal (Fn::Base64 del string, byte-idéntico pre-Meet)', () => {
+    const script = '#!/bin/bash\necho hola';
+    const emb = buildStackTemplate(script) as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+    };
+    expect(emb.Resources.Instance.Properties.UserData).toEqual({ 'Fn::Base64': script });
   });
 });

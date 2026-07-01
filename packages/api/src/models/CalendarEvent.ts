@@ -26,6 +26,8 @@ export interface ICalendarEvent extends Document {
   /** 'booking' = bloque busy creado por una reserva de la agenda (proyección reparable). Default 'manual'. */
   source?: 'manual' | 'booking';
   bookingId?: mongoose.Types.ObjectId;
+  meetRoomId?: mongoose.Types.ObjectId;
+  meetUrl?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -67,6 +69,8 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
     // Aditivos para la agenda (no rompen eventos existentes: opcionales, default 'manual').
     source: { type: String, enum: ['manual', 'booking'], default: 'manual' },
     bookingId: { type: Schema.Types.ObjectId },
+    meetRoomId: { type: Schema.Types.ObjectId },
+    meetUrl: { type: String, maxlength: 2048 },
   },
   { timestamps: true }
 );
@@ -109,6 +113,8 @@ export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
     sourceEmailId: doc.sourceEmailId?.toString(),
     source: doc.source,
     bookingId: doc.bookingId?.toString(),
+    meetRoomId: doc.meetRoomId?.toString(),
+    meetUrl: doc.meetUrl,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
