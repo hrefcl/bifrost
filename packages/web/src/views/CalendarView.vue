@@ -55,18 +55,96 @@ function fcApi() {
   return calendarRef.value?.getApi();
 }
 
-/** Eventos del store → formato FullCalendar (color estable por calendario). */
+// ── Sidebar estilo Google Calendar: "Mis calendarios" con toggle de visibilidad ──
+const hiddenCals = ref<Set<string>>(new Set());
+function calNameOf(e: CalendarEvent): string {
+  return e.calendarName || 'Personal';
+}
+/** Lista de calendarios (derivada de los eventos cargados) con su color y visibilidad. */
+const calendarList = computed(() => {
+  const names = new Set<string>();
+  for (const e of store.events) names.add(calNameOf(e));
+  if (names.size === 0) names.add('Personal');
+  return [...names].sort().map((name) => ({
+    name,
+    color: colorFor(name),
+    visible: !hiddenCals.value.has(name),
+  }));
+});
+function toggleCal(name: string): void {
+  const next = new Set(hiddenCals.value);
+  if (next.has(name)) next.delete(name);
+  else next.add(name);
+  hiddenCals.value = next;
+}
+
+/** Eventos del store → formato FullCalendar (color estable por calendario), filtrando los ocultos. */
 const fcEvents = computed<EventInput[]>(() =>
-  store.events.map((e) => ({
-    id: e.id,
-    title: e.summary,
-    start: e.startDate,
-    end: e.endDate,
-    allDay: e.allDay,
-    backgroundColor: colorFor(e.calendarName || e.summary),
-    borderColor: colorFor(e.calendarName || e.summary),
-  }))
+  store.events
+    .filter((e) => !hiddenCals.value.has(calNameOf(e)))
+    .map((e) => ({
+      id: e.id,
+      title: e.summary,
+      start: e.startDate,
+      end: e.endDate,
+      allDay: e.allDay,
+      backgroundColor: colorFor(calNameOf(e)),
+      borderColor: colorFor(calNameOf(e)),
+    }))
 );
+
+// ── Mini-calendario (navegador de mes, Monday-first) ──
+const miniAnchor = ref(new Date());
+const selectedDate = ref(new Date());
+const miniMonthLabel = computed(() =>
+  miniAnchor.value.toLocaleDateString(locale.value, { month: 'long', year: 'numeric' })
+);
+const miniWeekdays = computed(() => {
+  // L M X J V S D (o localizado): tomamos 7 días desde un lunes conocido.
+  const base = new Date(2024, 0, 1); // lunes
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = new Date(base);
+    d.setDate(base.getDate() + i);
+    return d.toLocaleDateString(locale.value, { weekday: 'narrow' });
+  });
+});
+function startOfDay(d: Date): number {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+const miniGrid = computed(() => {
+  const y = miniAnchor.value.getFullYear();
+  const m = miniAnchor.value.getMonth();
+  const first = new Date(y, m, 1);
+  const offset = (first.getDay() + 6) % 7; // lunes primero
+  const start = new Date(y, m, 1 - offset);
+  const todayTs = startOfDay(new Date());
+  const selTs = startOfDay(selectedDate.value);
+  return Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+    return {
+      key: d.toISOString().slice(0, 10),
+      day: d.getDate(),
+      date: d,
+      inMonth: d.getMonth() === m,
+      isToday: startOfDay(d) === todayTs,
+      isSelected: startOfDay(d) === selTs,
+    };
+  });
+});
+function miniPrev(): void {
+  miniAnchor.value = new Date(miniAnchor.value.getFullYear(), miniAnchor.value.getMonth() - 1, 1);
+}
+function miniNext(): void {
+  miniAnchor.value = new Date(miniAnchor.value.getFullYear(), miniAnchor.value.getMonth() + 1, 1);
+}
+/** Click en un día del mini-calendario → navega la grilla principal a ese día (vista día). */
+function pickMiniDay(d: Date): void {
+  selectedDate.value = d;
+  fcApi()?.gotoDate(d);
+  if (currentView.value === 'dayGridMonth') {
+    miniAnchor.value = new Date(d.getFullYear(), d.getMonth(), 1);
+  }
+}
 
 // datetime-local (hora local) ↔ Date helpers.
 function toLocalInput(d: Date): string {
@@ -274,14 +352,71 @@ onMounted(async () => {
               {{ t('calendar.view.' + v) }}
             </button>
           </div>
-          <button class="create-btn" @click="openCreate">
-            <AppIcon name="plus" :size="18" />{{ t('calendar.new') }}
-          </button>
         </div>
       </div>
 
-      <div class="cal-grid">
-        <FullCalendar ref="calendarRef" :options="calendarOptions" />
+      <div class="cal-body">
+        <!-- Sidebar estilo Google Calendar -->
+        <aside class="cal-sidebar">
+          <button class="cal-create" @click="openCreate">
+            <AppIcon name="plus" :size="18" />{{ t('calendar.new') }}
+          </button>
+
+          <!-- Mini-calendario (navegador de mes) -->
+          <div class="mini-cal">
+            <div class="mini-head">
+              <span class="mini-month">{{ miniMonthLabel }}</span>
+              <div class="mini-nav">
+                <button class="icon-btn" :title="t('common.back')" @click="miniPrev">
+                  <AppIcon name="chevronLeft" :size="16" />
+                </button>
+                <button class="icon-btn" @click="miniNext">
+                  <AppIcon name="chevronRight" :size="16" />
+                </button>
+              </div>
+            </div>
+            <div class="mini-grid">
+              <span v-for="(w, i) in miniWeekdays" :key="'wd' + i" class="mini-wd">{{ w }}</span>
+              <button
+                v-for="c in miniGrid"
+                :key="c.key"
+                class="mini-day"
+                :class="{ muted: !c.inMonth, today: c.isToday, sel: c.isSelected }"
+                @click="pickMiniDay(c.date)"
+              >
+                {{ c.day }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Mis calendarios -->
+          <div class="cal-section">
+            <h3 class="cal-section-title">{{ t('calendar.myCalendars') }}</h3>
+            <label v-for="c in calendarList" :key="c.name" class="cal-item">
+              <input
+                type="checkbox"
+                :checked="c.visible"
+                class="cal-check"
+                :style="{ accentColor: c.color }"
+                @change="toggleCal(c.name)"
+              />
+              <span class="cal-dot" :style="{ background: c.color }"></span>
+              <span class="cal-name">{{ c.name }}</span>
+            </label>
+          </div>
+
+          <!-- Páginas de reservas → Agenda -->
+          <div class="cal-section">
+            <h3 class="cal-section-title">{{ t('calendar.bookingPages') }}</h3>
+            <RouterLink :to="{ name: 'scheduling' }" class="cal-link">
+              <AppIcon name="calendarClock" :size="16" />{{ t('calendar.manageAgenda') }}
+            </RouterLink>
+          </div>
+        </aside>
+
+        <div class="cal-grid">
+          <FullCalendar ref="calendarRef" :options="calendarOptions" />
+        </div>
       </div>
     </div>
 
@@ -474,10 +609,154 @@ onMounted(async () => {
 .create-btn:hover {
   background: var(--accent-700);
 }
-.cal-grid {
+/* ---- Layout: sidebar + grilla ---- */
+.cal-body {
   flex: 1;
   min-height: 0;
+  display: flex;
+}
+.cal-grid {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
   padding: 8px 12px 12px;
+}
+/* ---- Sidebar estilo Google Calendar ---- */
+.cal-sidebar {
+  width: 256px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  padding: 14px 14px 20px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.cal-create {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  padding: 10px 18px 10px 14px;
+  border-radius: 24px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.08));
+}
+.cal-create:hover {
+  background: var(--surface-dim);
+}
+/* mini-calendario */
+.mini-cal {
+  user-select: none;
+}
+.mini-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+.mini-month {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  text-transform: capitalize;
+}
+.mini-nav {
+  display: flex;
+  gap: 2px;
+}
+.mini-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 1px;
+}
+.mini-wd {
+  text-align: center;
+  font-size: 10px;
+  color: var(--text-3);
+  padding: 2px 0;
+  text-transform: uppercase;
+}
+.mini-day {
+  aspect-ratio: 1;
+  border: none;
+  background: transparent;
+  border-radius: 50%;
+  font-size: 11.5px;
+  color: var(--text-1);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mini-day:hover {
+  background: var(--surface-dim);
+}
+.mini-day.muted {
+  color: var(--text-3);
+}
+.mini-day.today {
+  color: var(--accent);
+  font-weight: 700;
+}
+.mini-day.sel {
+  background: var(--accent);
+  color: #fff;
+  font-weight: 700;
+}
+/* secciones (mis calendarios / reservas) */
+.cal-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin: 0 0 8px;
+}
+.cal-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 13px;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.cal-check {
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+.cal-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  flex-shrink: 0;
+}
+.cal-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cal-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+}
+.cal-link:hover {
+  text-decoration: underline;
+}
+@media (max-width: 820px) {
+  .cal-sidebar {
+    display: none;
+  }
 }
 
 /* ---- Tema FullCalendar → tokens Bifrost ---- */
