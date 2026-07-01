@@ -25,6 +25,7 @@ export interface IEventType extends Document {
   cancelMinNoticeMin?: number;
   customQuestions: CustomQuestion[];
   active: boolean;
+  meetEnabled?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,6 +69,7 @@ const EventTypeSchema = new Schema<IEventType>(
     cancelMinNoticeMin: { type: Number, min: 0 },
     customQuestions: { type: [QuestionSchema], default: [] },
     active: { type: Boolean, default: true, index: true },
+    meetEnabled: { type: Boolean, default: false },
   },
   { timestamps: true }
 );
@@ -102,6 +104,7 @@ export function serializeEventType(doc: IEventType): EventTypeDto {
       required: q.required,
     })),
     active: doc.active,
+    meetEnabled: doc.meetEnabled ?? false,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };

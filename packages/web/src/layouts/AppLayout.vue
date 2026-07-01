@@ -153,7 +153,7 @@ async function onLogout() {
         :title="t('nav.scheduling')"
         @click="router.push({ name: 'scheduling' })"
       >
-        <AppIcon name="users" :size="20" />
+        <AppIcon name="calendarClock" :size="20" />
       </button>
       <button
         class="icon-btn"

@@ -25,6 +25,7 @@ import configRoutes from './routes/config.js';
 import signatureImageRoutes from './routes/signature-images.js';
 import attachmentRoutes from './routes/attachments.js';
 import metricsRoutes from './routes/metrics.js';
+import meetRoutes, { meetAdminRoutes } from './routes/meet.js';
 import complianceRoutes from './routes/compliance.js';
 import { counters, observeDuration } from './lib/metrics.js';
 
@@ -89,6 +90,14 @@ export async function buildApp() {
     done();
   });
 
+  // CSP. Cuando Meet está PROVISIONADO (flag deploy-time `MEET_PROVISIONED`, lo setea el provisioner al
+  // habilitar la capacidad Meet — NO depende del wsUrl ni del toggle DB), `connect-src` suma `wss:` para
+  // permitir que el admin apunte a CUALQUIER LiveKit (bundled/externo/Cloud) EN RUNTIME sin redeploy
+  // (review F3.7 B-H1/D-H1). `script-src 'self'` ya contiene el vector XSS real → el aflojamiento a `wss:`
+  // es marginal y deploy-gated. Meet NO provisionado → `'self'` byte-idéntico. Esta CSP de helmet aplica a
+  // respuestas del API; la del SPA (nginx) es la que realmente habilita el wss del documento — NO alinearlas.
+  const meetProvisioned = (process.env.MEET_PROVISIONED ?? '').trim().length > 0;
+  const connectSrc = ["'self'", ...(meetProvisioned ? ['wss:'] : [])];
   await app.register(helmet, {
     contentSecurityPolicy: {
       directives: {
@@ -96,7 +105,7 @@ export async function buildApp() {
         scriptSrc: ["'self'", "'unsafe-inline'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         imgSrc: ["'self'", 'data:', 'blob:'],
-        connectSrc: ["'self'"],
+        connectSrc,
       },
     },
   });
@@ -147,6 +156,8 @@ export async function buildApp() {
   await app.register(configRoutes, { prefix: '/api/config' });
   await app.register(signatureImageRoutes, { prefix: '/api/signature-images' });
   await app.register(attachmentRoutes, { prefix: '/api/attachments' });
+  await app.register(meetRoutes, { prefix: '/api/meet' });
+  await app.register(meetAdminRoutes, { prefix: '/api/admin/meet' });
   await app.register(complianceRoutes, { prefix: '/api/compliance' });
 
   return app;

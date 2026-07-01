@@ -14,6 +14,7 @@ import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
 import { useAuthStore } from '@/stores/auth';
+import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adminStorage';
 
 /**
  * Panel de administración (Roundcube administrable) con cuatro secciones:
@@ -535,10 +536,12 @@ async function saveBranding() {
 // ============================ ALMACENAMIENTO (wizard preexistente) ============================
 type ProviderType = 'local' | 's3';
 interface PublicS3 {
-  endpoint?: string;
+  endpoint?: string | null;
   bucket: string;
   region: string;
-  accessKeyId: string;
+  // Con useInstanceRole=true la respuesta NO trae accessKeyId (el rol de EC2 provee las creds).
+  accessKeyId?: string;
+  useInstanceRole?: boolean;
   secretConfigured: boolean;
 }
 interface StorageConfig {
@@ -554,7 +557,15 @@ const saved = ref(false);
 const error = ref('');
 const selected = ref<ProviderType>('local');
 const current = ref<StorageConfig | null>(null);
-const s3 = ref({ endpoint: '', bucket: '', region: '', accessKeyId: '', secretAccessKey: '' });
+const s3 = ref({
+  endpoint: '',
+  bucket: '',
+  region: '',
+  accessKeyId: '',
+  secretAccessKey: '',
+  // true = la instancia usa el rol de EC2 (sin claves estáticas) → lo fija el aprovisionamiento, NO la UI.
+  useInstanceRole: false,
+});
 const secretAlreadyConfigured = ref(false);
 
 async function loadStorage() {
@@ -563,10 +574,9 @@ async function loadStorage() {
     current.value = data;
     selected.value = data.providerType;
     if (data.s3) {
-      s3.value.endpoint = data.s3.endpoint ?? '';
-      s3.value.bucket = data.s3.bucket;
-      s3.value.region = data.s3.region;
-      s3.value.accessKeyId = data.s3.accessKeyId;
+      // s3FormFromConfig guarda cada campo contra undefined (con rol de instancia no viene accessKeyId →
+      // sin el guard, un `.trim()` posterior crasheaba la sección). Lógica pura + testeada en lib/adminStorage.
+      Object.assign(s3.value, s3FormFromConfig(data.s3));
       secretAlreadyConfigured.value = data.s3.secretConfigured;
     }
   } catch {
@@ -752,13 +762,9 @@ function clearStatus() {
   tested.value = null;
 }
 function s3Incomplete(): boolean {
-  return (
-    selected.value === 's3' &&
-    (!s3.value.bucket.trim() ||
-      !s3.value.region.trim() ||
-      !s3.value.accessKeyId.trim() ||
-      !s3.value.secretAccessKey)
-  );
+  if (selected.value !== 's3') return false;
+  // Lógica pura + testeada en lib/adminStorage (short-circuit por useInstanceRole incluido).
+  return computeS3Incomplete(s3.value);
 }
 function s3Payload() {
   return {
@@ -853,6 +859,43 @@ async function save() {
           </div>
         </div>
         <footer class="admin-nav-foot" data-testid="build-info">
+          <!-- Estado de actualización: UNA sola vez acá (#35; antes se repetía en cada sección). Sólo
+               lo carga el admin real (isAdmin) → un delegado no ve este widget. -->
+          <div
+            v-if="update?.updateAvailable"
+            class="bi-update bi-update-yes"
+            data-testid="update-available"
+          >
+            <button class="ub-btn-sm" :disabled="updating" @click="applyUpdate">
+              <AppIcon name="download" :size="14" />
+              {{ updating ? 'Actualizando…' : `Actualizar a build ${update.latest?.build ?? ''}` }}
+            </button>
+            <a
+              v-if="update.compareUrl"
+              :href="update.compareUrl"
+              target="_blank"
+              rel="noopener noreferrer"
+              class="ub-link-sm"
+              >Ver cambios</a
+            >
+          </div>
+          <div
+            v-else-if="update && !update.updateAvailable && update.latest"
+            class="bi-update"
+            data-testid="update-current"
+          >
+            <span class="bi-uptodate"><AppIcon name="check" :size="13" /> Última versión</span>
+            <button class="bi-check-link" :disabled="checkingUpdate" @click="loadUpdate(true)">
+              {{ checkingUpdate ? 'Buscando…' : 'Buscar' }}
+            </button>
+          </div>
+          <div v-else-if="update?.checkError" class="bi-update" data-testid="update-unknown">
+            <button class="bi-check-link" :disabled="checkingUpdate" @click="loadUpdate(true)">
+              {{ checkingUpdate ? 'Buscando…' : 'Verificar versión' }}
+            </button>
+          </div>
+          <p v-if="updateMsg" class="ub-msg-sm" data-testid="update-msg">{{ updateMsg }}</p>
+          <!-- Chip de versión (rediseño maqueta): reemplaza las líneas build sueltas. -->
           <div class="admin-verchip">
             <AppIcon name="shield" :size="16" />
             <div class="admin-verchip-text">
@@ -860,6 +903,7 @@ async function save() {
                 >{{ brand.name }} v{{ BUILD_INFO.version }}</span
               >
               <span class="bi-dim">build {{ BUILD_INFO.build }} · {{ BUILD_INFO.sha }}</span>
+              <span v-if="apiBuild" class="bi-dim" data-testid="build-api">api {{ apiBuild }}</span>
             </div>
           </div>
         </footer>
@@ -887,57 +931,7 @@ async function save() {
           </button>
         </header>
 
-        <!-- Aviso de actualización (estilo WordPress) -->
-        <div
-          v-if="update?.updateAvailable"
-          class="update-banner update-yes"
-          data-testid="update-available"
-        >
-          <AppIcon name="download" :size="18" />
-          <div class="ub-text">
-            <strong>Hay una actualización disponible</strong>
-            <span
-              >Última: build {{ update.latest?.build }} · tenés build {{ update.current.build }}
-              <template v-if="update.behind">({{ update.behind }} builds atrás)</template></span
-            >
-          </div>
-          <a
-            v-if="update.compareUrl"
-            :href="update.compareUrl"
-            target="_blank"
-            rel="noopener noreferrer"
-            class="ub-link"
-            >Ver cambios</a
-          >
-          <button class="ub-btn" :disabled="updating" @click="applyUpdate">
-            {{ updating ? 'Actualizando…' : 'Actualizar' }}
-          </button>
-        </div>
-        <p v-if="updateMsg" class="ub-msg" data-testid="update-msg">{{ updateMsg }}</p>
-        <div
-          v-else-if="update && !update.updateAvailable && update.latest"
-          class="update-banner update-ok"
-          data-testid="update-current"
-        >
-          <AppIcon name="check" :size="16" />
-          <span>Estás en la última versión (build {{ update.current.build }})</span>
-          <button class="ub-refresh" :disabled="checkingUpdate" @click="loadUpdate(true)">
-            {{ checkingUpdate ? 'Buscando…' : 'Buscar ahora' }}
-          </button>
-        </div>
-        <div
-          v-else-if="update?.checkError"
-          class="update-banner update-ok"
-          data-testid="update-unknown"
-        >
-          <span
-            >No se pudo verificar la última versión (build actual {{ update.current.build }})</span
-          >
-          <button class="ub-refresh" :disabled="checkingUpdate" @click="loadUpdate(true)">
-            {{ checkingUpdate ? 'Buscando…' : 'Reintentar' }}
-          </button>
-        </div>
-
+        <!-- El estado de actualización se muestra UNA vez en el footer del sidebar (no por sección). -->
         <div class="admin-body">
           <!-- ===================== AGENDA ===================== -->
           <AdminSchedulingPanel v-if="tab === 'scheduling'" />
@@ -1324,7 +1318,22 @@ async function save() {
                 </span>
               </label>
 
-              <div v-if="selected === 's3'" class="s3-fields" @input="clearStatus">
+              <!-- S3 vía rol de instancia EC2 (lo fija el aprovisionamiento): sólo lectura, sin claves. -->
+              <div v-if="selected === 's3' && s3.useInstanceRole" class="s3-instance-note">
+                <p class="hint">{{ t('admin.s3InstanceRole') }}</p>
+                <div class="s3-instance-info">
+                  <div>
+                    <span class="fld-lbl">{{ t('admin.bucket') }}</span>
+                    <strong>{{ s3.bucket || '—' }}</strong>
+                  </div>
+                  <div>
+                    <span class="fld-lbl">{{ t('admin.region') }}</span>
+                    <strong>{{ s3.region || '—' }}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else-if="selected === 's3'" class="s3-fields" @input="clearStatus">
                 <label class="fld-lbl">{{ t('admin.endpoint') }}</label>
                 <input
                   v-model="s3.endpoint"
@@ -1356,7 +1365,7 @@ async function save() {
 
               <div class="actions">
                 <button
-                  v-if="selected === 's3'"
+                  v-if="selected === 's3' && !s3.useInstanceRole"
                   class="btn-secondary"
                   :disabled="testing || s3Incomplete()"
                   @click="testConnection"
@@ -1365,14 +1374,25 @@ async function save() {
                 </button>
                 <span v-if="tested === 'ok'" class="ok-text">{{ t('admin.testOk') }}</span>
                 <span v-if="tested === 'fail'" class="err-text">{{ t('admin.testFail') }}</span>
-                <button class="btn-primary" :disabled="saving || s3Incomplete()" @click="save">
+                <!-- S3 instance-role no se guarda por UI (lo gestiona el aprovisionamiento). -->
+                <button
+                  v-if="!(selected === 's3' && s3.useInstanceRole)"
+                  class="btn-primary"
+                  :disabled="saving || s3Incomplete()"
+                  @click="save"
+                >
                   {{ saving ? t('admin.saving') : t('admin.save') }}
                 </button>
                 <span v-if="saved" class="ok-text">{{ t('admin.saved') }}</span>
                 <span v-if="error" class="err-text">{{ error }}</span>
               </div>
 
-              <p v-if="selected === 's3' && tested !== 'ok' && !s3Incomplete()" class="warn-text">
+              <p
+                v-if="
+                  selected === 's3' && !s3.useInstanceRole && tested !== 'ok' && !s3Incomplete()
+                "
+                class="warn-text"
+              >
                 {{ t('admin.testHint') }}
               </p>
               <p v-if="current?.updatedAt" class="current" data-testid="storage-current">
@@ -1659,58 +1679,67 @@ async function save() {
   display: block;
 }
 /* ---- Aviso de actualización ---- */
-.update-banner {
-  margin-bottom: 18px;
-  padding: 12px 14px;
-  border-radius: 10px;
+/* ---- Estado de actualización (compacto, en el footer del sidebar) ---- */
+.bi-update {
   display: flex;
   align-items: center;
-  gap: 10px;
-  font-size: 13px;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
 }
-.update-banner.update-yes {
-  background: var(--accent-soft);
-  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
-  color: var(--text-1);
-}
-.update-banner.update-ok {
-  background: var(--surface-dim);
-  border: 1px solid var(--border);
+.bi-update .bi-uptodate {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   color: var(--text-2);
 }
-.update-banner .ub-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.3;
-}
-.update-banner .ub-text span {
-  opacity: 0.8;
-  font-size: 12px;
-}
-.update-banner .ub-link {
-  margin-left: auto;
-  color: var(--accent);
-  font-weight: 600;
-  text-decoration: none;
-}
-.update-banner .ub-btn,
-.update-banner .ub-refresh {
-  padding: 6px 12px;
+.bi-update-yes {
+  padding: 8px 10px;
   border-radius: 8px;
-  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  margin-bottom: 12px;
+}
+.ub-btn-sm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  border: none;
   background: var(--accent);
   color: #fff;
   font-size: 12px;
+  font-weight: 600;
   cursor: pointer;
 }
-.update-banner .ub-btn:disabled {
-  opacity: 0.5;
+.ub-btn-sm:disabled {
+  opacity: 0.55;
   cursor: not-allowed;
 }
-.update-banner .ub-refresh {
-  margin-left: auto;
+.ub-link-sm {
+  color: var(--accent);
+  font-weight: 600;
+  text-decoration: none;
+  font-size: 11.5px;
+}
+.bi-check-link {
   background: transparent;
-  color: var(--text-1);
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 0;
+}
+.bi-check-link:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.ub-msg-sm {
+  font-size: 11.5px;
+  color: var(--text-2);
+  margin: 0 0 10px;
+  line-height: 1.4;
 }
 /* ---- Responsive: sidebar como drawer <900px ---- */
 @media (max-width: 900px) {

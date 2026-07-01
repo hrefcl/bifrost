@@ -11,9 +11,21 @@ import type {
   AvailabilityOverride,
   Booking,
 } from '@webmail6/shared';
+import { useMeetConfig } from '@/composables/useMeetConfig';
 
 const { t } = useI18n();
 const store = useSchedulingStore();
+
+// Gate del toggle de Meet: sólo se ofrece "Incluir Bifrost Meet" si la instalación tiene Meet activo.
+const meetAvailable = ref(false);
+const { load: loadMeetConfig } = useMeetConfig();
+void loadMeetConfig()
+  .then((c) => {
+    meetAvailable.value = c.meetEnabled;
+  })
+  .catch(() => {
+    meetAvailable.value = false;
+  });
 
 type Tab = 'types' | 'availability' | 'bookings';
 const tab = ref<Tab>('types');
@@ -90,6 +102,7 @@ function blankType(): EventTypeInput {
     availabilityScheduleId: store.schedules[0]?.id ?? '',
     customQuestions: [],
     active: true,
+    meetEnabled: false,
   };
 }
 const typeError = ref('');
@@ -744,6 +757,14 @@ const locLabel: Record<string, string> = {
               ><span>{{ t('scheduling.locationValue') }}</span
               ><input v-model="form.location.value"
             /></label>
+            <!-- Bifrost Meet: crea sala de videollamada nativa para este tipo (sólo si Meet está activo). -->
+            <label v-if="meetAvailable" class="f f--wide f--check">
+              <input v-model="form.meetEnabled" type="checkbox" />
+              <span>{{ t('meet.enableLabel') }}</span>
+            </label>
+            <p v-if="meetAvailable && form.meetEnabled" class="f--wide meet-hint">
+              {{ t('meet.enableHint') }}
+            </p>
             <label class="f"
               ><span>{{ t('scheduling.bufferBefore') }}</span
               ><input v-model.number="form.bufferBeforeMin" type="number" min="0"
@@ -1548,6 +1569,20 @@ const locLabel: Record<string, string> = {
 }
 .f--wide {
   grid-column: 1 / -1;
+}
+/* Checkbox de Bifrost Meet en el modal de tipo: fila horizontal (no columna como los demás campos). */
+.f--check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.f--check input {
+  width: auto;
+}
+.meet-hint {
+  margin: -4px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
 }
 .f input,
 .f select {

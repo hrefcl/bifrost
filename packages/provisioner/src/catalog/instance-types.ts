@@ -47,10 +47,37 @@ export const ALLINONE_CATALOG: readonly InstanceTypeInfo[] = [
 
 export const RECOMMENDED_INSTANCE = 't4g.large';
 
+/** Piso de RAM (GiB) y tipo mínimo cuando Bifrost Meet está activo (PM). */
+export const MEET_MIN_MEM_GIB = 8;
+export const MEET_INSTANCE_FLOOR = 't4g.large';
+
 export function recommendInstance(): InstanceTypeInfo {
   const found = ALLINONE_CATALOG.find((i) => i.type === RECOMMENDED_INSTANCE);
   if (!found) throw new Error('Catálogo de instancias inconsistente (falta el recomendado)');
   return found;
+}
+
+/**
+ * Aplica el PISO de instancia cuando Bifrost Meet está activo: LiveKit (media SFU) + mailserver +
+ * Mongo + ClamAV en el MISMO EC2 no entran en <8 GiB. Si el tipo elegido es de CATÁLOGO y tiene
+ * <8 GiB, lo sube al piso (`t4g.large`). Un override FUERA de catálogo se respeta (no se puede
+ * introspectar la RAM sin la API de EC2) — el caller debe AVISAR en ese caso. Devuelve `{type,
+ * bumped, unknownBelowFloor}`: `bumped` si se subió; `unknownBelowFloor` si es un tipo desconocido
+ * (el wizard avisa que no puede garantizar ≥8 GiB). Idempotente.
+ */
+export function enforceMeetInstanceFloor(type: string): {
+  type: string;
+  bumped: boolean;
+  unknownBelowFloor: boolean;
+} {
+  const info = ALLINONE_CATALOG.find((i) => i.type === type);
+  if (info) {
+    if (info.memGiB < MEET_MIN_MEM_GIB)
+      return { type: MEET_INSTANCE_FLOOR, bumped: true, unknownBelowFloor: false };
+    return { type, bumped: false, unknownBelowFloor: false };
+  }
+  // Tipo fuera del catálogo: lo respetamos pero señalamos que no podemos garantizar el piso de RAM.
+  return { type, bumped: false, unknownBelowFloor: true };
 }
 
 /**

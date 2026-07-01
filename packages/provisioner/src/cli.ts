@@ -20,7 +20,7 @@ import {
 } from './aws/cloudformation.js';
 import { emptyBucket } from './aws/s3.js';
 import { estimateMonthlyCost } from './cost.js';
-import { recommendInstance } from './catalog/instance-types.js';
+import { recommendInstance, enforceMeetInstanceFloor } from './catalog/instance-types.js';
 import { mailHostname, validateDomain } from './domain.js';
 import {
   resolveSesCommand,
@@ -35,7 +35,7 @@ const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms
 const slug = (s: string): string => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
 const orUndef = (s: string): string | undefined => (s === '' ? undefined : s);
 
-function printDns(domain: string, ip: string): void {
+function printDns(domain: string, ip: string, enableMeet = false): void {
   const host = mailHostname(domain);
   console.log('\nCargá estos registros DNS (en tu zona del dominio):');
   console.log(`  A     ${host}        → ${ip}`);
@@ -43,6 +43,10 @@ function printDns(domain: string, ip: string): void {
   console.log(`  MX    ${domain}      → ${host} (prioridad 10)`);
   console.log(`  TXT   ${domain}      → "v=spf1 mx ~all"`);
   console.log(`  TXT   _dmarc.${domain} → "v=DMARC1; p=quarantine"`);
+  if (enableMeet) {
+    console.log(`  A     meet.${domain}    → ${ip}  (Bifrost Meet / LiveKit)`);
+    console.log(`  A     turn.meet.${domain} → ${ip}  (TURN/STUN de Meet)`);
+  }
   console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
 }
 
@@ -70,7 +74,29 @@ async function main(): Promise<void> {
   const region = await input({ message: 'Región AWS', default: 'us-east-1' });
   const stackName = `bifrost-${slug(domain)}`;
   const rec = recommendInstance();
-  const instanceType = await input({ message: 'Tipo de EC2', default: rec.type });
+  let instanceType = await input({ message: 'Tipo de EC2', default: rec.type });
+  // Bifrost Meet (LiveKit self-hosted): opcional. La instalación funciona IGUAL con Meet OFF. `--enable-meet`
+  // lo activa sin preguntar (no-interactivo). Default OFF.
+  const enableMeet =
+    process.argv.includes('--enable-meet') ||
+    (await confirm({
+      message:
+        '¿Habilitar Bifrost Meet (videollamadas LiveKit self-hosted)? Abre 3 puertos media en el SG y exige ≥8 GiB de RAM (MISMO EC2, ~+$25/mes).',
+      default: false,
+    }));
+  if (enableMeet) {
+    const floor = enforceMeetInstanceFloor(instanceType);
+    if (floor.bumped) {
+      console.log(
+        `⚠ Bifrost Meet necesita ≥8 GiB de RAM; subo la instancia ${instanceType} → ${floor.type}.`
+      );
+      instanceType = floor.type;
+    } else if (floor.unknownBelowFloor) {
+      console.log(
+        `⚠ "${instanceType}" no está en el catálogo; no puedo verificar que tenga ≥8 GiB para Meet. Asegurate de que los tenga.`
+      );
+    }
+  }
   const useS3 = await confirm({
     message:
       '¿Guardar los adjuntos en S3 cifrado? (la palanca de costo: bucket+KMS, la app lo usa vía el rol del EC2; recursos facturables)',
@@ -183,6 +209,7 @@ async function main(): Promise<void> {
     s3Bucket,
     adminMailbox,
     adminMailboxPassword,
+    enableMeet,
     // SES on → el box instala el helper que lee la credencial SMTP de ESTE parámetro SSM.
     sesParamName: enableSes ? sesParamName(domain) : undefined,
   });
@@ -196,6 +223,7 @@ async function main(): Promise<void> {
     existingSubnetId: orUndef(existingSubnetId),
     hostedZoneId: orUndef(hostedZoneId),
     sshCidr,
+    enableMeet,
     enableSes,
   };
   const params = assembleStackParams(answers);
@@ -231,7 +259,10 @@ async function main(): Promise<void> {
       const cfn = new CloudFormationClient({ region });
       const action = await deployStack(cfn, {
         stackName,
-        templateBody: templateToJson(buildStackTemplate()),
+        // EMBEBER el userData (igual que el YAML entregable): sin él, el template conserva el parámetro
+        // requerido `UserData` que `params` ya no incluye → CFN falla; y con Meet el `Fn::Join`/EIP nunca
+        // se aplicaría (la inyección sólo ocurre al embeber). [B-HIGH F3.5]
+        templateBody: templateToJson(buildStackTemplate(userData)),
         params,
       });
       console.log(`\nStack ${action}: ${stackName}. Esperando (puede tardar ~10–15 min)…`);
@@ -253,11 +284,16 @@ async function main(): Promise<void> {
         console.log(`\n✓ Listo. IP pública: ${out.PublicIp ?? '(ver en la consola)'}`);
         if (hostedZoneId !== '') {
           console.log(
-            '  Los registros DNS (A/MX/webmail/SPF/DMARC) se crearon en tu zona Route53.'
+            `  Los registros DNS (A/MX/webmail/SPF/DMARC${enableMeet ? '/meet/turn.meet' : ''}) se crearon en tu zona Route53.`
           );
           console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
         } else {
-          printDns(domain, out.PublicIp ?? 'TU_IP');
+          printDns(domain, out.PublicIp ?? 'TU_IP', enableMeet);
+        }
+        if (enableMeet) {
+          console.log(
+            `\n📹 Bifrost Meet ACTIVO → ${out.MeetUrl ?? `https://meet.${domain}`} (apuntá meet. y turn.meet. a la IP).`
+          );
         }
         if (enableSes) {
           console.log('\n📨 ENVÍO SALIENTE (Amazon SES) — el box quedó cableado turnkey:');

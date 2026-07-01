@@ -446,7 +446,7 @@ onMounted(loadDocs);
 .ca-versions td {
   text-align: left;
   padding: 0.35rem;
-  border-bottom: 1px solid #e5e7eb;
+  border-bottom: 1px solid var(--border);
 }
 .ca-row {
   display: flex;
@@ -460,21 +460,49 @@ onMounted(loadDocs);
   font-family: monospace;
 }
 .ca-empty {
-  color: #6b7280;
+  color: var(--text-3);
   padding: 2rem;
 }
+/* Alineado al design-system del admin (AdminView): inputs/selects/botones consistentes con tokens. */
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+  padding: 9px 12px;
+  font: inherit;
+  font-size: 13.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-1);
+  outline: none;
+  box-sizing: border-box;
+}
+input:not([type='checkbox']):not([type='radio']):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+}
 button {
-  padding: 0.35rem 0.7rem;
-  border-radius: 6px;
-  border: 1px solid #d1d5db;
-  background: #fff;
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text-1);
   cursor: pointer;
 }
+button:hover:not(:disabled) {
+  background: var(--hover);
+}
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
   cursor: not-allowed;
 }
 .ca-export {
-  background: #eff6ff;
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--accent);
 }
 </style>

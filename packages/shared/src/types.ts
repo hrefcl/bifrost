@@ -38,6 +38,8 @@ export interface UserPreferences {
     autoLoadImages: boolean;
     blockRemoteContentUnknown: boolean;
   };
+  /** Preferencias de Bifrost Meet (opcional; ausente = defaults). */
+  meet?: MeetUserPreferences;
 }
 
 export interface User {
@@ -268,6 +270,10 @@ export interface CalendarEvent {
   source?: 'manual' | 'booking';
   /** Si `source==='booking'`: id de la Booking que lo originó (para reconciler/cancelación). */
   bookingId?: string;
+  /** Si el evento tiene una sala Bifrost Meet asociada: id de la `MeetRoom`. */
+  meetRoomId?: string;
+  /** URL pública de unión a la sala Meet (`${publicBaseUrl}/meet/<slug>`); no es secreto. */
+  meetUrl?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -377,6 +383,8 @@ export interface EventType {
   cancelMinNoticeMin?: number;
   customQuestions: CustomQuestion[];
   active: boolean;
+  /** Si las reservas de este tipo generan una sala Bifrost Meet automáticamente (default false). */
+  meetEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -514,4 +522,101 @@ export interface PublicSchedulingProfile {
 /** Slot disponible devuelto al invitado (inicio en UTC ISO; la UI lo muestra en su tz). */
 export interface AvailableSlot {
   start: string;
+}
+
+// --- Bifrost Meet (videollamadas LiveKit self-hosted) ---
+export type MeetRoomMode = 'per_event' | 'personal';
+export type MeetRoomStatus = 'active' | 'closed';
+export type MeetRoomSource = 'manual' | 'calendar' | 'booking';
+
+/** Sala de reunión. `slug` es ÚNICO GLOBAL (no enumerable). DTO no expone secretos. */
+export interface MeetRoomDto {
+  id: string;
+  userId: string;
+  slug: string;
+  name: string;
+  mode: MeetRoomMode;
+  status: MeetRoomStatus;
+  source: MeetRoomSource;
+  calendarEventId?: string;
+  bookingId?: string;
+  maxParticipants: number;
+  allowExternalOverride?: boolean;
+  expiresAt?: string;
+  /** URL pública de unión (`${publicBaseUrl}/meet/${slug}`); no es secreto. */
+  meetUrl: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Respuesta del endpoint de token: AccessToken efímero + datos para que el cliente conecte. */
+export interface MeetTokenResponse {
+  token: string;
+  /** URL de signaling del SDK (`wss://meet.<dom>`). */
+  wsUrl: string;
+  /** Nombre de la sala (== slug). */
+  room: string;
+  /** Identidad opaca del participante (`guest-<rand>` / `host-<rand>`). */
+  identity: string;
+  /** Rol con el que se emitió el token. */
+  role: 'host' | 'internal' | 'external';
+  /** Segundos de vida del token (para que el cliente re-fetchee antes del expiry). */
+  expiresInSeconds: number;
+}
+
+/** Config singleton de Meet (SystemConfig key='meet'). `enabled=false` apaga toda la feature. */
+export interface MeetSettings {
+  enabled: boolean;
+  /** Signaling SDK (`wss://meet.<dom>`). */
+  wsUrl: string;
+  /** Base pública de los links de unión (`https://webmail.<dom>`). */
+  publicBaseUrl: string;
+  /** Dominio TURN (`turn.meet.<dom>`); informativo. */
+  turnDomain?: string;
+  /** Techo de participantes por sala (heredado por salas auto-creadas vía livekit.yaml). */
+  maxParticipants: number;
+  /** Tope duro de duración de un token (minutos). */
+  maxDurationMinutes: number;
+  /** Si los invitados externos pueden unirse a salas manuales/personales (las de booking fuerzan true). */
+  allowExternal: boolean;
+  branding?: { displayName?: string };
+  auditEnabled: boolean;
+  recordingPolicy: 'disabled';
+  // --- LiveKit externo/Cloud (F3.7) — configurable desde el admin ---
+  /** API key de LiveKit (id público; el secret va aparte, cifrado, NUNCA en este DTO). */
+  livekitApiKey?: string;
+  /** URL HTTP server-to-server de la API LiveKit (bundled=http://livekit:7880, Cloud=su URL). */
+  livekitApiUrl?: string;
+  /** Región (metadato de LiveKit Cloud; informativo). */
+  region?: string;
+  /** Resolución máxima sugerida ('720p'|'1080p'); informativo. */
+  maxResolution?: '720p' | '1080p';
+  /** Intención de grabación automática. NO-OP en self-hosted (requiere Cloud/Egress) — ver `livekitSource`. */
+  autoRecord?: boolean;
+  /** Crear salas bajo demanda al primer participante (ya es el comportamiento via grant roomCreate). */
+  onDemand?: boolean;
+  /** ¿Hay un API secret guardado? (el secreto JAMÁS se devuelve; solo su presencia). */
+  hasApiSecret: boolean;
+  /**
+   * De dónde salen las credenciales EFECTIVAS de LiveKit:
+   * 'db' = par admin (DB) válido · 'env' = fallback de entorno (par DB ausente/parcial) ·
+   * 'error' = par DB presente pero NO desencriptable (ENCRYPTION_KEY rotada → Meet falla cerrado, el admin debe re-pegar) ·
+   * 'none' = sin credenciales en ningún lado.
+   */
+  livekitSource: 'db' | 'env' | 'error' | 'none';
+}
+
+/** Config pública leída por la SPA en el boot (sin auth, sin secretos). */
+export interface PublicConfig {
+  meetEnabled: boolean;
+  livekitWsUrl: string;
+  meetPublicBaseUrl: string;
+}
+
+/** Preferencias de Meet por usuario (anidadas en UserPreferences.meet, opcional). */
+export interface MeetUserPreferences {
+  autoCreateOnEvent: boolean;
+  displayName?: string;
+  roomMode: MeetRoomMode;
+  defaultInviteMessage?: string;
 }

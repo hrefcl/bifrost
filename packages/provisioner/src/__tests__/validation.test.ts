@@ -5,6 +5,8 @@ import {
   recommendInstance,
   ALLINONE_CATALOG,
   archForInstanceType,
+  enforceMeetInstanceFloor,
+  MEET_INSTANCE_FLOOR,
 } from '../catalog/instance-types.js';
 
 describe('validateDomain', () => {
@@ -67,5 +69,29 @@ describe('catálogo de instancias', () => {
     expect(archForInstanceType('t3.large')).toBe('amd64');
     expect(archForInstanceType('m5.large')).toBe('amd64');
     expect(archForInstanceType('c6i.large')).toBe('amd64');
+  });
+});
+
+describe('enforceMeetInstanceFloor (piso ≥8 GiB con Meet, F3.5)', () => {
+  it('sube un tipo de catálogo con <8 GiB al piso (t4g.medium → t4g.large)', () => {
+    const r = enforceMeetInstanceFloor('t4g.medium');
+    expect(r).toEqual({ type: MEET_INSTANCE_FLOOR, bumped: true, unknownBelowFloor: false });
+    expect(r.type).toBe('t4g.large');
+  });
+  it('respeta un tipo de catálogo con ≥8 GiB (no toca large/xlarge)', () => {
+    expect(enforceMeetInstanceFloor('t4g.large')).toEqual({
+      type: 't4g.large',
+      bumped: false,
+      unknownBelowFloor: false,
+    });
+    expect(enforceMeetInstanceFloor('t4g.xlarge').bumped).toBe(false);
+  });
+  it('un tipo FUERA del catálogo se respeta pero marca unknownBelowFloor (el wizard avisa)', () => {
+    const r = enforceMeetInstanceFloor('m7g.large');
+    expect(r).toEqual({ type: 'm7g.large', bumped: false, unknownBelowFloor: true });
+  });
+  it('es idempotente (aplicar dos veces no cambia el resultado)', () => {
+    const once = enforceMeetInstanceFloor('t4g.medium').type;
+    expect(enforceMeetInstanceFloor(once).type).toBe(once);
   });
 });
