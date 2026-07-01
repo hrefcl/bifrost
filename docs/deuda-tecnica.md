@@ -439,3 +439,20 @@ un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`
   (trustProxy con hop confiable) y/o key del limiter por IP+slug del host. Verificado en auditoría hostil:
   el resto de la superficie pública de scheduling está bien blindada (tenant isolation por user._id, zod en
   todo input, token de gestión por hash, fail-closed 503 si Redis cae, privacidad de location.value).
+
+## Auto-auditoría 2026-07-01 (crash storage + rediseño UI)
+
+- **TD-WEB-COMPONENT-TESTS (MED — causa de un incidente real)**: el web tiene `vitest` pero SIN infra de
+  tests de componente (`@vue/test-utils` + happy-dom/jsdom). La lógica de las vistas vive inline en los SFC
+  (ej. `s3Incomplete`/`loadStorage` en AdminView), así que NO es unit-testeable. Consecuencia concreta: el
+  crash de Almacenamiento con S3+rol-de-instancia (accessKeyId undefined → `.trim()`) se coló porque el e2e
+  sólo probaba storage LOCAL y no hay test de componente que cubra el caso instance-role. Fix: agregar
+  `@vue/test-utils`+happy-dom y un test que monte la sección storage con una config S3-instance-role mockeada
+  (sin accessKeyId) y verifique que renderiza la nota read-only sin throw. Alternativa: extraer la lógica de
+  storage a un composable/lib puro y testearla ahí (patrón actual de tests). Registrado tras arreglar el crash
+  en #34 (verificado en vivo en Aulion, box instance-role real).
+- **TD-CALENDAR-VISUAL-REVIEW (LOW)**: el sidebar del calendario (#36) se mergeó verificado con
+  vue-tsc+eslint+vite build pero SIN review visual (no se puede renderizar en el harness). Riesgo principal:
+  la cadena de altura flex (`.cal` → `.cal-body` → `.cal-grid` → FullCalendar height:100%) y el pulido fino
+  vs la referencia Google. Additivo/no-crítico (no toca CRUD de eventos ni modales). Pendiente: review visual
+  del usuario en Aulion + iteración (left-nav consistente tipo Workspace, pulido contra la referencia).
