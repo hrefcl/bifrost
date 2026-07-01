@@ -52,6 +52,10 @@ const linkCopied = ref(false);
 let disposed = false;
 let connectGen = 0;
 const connecting = ref(false);
+// Intención MANUAL del usuario sobre mic/cam (review B/D-MED): si togueó durante el bootstrap del publish,
+// `publishLocalMedia` NO aplica el default de props sobre esa fuente (su acción más reciente gana).
+let manualMic = false;
+let manualCam = false;
 
 const participantCount = computed(() => tiles.value.length);
 
@@ -238,33 +242,32 @@ async function connect() {
 }
 
 /**
- * Publica mic/cam best-effort, DESACOPLADO del estado 'connected' (un publish lento/colgado no debe dejar la
- * UI en "Conectando…" ni bloquear un reconnect). Preserva los guards de ciclo de vida: re-chequea `staleGen`
- * ANTES de cada `setXEnabled` —que PRENDE el dispositivo— para no encender cámara/mic tras un unmount; y si
- * quedó obsoleto tras publicar, desconecta (frena los tracks recién creados — review B-HIGH v2). Autocontenida:
- * nunca lanza (se invoca con `void`).
+ * Bootstrap best-effort de mic/cam, DESACOPLADO del estado 'connected' (un publish lento/colgado no debe dejar
+ * la UI en "Conectando…" ni bloquear un reconnect). Guards de ciclo de vida (review B/D):
+ *  - Re-chequea `staleGen` ANTES de cada `setXEnabled` (que PRENDE el dispositivo) → no enciende tras un
+ *    unmount/retry.
+ *  - HIGH (review B+D): NUNCA llama `teardownRoom()` desde una corrida obsoleta — ese helper opera sobre
+ *    `room.value`, que un `connect()` nuevo pudo reemplazar → desconectaría la Room NUEVA. El cleanup de la
+ *    Room vieja lo hacen el nuevo `connect()` (su teardownRoom inicial) y `onBeforeUnmount`. Acá sólo `return`.
+ *  - MED (review B): no pisa una intención MANUAL: si el usuario ya togueó mic/cam durante el bootstrap,
+ *    NO aplicamos el default de props (su acción más reciente gana).
+ * Autocontenida: nunca lanza (se invoca con `void`).
  */
 async function publishLocalMedia(r: Room, gen: number): Promise<void> {
   try {
-    if (!staleGen(gen)) await r.localParticipant.setMicrophoneEnabled(props.mic);
-    if (!staleGen(gen)) await r.localParticipant.setCameraEnabled(props.cam);
+    if (!staleGen(gen) && !manualMic) await r.localParticipant.setMicrophoneEnabled(props.mic);
+    if (!staleGen(gen) && !manualCam) await r.localParticipant.setCameraEnabled(props.cam);
   } catch {
     /* permisos denegados → entra sin publicar; el usuario reintenta con los toggles */
   }
-  try {
-    if (staleGen(gen)) {
-      await teardownRoom();
-      return;
-    }
-    refresh();
-  } catch {
-    /* no propagar: se invoca con void */
-  }
+  if (staleGen(gen)) return; // obsoleto → el nuevo connect / unmount ya limpian; NO tocar room.value acá
+  refresh();
 }
 
 async function toggleMic() {
   const lp = room.value?.localParticipant;
   if (!lp) return;
+  manualMic = true; // intención manual → el bootstrap no la pisa (review B/D-MED)
   try {
     await lp.setMicrophoneEnabled(!micOn.value);
   } catch {
@@ -276,6 +279,7 @@ async function toggleMic() {
 async function toggleCam() {
   const lp = room.value?.localParticipant;
   if (!lp) return;
+  manualCam = true; // intención manual → el bootstrap no la pisa (review B/D-MED)
   try {
     await lp.setCameraEnabled(!camOn.value);
   } catch {
@@ -307,6 +311,9 @@ async function copyLink() {
 
 function leave() {
   status.value = 'left';
+  // Invalidar cualquier publishLocalMedia pendiente (review B-MED): sin esto, un publish colgado podía
+  // resolver DESPUÉS de salir (staleGen=false) y hacer refresh()/tocar una Room ya cerrada.
+  connectGen++;
   void teardownRoom();
 }
 
