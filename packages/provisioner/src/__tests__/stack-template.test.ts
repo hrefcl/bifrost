@@ -159,6 +159,44 @@ describe('buildStackTemplate (CloudFormation)', () => {
     });
   });
 
+  it('LiveKit externo: LivekitSecretParamName parametrizado, EnableExternalLivekit condicional, policy lee SSM + descifra vía SSM', () => {
+    // Por defecto (sin LiveKit externo) el parámetro está vacío y la policy no existe.
+    expect(t.Parameters.LivekitSecretParamName).toMatchObject({ Default: '' });
+    expect(t.Conditions.EnableExternalLivekit).toEqual({
+      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] }],
+    });
+    const pol = t.Resources.LivekitSecretAccessPolicy;
+    expect(pol?.Condition).toBe('EnableExternalLivekit');
+    expect(pol?.Properties.Roles).toEqual([{ Ref: 'InstanceRole' }]);
+    const stmts = (
+      pol?.Properties.PolicyDocument as {
+        Statement: { Action: string[]; Resource: unknown; Condition?: unknown }[];
+      }
+    ).Statement;
+    const ssmStmt = stmts.find((s) => s.Action.includes('ssm:GetParameter'));
+    // Scoped al parámetro exacto del secret externo (no a todo SSM).
+    expect(ssmStmt?.Resource).toEqual({
+      'Fn::Sub': 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LivekitSecretParamName}',
+    });
+    const kmsStmt = stmts.find((s) => s.Action.includes('kms:Decrypt'));
+    expect(kmsStmt?.Condition).toEqual({
+      StringEquals: { 'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' } },
+    });
+  });
+
+  it('Rule: MeetMode=enabled (bundled) es EXCLUYENTE con LivekitSecretParamName (externo)', () => {
+    const rules = (t as unknown as { Rules: Record<string, unknown> }).Rules;
+    const rule = rules.ExternalLivekitExcludesBundledMeet as {
+      RuleCondition: unknown;
+      Assertions: { Assert: unknown }[];
+    };
+    // Sólo aplica cuando MeetMode=enabled; ahí exige LivekitSecretParamName vacío.
+    expect(rule.RuleCondition).toEqual({ 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] });
+    expect(rule.Assertions[0].Assert).toEqual({
+      'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''],
+    });
+  });
+
   it('endurecimiento: IMDSv2 requerido, EBS NO se borra al terminar, CreationPolicy presente', () => {
     expect(t.Resources.Instance?.Properties.MetadataOptions).toEqual({
       HttpEndpoint: 'enabled',

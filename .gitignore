@@ -46,3 +46,8 @@ data/
 
 # Artefactos del turnkey emitidos para validar (cfn-lint/shellcheck) — generados, no se commitean
 artifacts/
+
+# Entregables del wizard bifrost-provision (generados por corrida) — NUNCA se commitean:
+#  - el .pem es la CLAVE SSH PRIVADA del EC2; el YAML es el CloudFormation parametrizado del tenant.
+bifrost-stack-*.yaml
+*.pem

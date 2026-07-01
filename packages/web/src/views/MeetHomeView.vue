@@ -1,0 +1,322 @@
+<script setup lang="ts">
+/**
+ * Home autenticado de Bifrost Meet: el punto de entrada que faltaba en el webmail. Permite CREAR una
+ * reunión instantánea (POST /api/meet/rooms → sala personal → link para compartir + entrar) y UNIRSE a una
+ * con un link o código. La sala de la llamada en sí vive en `/meet/:slug` (MeetJoinView, guestOk). El gate
+ * de disponibilidad usa la misma config pública que la agenda (useMeetConfig → /config/public.meetEnabled).
+ */
+import { ref, onMounted } from 'vue';
+import { useRouter } from 'vue-router';
+import { useI18n } from 'vue-i18n';
+import { api } from '@/lib/http';
+import { meetSlugFromInput } from '@/lib/meet';
+import { useMeetConfig } from '@/composables/useMeetConfig';
+import AppLayout from '@/layouts/AppLayout.vue';
+import AppIcon from '@/components/AppIcon.vue';
+
+interface CreatedRoom {
+  slug: string;
+  name: string;
+  meetUrl: string;
+}
+
+const router = useRouter();
+const { t } = useI18n();
+const { load: loadMeetConfig } = useMeetConfig();
+
+const ready = ref(false);
+const meetAvailable = ref(false);
+const creating = ref(false);
+const created = ref<CreatedRoom | null>(null);
+const errorMsg = ref('');
+const joinInput = ref('');
+const copied = ref(false);
+
+onMounted(async () => {
+  try {
+    const c = await loadMeetConfig();
+    meetAvailable.value = c.meetEnabled;
+  } catch {
+    meetAvailable.value = false;
+  } finally {
+    ready.value = true;
+  }
+});
+
+async function newMeeting() {
+  if (creating.value) return;
+  creating.value = true;
+  errorMsg.value = '';
+  try {
+    const { data } = await api.post<{ room: CreatedRoom }>('/meet/rooms', {
+      name: t('meet.instantName'),
+    });
+    created.value = data.room;
+  } catch {
+    errorMsg.value = t('meet.createError');
+  } finally {
+    creating.value = false;
+  }
+}
+
+function enterCreated() {
+  if (created.value)
+    void router.push({ name: 'public-meet-room', params: { slug: created.value.slug } });
+}
+
+function joinExisting() {
+  const slug = meetSlugFromInput(joinInput.value);
+  if (!slug) {
+    errorMsg.value = t('meet.joinInvalid');
+    return;
+  }
+  void router.push({ name: 'public-meet-room', params: { slug } });
+}
+
+async function copyLink() {
+  if (!created.value) return;
+  try {
+    await navigator.clipboard.writeText(created.value.meetUrl);
+    copied.value = true;
+    setTimeout(() => (copied.value = false), 1800);
+  } catch {
+    /* clipboard bloqueado: el usuario puede copiar a mano del input */
+  }
+}
+</script>
+
+<template>
+  <AppLayout>
+    <div class="meet-home">
+      <div class="wrap">
+        <header class="head">
+          <div class="head-icon"><AppIcon name="video" :size="28" /></div>
+          <div>
+            <h1>{{ t('meet.title') }}</h1>
+            <p class="sub">{{ t('meet.subtitle') }}</p>
+          </div>
+        </header>
+
+        <p v-if="!ready" class="muted">…</p>
+
+        <div v-else-if="!meetAvailable" class="notice">
+          <AppIcon name="video" :size="20" />
+          <span>{{ t('meet.disabled') }}</span>
+        </div>
+
+        <template v-else>
+          <!-- Crear / resultado -->
+          <section class="card">
+            <template v-if="!created">
+              <div class="card-main">
+                <h2>{{ t('meet.newTitle') }}</h2>
+                <p class="muted">{{ t('meet.newDesc') }}</p>
+              </div>
+              <button class="btn btn-primary" :disabled="creating" @click="newMeeting">
+                <AppIcon name="plus" :size="18" />
+                <span>{{ creating ? t('meet.creating') : t('meet.newBtn') }}</span>
+              </button>
+            </template>
+
+            <template v-else>
+              <div class="card-main">
+                <h2>{{ t('meet.readyTitle') }}</h2>
+                <p class="muted">{{ t('meet.readyDesc') }}</p>
+                <div class="link-row">
+                  <AppIcon name="link" :size="16" class="link-ico" />
+                  <input
+                    class="link-input"
+                    :value="created.meetUrl"
+                    readonly
+                    @focus="($event.target as HTMLInputElement).select()"
+                  />
+                  <button class="btn btn-ghost sm" :title="t('meet.copy')" @click="copyLink">
+                    <AppIcon name="copy" :size="16" />
+                    <span>{{ copied ? t('meet.copied') : t('meet.copy') }}</span>
+                  </button>
+                </div>
+              </div>
+              <div class="actions">
+                <button class="btn btn-primary" @click="enterCreated">
+                  <AppIcon name="video" :size="18" />
+                  <span>{{ t('meet.enter') }}</span>
+                </button>
+                <button class="btn btn-ghost" @click="created = null">
+                  {{ t('meet.newAnother') }}
+                </button>
+              </div>
+            </template>
+          </section>
+
+          <!-- Unirse -->
+          <section class="card">
+            <div class="card-main">
+              <h2>{{ t('meet.joinTitle') }}</h2>
+              <p class="muted">{{ t('meet.joinDesc') }}</p>
+              <div class="join-row">
+                <input
+                  v-model="joinInput"
+                  class="join-input"
+                  :placeholder="t('meet.joinPlaceholder')"
+                  @keyup.enter="joinExisting"
+                />
+                <button class="btn btn-ghost" :disabled="!joinInput.trim()" @click="joinExisting">
+                  {{ t('meet.joinBtn') }}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <p v-if="errorMsg" class="err">{{ errorMsg }}</p>
+        </template>
+      </div>
+    </div>
+  </AppLayout>
+</template>
+
+<style scoped>
+.meet-home {
+  height: 100%;
+  overflow: auto;
+  padding: 32px 20px;
+}
+.wrap {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+.head-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.head h1 {
+  margin: 0;
+  font-size: 22px;
+  color: var(--text-1);
+}
+.sub {
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 14px;
+}
+.card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.card-main {
+  flex: 1;
+  min-width: 240px;
+}
+.card-main h2 {
+  margin: 0 0 4px;
+  font-size: 16px;
+  color: var(--text-1);
+}
+.muted {
+  color: var(--text-2);
+  font-size: 13.5px;
+  margin: 0;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.btn-ghost {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--text-1);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
+.btn.sm {
+  padding: 7px 10px;
+  font-size: 13px;
+}
+.link-row,
+.join-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+.link-ico {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.link-input,
+.join-input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--search-bg);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 14px;
+}
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px dashed var(--border);
+  color: var(--text-2);
+  font-size: 14px;
+}
+.err {
+  color: var(--danger);
+  font-size: 13.5px;
+  margin: 0;
+}
+</style>

@@ -87,4 +87,22 @@ describe('assembleStackParams', () => {
       'enabled'
     );
   });
+
+  it('LivekitSecretParamName: vacío por defecto; con meetExternal → el nombre del param SSM', () => {
+    expect(get(assembleStackParams(baseAnswers), 'LivekitSecretParamName')).toBe('');
+    const p = assembleStackParams({
+      ...baseAnswers,
+      meetExternal: { secretParamName: '/bifrost/acme-com/livekit-secret' },
+    });
+    expect(get(p, 'LivekitSecretParamName')).toBe('/bifrost/acme-com/livekit-secret');
+  });
+
+  it('Meet EXTERNO NO monta media local → MeetMode queda disabled (sin 2º SG/DNS/EIP)', () => {
+    const p = assembleStackParams({
+      ...baseAnswers,
+      meetExternal: { secretParamName: '/bifrost/acme-com/livekit-secret' },
+    });
+    expect(get(p, 'MeetMode')).toBe('disabled');
+    expect(get(p, 'LivekitSecretParamName')).not.toBe('');
+  });
 });

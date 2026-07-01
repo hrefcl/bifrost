@@ -93,6 +93,10 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       // del CLI post-stack). Vacío = outbound SES deshabilitado. Con valor, el rol del box puede LEERLO
       // (ssm:GetParameter + kms:Decrypt) para cablear el relay cuando el outbound esté `ready`. §3/§7b.
       SesParamName: { Type: 'String', Default: '' },
+      // Nombre del SSM SecureString con el apiSecret de un LiveKit EXTERNO (lo escribe el orquestador del
+      // CLI). Vacío = sin LiveKit externo. Con valor, el rol del box puede LEERLO (ssm:GetParameter +
+      // kms:Decrypt) para cablear Meet contra el LiveKit externo. Excluyente con MeetMode='enabled'.
+      LivekitSecretParamName: { Type: 'String', Default: '' },
     },
     // CloudFormation Rules: validan parámetros ANTES de crear recursos y rechazan el deploy con un
     // mensaje claro. Protegen el path de despliegue STANDALONE (consola web / `aws cloudformation
@@ -107,6 +111,19 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
             Assert: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'ExistingSubnetId' }, ''] }] },
             AssertDescription:
               'Si especificás ExistingVpcId, también debés especificar ExistingSubnetId (la instancia necesita una subnet de esa VPC).',
+          },
+        ],
+      },
+      // Meet BUNDLED (MeetMode=enabled) y Meet EXTERNO (LivekitSecretParamName!='') son EXCLUYENTES: el
+      // wizard nunca los pasa juntos, pero un deploy manual por consola/CLI podría → estado inconsistente
+      // (SG de media local + policy de secret externo, y el user-data toma bundled). Rechazar temprano. [D]
+      ExternalLivekitExcludesBundledMeet: {
+        RuleCondition: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+        Assertions: [
+          {
+            Assert: { 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] },
+            AssertDescription:
+              'MeetMode=enabled (LiveKit bundled) es incompatible con LivekitSecretParamName (LiveKit externo). Para LiveKit externo usá MeetMode=disabled.',
           },
         ],
       },
@@ -129,6 +146,10 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       },
       // Outbound SES habilitado: dar al rol del box permiso de leer la credencial SMTP de SSM.
       EnableSes: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'SesParamName' }, ''] }] },
+      // LiveKit externo: dar al rol del box permiso de leer el apiSecret de Meet de SSM.
+      EnableExternalLivekit: {
+        'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] }],
+      },
     },
     Resources: {
       VPC: {
@@ -432,6 +453,41 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
               {
                 // Descifrar el SecureString. Acotado por kms:ViaService a SSM → la key (gestionada
                 // alias/aws/ssm) sólo se puede usar a través de SSM, no para otra cosa.
+                Effect: 'Allow',
+                Action: ['kms:Decrypt'],
+                Resource: '*',
+                Condition: {
+                  StringEquals: {
+                    'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' },
+                  },
+                },
+              },
+            ],
+          },
+        },
+      },
+      // Lectura del apiSecret de un LiveKit EXTERNO (SSM SecureString) SÓLO si se configuró uno. El box lo
+      // lee con el rol al boot y cablea Meet contra el LiveKit externo. Espeja SesAccessPolicy (el mismo
+      // patrón seguro): el secret nunca viaja en user-data/CFN, sólo el rol puede descifrarlo vía SSM.
+      LivekitSecretAccessPolicy: {
+        Type: 'AWS::IAM::Policy',
+        Condition: 'EnableExternalLivekit',
+        Properties: {
+          PolicyName: 'bifrost-livekit-ssm',
+          Roles: [{ Ref: 'InstanceRole' }],
+          PolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Action: ['ssm:GetParameter'],
+                Resource: {
+                  'Fn::Sub':
+                    'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LivekitSecretParamName}',
+                },
+              },
+              {
+                // Descifrar el SecureString, acotado por kms:ViaService a SSM (alias/aws/ssm gestionada).
                 Effect: 'Allow',
                 Action: ['kms:Decrypt'],
                 Resource: '*',

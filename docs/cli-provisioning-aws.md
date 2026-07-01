@@ -138,10 +138,34 @@ de AMI por SDK (`aws/ssm.ts`) — todo superseded por CloudFormation (el stack E
 ES el teardown; el template resuelve el AMI por SSM). De `aws/compute.ts` queda SÓLO `ensureKeyPair`
 (lo único que CFN no hace: devolver el `.pem`). Se CONSERVAN user-data, preflight y cost-calc.
 
-## 3.quater — Bifrost Meet (opcional, LiveKit self-hosted)
+## 3.quater — Bifrost Meet (opcional, videollamadas LiveKit)
 
-El wizard pregunta **"¿Habilitar Bifrost Meet?"** (o `--enable-meet`). Si se activa, el template gana un
-parámetro `MeetMode='enabled'` que, por **condición** (igual patrón que `CreateNetwork`/`CreateS3`):
+El wizard ofrece **3 modos** de Meet (select, o flags `--meet-mode off|bundled|external`):
+
+- **off** (default) — sin videollamadas. Base byte-idéntica.
+- **bundled** — LiveKit **self-hosted en ESTE EC2** (alias `--enable-meet`). Abre puertos media, exige
+  ≥8 GiB RAM y sube el costo. Detallado abajo (`MeetMode='enabled'`).
+- **external** — apuntar a un **LiveKit que ya tenés** (p.ej. Cleverty). El app-box NO corre media (sin
+  2º SG, sin DNS meet./turn., sin piso de RAM): sólo firma tokens y el navegador conecta al WSS externo.
+  El wizard pide `wss://` + apiKey + apiSecret (flags `--meet-external-url/-key/-secret` o la env var
+  `BIFROST_LIVEKIT_SECRET`). El **wsUrl se valida fuerte** (sólo `wss://`, sin userinfo/path/query, sin
+  hosts internos/metadata/IPv4-mapped/NAT64 — anti-SSRF; se re-valida en el backend). El **apiSecret NO
+  viaja en user-data/CFN**: el CLI lo escribe a un **SSM SecureString** (KMS) y el box lo lee al boot con
+  el rol (mismo patrón que SES: param `LivekitSecretParamName` + policy `LivekitSecretAccessPolicy` con
+  `ssm:GetParameter` scoped + `kms:Decrypt` vía `kms:ViaService`). `MeetMode` queda `disabled` (sin infra
+  media local) pero el `.env` lleva `MEET_PROVISIONED=1` + `LIVEKIT_WS_URL/API_URL/API_KEY`. Fail-closed:
+  si el secret falta en SSM al boot (tras retry por propagación IAM), el provisioning aborta.
+
+**Selección de instancia por capacidad.** El menú de EC2 (curado) muestra por cada tipo el costo y a
+**cuántos buzones apunta** (y participantes de Meet si es bundled), y **recomienda** la más chica que cubre
+los buzones elegidos: `t4g.medium` (~15), `large` (~50), `xlarge` (~150), `2xlarge` (~500). Con Meet
+bundled sólo ofrece las ≥8 GiB y halva la capacidad de buzones (el SFU comparte CPU/RAM). Los `t4g` son
+**burstable** → para Meet intensivo conviene LiveKit **externo** o una familia no-burstable (opción "Otro").
+Flags no-interactivos: `--mailboxes N`, `--instance-type <tipo>` (fuera de catálogo + bundled exige
+`--allow-unknown-meet-instance`).
+
+En **bundled**, el template gana un parámetro `MeetMode='enabled'` que, por **condición** (igual patrón que
+`CreateNetwork`/`CreateS3`):
 - crea un **2º Security Group** con SÓLO los puertos media de LiveKit (`7881/tcp`, `7882/udp`, `3478/udp`)
   — el SG base queda **byte-idéntico**; se asocia al EC2 vía `Fn::If[EnableMeet, MeetSG, AWS::NoValue]`;
 - agrega los registros **A `meet.<dom>`** y **A `turn.meet.<dom>`** → la EIP (cond. a gestionar el DNS);

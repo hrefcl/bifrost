@@ -559,6 +559,34 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
     expect(badUrl.statusCode).toBe(400);
   });
 
+  it('PATCH wsUrl no-wss (ws://, http, con path) → 400; wss:// válido → 200 (defensa en profundidad LiveKit externo)', async () => {
+    const u = await asAdmin('admin-wsurl@test.com');
+    const h = authHeaders(app, u._id.toString());
+    for (const bad of [
+      'ws://meet.insecure.com',
+      'https://meet.example.com',
+      'wss://h.example.com/rtc',
+    ]) {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/admin/meet/settings',
+        headers: h,
+        payload: { wsUrl: bad },
+      });
+      expect(res.statusCode, bad).toBe(400);
+    }
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { wsUrl: 'wss://livekit.cleverty.com' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect((JSON.parse(ok.body).settings as Record<string, unknown>).wsUrl).toBe(
+      'wss://livekit.cleverty.com'
+    );
+  });
+
   it('POST /api/admin/meet/test → categoría (admin-only, sin secreto en respuesta)', async () => {
     const u = await asAdmin('admin3@test.com');
     const h = authHeaders(app, u._id.toString());

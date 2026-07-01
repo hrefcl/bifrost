@@ -11,6 +11,7 @@ import AppLogo from '@/components/AppLogo.vue';
 import AppIcon, { type IconName } from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
 import ComposerWindow from '@/components/ComposerWindow.vue';
+import { useMeetConfig } from '@/composables/useMeetConfig';
 
 const router = useRouter();
 const route = useRoute();
@@ -23,6 +24,18 @@ const { t, locale } = useI18n();
 const searchFocused = ref(false);
 const menuOpen = ref(false);
 const searchInput = ref<HTMLInputElement | null>(null);
+
+// Gate del acceso a Meet: sólo mostramos el botón de videollamadas si la instalación tiene Meet activo
+// (misma config pública que usa la agenda). Silencioso si falla (no rompe la barra).
+const meetAvailable = ref(false);
+const { load: loadMeetConfig } = useMeetConfig();
+void loadMeetConfig()
+  .then((c) => {
+    meetAvailable.value = c.meetEnabled;
+  })
+  .catch(() => {
+    meetAvailable.value = false;
+  });
 
 // Embudo de filtro del TopBar: aplica el filtro rápido de la lista (compartido con el Inbox vía
 // el store ui). Antes el botón no hacía nada.
@@ -138,6 +151,15 @@ async function onLogout() {
         @click="toggleTheme"
       >
         <AppIcon :name="settings.theme === 'dark' ? 'sun' : 'moon'" :size="20" />
+      </button>
+      <button
+        v-if="meetAvailable"
+        class="icon-btn"
+        :class="{ active: isActive('meet-home') }"
+        :title="t('nav.meet')"
+        @click="router.push({ name: 'meet-home' })"
+      >
+        <AppIcon name="video" :size="20" />
       </button>
       <button
         class="icon-btn"

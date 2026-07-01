@@ -29,6 +29,12 @@ export interface WizardAnswers {
   hostedZoneId?: string;
   /** Habilitar Bifrost Meet (LiveKit): 2º SG (puertos media), A meet./turn.meet., EIP→node_ip, piso. */
   enableMeet?: boolean;
+  /**
+   * Bifrost Meet con LiveKit EXTERNO (excluyente con enableMeet). NO monta infra de media local
+   * (MeetMode queda 'disabled'); sólo da al rol del box permiso de leer el apiSecret de ESTE param SSM
+   * (mismo nombre que escribe el orquestador y lee el user-data). Presencia = modo external.
+   */
+  meetExternal?: { secretParamName: string };
   /** Habilitar outbound SES: da al rol del box permiso de leer la credencial SMTP de SSM. */
   enableSes?: boolean;
 }
@@ -62,5 +68,8 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     // SES on → el rol del box puede leer la credencial SMTP de ESTE parámetro (mismo nombre que escribe
     // el orquestador y lee el user-data). Vacío = outbound SES off.
     { key: 'SesParamName', value: a.enableSes ? sesParamName(a.domain) : '' },
+    // Meet con LiveKit EXTERNO → el rol del box puede leer el apiSecret de ESTE param SSM SecureString.
+    // Vacío = sin LiveKit externo (Meet off o bundled). Excluyente con MeetMode='enabled'.
+    { key: 'LivekitSecretParamName', value: a.meetExternal?.secretParamName ?? '' },
   ];
 }
