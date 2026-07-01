@@ -11,6 +11,7 @@ import AdminCalendarPrefs from '@/components/admin/AdminCalendarPrefs.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
+import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adminStorage';
 
 /**
  * Panel de administración (Roundcube administrable) con cuatro secciones:
@@ -394,14 +395,9 @@ async function loadStorage() {
     current.value = data;
     selected.value = data.providerType;
     if (data.s3) {
-      // GUARDS (?? ''): con useInstanceRole=true la config NO trae accessKeyId → sin esto, un `.trim()`
-      // posterior crasheaba toda la sección Almacenamiento (afectaba a TODO box turnkey, que usa S3+rol EC2).
-      s3.value.endpoint = data.s3.endpoint ?? '';
-      s3.value.bucket = data.s3.bucket;
-      s3.value.region = data.s3.region;
-      // accessKeyId puede faltar (useInstanceRole) → guard imprescindible: era la causa del crash `.trim()`.
-      s3.value.accessKeyId = data.s3.accessKeyId ?? '';
-      s3.value.useInstanceRole = data.s3.useInstanceRole ?? false;
+      // s3FormFromConfig guarda cada campo contra undefined (con rol de instancia no viene accessKeyId →
+      // sin el guard, un `.trim()` posterior crasheaba la sección). Lógica pura + testeada en lib/adminStorage.
+      Object.assign(s3.value, s3FormFromConfig(data.s3));
       secretAlreadyConfigured.value = data.s3.secretConfigured;
     }
   } catch {
@@ -541,14 +537,8 @@ function clearStatus() {
 }
 function s3Incomplete(): boolean {
   if (selected.value !== 's3') return false;
-  // S3 vía rol de instancia: lo gestiona el aprovisionamiento (no se edita por UI) → no exige claves.
-  if (s3.value.useInstanceRole) return false;
-  return (
-    !s3.value.bucket.trim() ||
-    !s3.value.region.trim() ||
-    !s3.value.accessKeyId.trim() ||
-    !s3.value.secretAccessKey
-  );
+  // Lógica pura + testeada en lib/adminStorage (short-circuit por useInstanceRole incluido).
+  return computeS3Incomplete(s3.value);
 }
 function s3Payload() {
   return {
