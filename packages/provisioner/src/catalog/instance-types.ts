@@ -165,6 +165,16 @@ export function archForInstanceType(type: string): CpuArch {
  */
 export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
   {
+    type: 't4g.small',
+    vcpu: 2,
+    memGiB: 2,
+    arch: 'arm64',
+    approxMonthlyUsd: 12,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 6,
+    note: 'ULTRA-MÍNIMO (~$12) — LiveKit pide ~1 GiB y usa la MISMA 2 vCPU que los t4g grandes (CPU-bound). Entra en 2 GiB; RAM justa en el boot (pull+apt). Sólo llamadas 1-a-1/chicas ocasionales — validá con tu carga.',
+  },
+  {
     type: 't4g.medium',
     vcpu: 2,
     memGiB: 4,
@@ -172,7 +182,7 @@ export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
     approxMonthlyUsd: 24,
     maxMailboxes: 0, // no aplica al media-box
     meetConcurrent: 8,
-    note: 'MÍNIMO — 2-box económico, llamadas chicas/ocasionales (LiveKit solo pide ~1 GiB; 4 GiB alcanzan).',
+    note: 'MÍNIMO SEGURO — 2-box económico, llamadas chicas/ocasionales (4 GiB dan margen sobre LiveKit).',
   },
   {
     type: 't4g.large',
