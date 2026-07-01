@@ -182,10 +182,16 @@ Implementado siguiendo la CORRECCIÓN F3.4 del DESIGN (no las líneas viejas):
 
 **Ronda 2-3 (docs corregidos)**: **B** cazó 2 HIGH más (README "se activa" sin `PATCH enabled:true`; §6 revert `wsUrl:""` falso — `getStoredMeetSettings` usa `??`, un `""` persiste y deja `meetEnabled` false) → corregidos; ronda final **B 9/10 0 HIGH**, **D 9/10 APPROVE**, **C 0 HIGH** — todas las LOW aplicadas. *Nota infra*: los reviews de B (codex) se colgaban/mataban por un **codex HUÉRFANO de otra tarea** (`rediseno-admin-agenda`, review RBAC) comiendo memoria y serializando codex; matarlo lo resolvió.
 
-## F3.6 — COMMIT (docs) ✅ · B 9/10 · C 9/10 · D 9/10, 0 HIGH
+## F3.6 — COMMIT (docs) `1f48a7d` ✅ · B 9/10 · C 9/10 · D 9/10, 0 HIGH
+
+## F3.5b — COMMIT `03ab077` ✅ · B 9/10 · C APPROVE · D 10/10, 0 HIGH
+Auto-enable turnkey: `getStoredMeetSettings` defaultea `enabled=true` cuando `MEET_PROVISIONED` seteado y no hay override DB (el admin puede apagar con `enabled:false`). Cierra TD-MEET-PROVISION-ENABLED. 369 tests. Docs F3.6 actualizados (provisionado = ON). B-LOW = su sandbox no corrió mongodb-memory-server (tests verdes local). C-LOW = materialización del default en el 1er PATCH (documentado en el comentario, no-bug).
+
+## Estado Meet: COMPLETO salvo F3.7-frontend
+Commiteados en la rama: F3.1 · F3.2 · F3.3 · F3.4 · F3.7-backend `526fe35` · F3.5 `29c7a5b` · F3.6 `1f48a7d` · F3.5b `03ab077`. Todos B/C/D ≥9, 0 HIGH.
 
 ## Próximos pasos
-1. **F3.5b — TD-MEET-PROVISION-ENABLED**: auto-enable al provisionar (código + gate B/C/D) — INMEDIATO.
-2. **F3.7-frontend**: panel admin LiveKit (requiere PR #30 mergeado + rebase Meet) — última fase.
+1. **F3.7-frontend** (ÚNICA pendiente, BLOQUEADA): panel visual admin de LiveKit externo/Cloud como sección de la consola nueva del **PR #30** (rediseño /admin). Requiere: mergear PR #30 → rebasar la rama Meet → construir el panel. **Necesita acción del PM (merge de PR #30).**
+2. TD menores: TD-MEET-FLOOR-NONCATALOG (DescribeInstanceTypes) · residual C node_ip CI-validation.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.
