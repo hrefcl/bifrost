@@ -24,7 +24,10 @@ const MAIL_PORTS = [25, 80, 443, 143, 465, 587, 993] as const;
 const MEET_PORTS = [
   { IpProtocol: 'tcp', FromPort: 7881, ToPort: 7881 }, // ICE/TCP fallback
   { IpProtocol: 'udp', FromPort: 7882, ToPort: 7882 }, // mux UDP single-port
-  { IpProtocol: 'udp', FromPort: 3478, ToPort: 3478 }, // TURN/STUN UDP embebido
+  { IpProtocol: 'udp', FromPort: 3478, ToPort: 3478 }, // TURN/STUN UDP (listen)
+  // Rango de allocations del TURN embebido (turn.relay_range 30000-40000). Sin esto, el fallback TURN
+  // no puede relayear media para clientes tras NAT restrictivo/simétrico. [deploy real from-zero]
+  { IpProtocol: 'udp', FromPort: 30000, ToPort: 40000 }, // TURN relay range
 ] as const;
 
 /**

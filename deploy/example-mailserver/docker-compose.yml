@@ -178,7 +178,10 @@ services:
   # Con Meet OFF (sin COMPOSE_PROFILES=meet) este servicio NUNCA arranca → la base queda intacta.
   # Al activar Meet, el provisioner setea COMPOSE_PROFILES=meet + las LIVEKIT_* en el .env.
   livekit:
-    image: livekit/livekit-server:v1.8.4 # PINNED (no :latest → no major-bump sorpresa)
+    # PINNED. v1.8.4 servía el signaling en /rtc y NO en /rtc/v1 → incompatible con livekit-client 2.20
+    # (que pide /rtc/v1/validate → 404 → el token nunca validaba, ninguna llamada conectaba). v1.13.2 sirve
+    # /rtc/v1 → token OK + participantes joinean. [deploy real from-zero]
+    image: livekit/livekit-server:v1.13.2
     profiles: ['meet']
     restart: unless-stopped
     depends_on: [traefik]

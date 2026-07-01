@@ -218,22 +218,12 @@ async function connect() {
       await teardownRoom();
       return;
     }
-    // Publicar mic/cam (best-effort). CLAVE (review B-HIGH v2): re-chequear `staleGen` ANTES de cada
-    // `setXEnabled` —que invoca getUserMedia y PRENDE el dispositivo— para no encender cámara/mic después
-    // de un unmount; y DESPUÉS del publish, si quedó obsoleto, desconectar (frena cualquier track recién creado).
-    try {
-      if (!staleGen(gen)) await r.localParticipant.setMicrophoneEnabled(props.mic);
-      if (!staleGen(gen)) await r.localParticipant.setCameraEnabled(props.cam);
-    } catch {
-      /* permisos denegados → entra sin publicar; el usuario reintenta con los toggles */
-    }
-    if (staleGen(gen)) {
-      // Se desmontó DURANTE el publish → desconectar (detiene los tracks recién creados — review B-HIGH v2).
-      await teardownRoom();
-      return;
-    }
+    // La Room YA está conectada → mostrar 'connected' de INMEDIATO. NO bloquear el estado en el publish de
+    // mic/cam: un `setXEnabled` lento o COLGADO (permiso demorado, cámara lenta, encode) dejaba al usuario en
+    // "Conectando…" para siempre con la sala conectada. El publish va best-effort, desacoplado (abajo).
     status.value = 'connected';
     refresh();
+    void publishLocalMedia(r, gen);
   } catch (e) {
     if (r) {
       await r.disconnect().catch(() => undefined); // soltar la Room a medio crear (review C-L3)
@@ -244,6 +234,31 @@ async function connect() {
     status.value = 'error';
   } finally {
     if (gen === connectGen) connecting.value = false;
+  }
+}
+
+/**
+ * Publica mic/cam best-effort, DESACOPLADO del estado 'connected' (un publish lento/colgado no debe dejar la
+ * UI en "Conectando…" ni bloquear un reconnect). Preserva los guards de ciclo de vida: re-chequea `staleGen`
+ * ANTES de cada `setXEnabled` —que PRENDE el dispositivo— para no encender cámara/mic tras un unmount; y si
+ * quedó obsoleto tras publicar, desconecta (frena los tracks recién creados — review B-HIGH v2). Autocontenida:
+ * nunca lanza (se invoca con `void`).
+ */
+async function publishLocalMedia(r: Room, gen: number): Promise<void> {
+  try {
+    if (!staleGen(gen)) await r.localParticipant.setMicrophoneEnabled(props.mic);
+    if (!staleGen(gen)) await r.localParticipant.setCameraEnabled(props.cam);
+  } catch {
+    /* permisos denegados → entra sin publicar; el usuario reintenta con los toggles */
+  }
+  try {
+    if (staleGen(gen)) {
+      await teardownRoom();
+      return;
+    }
+    refresh();
+  } catch {
+    /* no propagar: se invoca con void */
   }
 }
 
