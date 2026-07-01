@@ -52,7 +52,11 @@ describe('admin role + requireAdmin (PR-A)', () => {
       headers: authHeaders(app, user._id.toString()),
     });
     expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body)).toEqual({ role: 'admin' });
+    const body = JSON.parse(res.body);
+    expect(body.role).toBe('admin');
+    // RBAC (F8): el admin es superusuario → whoami devuelve TODO el catálogo de permisos.
+    expect(body.permissions).toContain('roles.manage');
+    expect(body.permissions).toContain('accounts.manage');
     await app.close();
   });
 

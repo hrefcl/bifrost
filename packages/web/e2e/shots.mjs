@@ -20,46 +20,141 @@ const BRANDING = {
   accentColor: '#1b66ff',
   logoDataUrl: null,
 };
+const GB = 1073741824;
 const ACCOUNTS = [
   {
     id: 'a1',
     userId: 'u1',
-    email: 'ana@aulion.app',
-    name: 'Ana',
-    displayName: 'Ana Pérez',
+    email: 'admin@aulion.app',
+    name: 'Admin',
+    displayName: 'Admin',
     role: 'admin',
+    customRoleId: null,
+    customRoleName: null,
     isPrimary: true,
     status: 'active',
-    quotaBytes: 5368709120,
-    usedBytes: 1503238553,
-    lastSyncedAt: null,
+    quotaBytes: 0,
+    usedBytes: 0,
+    lastSyncedAt: '2026-06-30T12:30:00.000Z',
   },
   {
     id: 'a2',
     userId: 'u2',
-    email: 'diego@aulion.app',
-    name: 'Diego',
-    displayName: 'Diego Soto',
+    email: 'maria.soto@aulion.app',
+    name: 'Maria',
+    displayName: 'María Soto',
     role: 'user',
+    customRoleId: 'r1',
+    customRoleName: 'Admin de cuentas',
     isPrimary: true,
     status: 'active',
-    quotaBytes: 2147483648,
-    usedBytes: 805306368,
-    lastSyncedAt: null,
+    quotaBytes: 25 * GB,
+    usedBytes: 12.1 * GB,
+    lastSyncedAt: '2026-06-30T09:10:00.000Z',
   },
   {
     id: 'a3',
     userId: 'u3',
-    email: 'lucia@aulion.app',
-    name: 'Lucia',
-    displayName: 'Lucía Mora',
+    email: 'juan.perez@aulion.app',
+    name: 'Juan',
+    displayName: 'Juan Pérez',
     role: 'user',
+    customRoleId: null,
+    customRoleName: null,
     isPrimary: true,
-    status: 'disabled',
-    quotaBytes: 0,
-    usedBytes: 134217728,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 8.0 * GB,
     lastSyncedAt: null,
   },
+  {
+    id: 'a4',
+    userId: 'u4',
+    email: 'carla.diaz@aulion.app',
+    name: 'Carla',
+    displayName: 'Carla Díaz',
+    role: 'user',
+    customRoleId: 'r2',
+    customRoleName: 'Oficial de cumplimiento',
+    isPrimary: true,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 4.0 * GB,
+    lastSyncedAt: null,
+  },
+  {
+    id: 'a5',
+    userId: 'u5',
+    email: 'diego.rojas@aulion.app',
+    name: 'Diego',
+    displayName: 'Diego Rojas',
+    role: 'user',
+    customRoleId: null,
+    customRoleName: null,
+    isPrimary: true,
+    status: 'disabled',
+    quotaBytes: 25 * GB,
+    usedBytes: 19.3 * GB,
+    lastSyncedAt: null,
+  },
+  {
+    id: 'a6',
+    userId: 'u6',
+    email: 'sofia.luna@aulion.app',
+    name: 'Sofia',
+    displayName: 'Sofía Luna',
+    role: 'user',
+    customRoleId: 'r3',
+    customRoleName: 'Admin de marca',
+    isPrimary: true,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 6.5 * GB,
+    lastSyncedAt: null,
+  },
+];
+const ROLES = [
+  {
+    id: 'r1',
+    name: 'Admin de cuentas',
+    description: 'Gestiona cuentas y grupos.',
+    permissions: ['accounts.manage', 'groups.manage'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+  {
+    id: 'r2',
+    name: 'Oficial de cumplimiento',
+    description: 'Acceso a compliance y auditoría.',
+    permissions: ['audit.view'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+  {
+    id: 'r3',
+    name: 'Admin de marca',
+    description: 'Personaliza la marca de la empresa.',
+    permissions: ['branding.manage'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+];
+const PERMISSIONS = [
+  { key: 'accounts.manage', category: 'Cuentas', label: 'Gestionar cuentas' },
+  { key: 'groups.manage', category: 'Cuentas', label: 'Gestionar grupos' },
+  { key: 'roles.manage', category: 'Seguridad', label: 'Gestionar roles y permisos' },
+  { key: 'branding.manage', category: 'Configuración', label: 'Gestionar marca' },
+  { key: 'storage.manage', category: 'Configuración', label: 'Gestionar almacenamiento' },
+  {
+    key: 'calendar.manage',
+    category: 'Configuración',
+    label: 'Gestionar preferencias de calendario',
+  },
+  { key: 'scheduling.manage', category: 'Agenda', label: 'Gestionar la Agenda' },
+  { key: 'audit.view', category: 'Seguridad', label: 'Ver auditoría' },
 ];
 const SCHED = [
   {
@@ -233,6 +328,8 @@ async function mockApi(page, { publicSlug = 'ana' } = {}) {
     if (p.startsWith('/compliance/pending')) return json(route, { pending: [] });
     // admin
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
+    if (p === '/admin/roles') return json(route, { roles: ROLES });
+    if (p === '/admin/permissions') return json(route, { permissions: PERMISSIONS });
     if (p === '/admin/config/branding') return json(route, BRANDING);
     if (p === '/admin/config/storage') return json(route, { providerType: 'local' });
     if (p === '/admin/groups')
@@ -335,11 +432,26 @@ const run = async () => {
   // Admin
   await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
   await shot(page, 'admin-accounts');
+  // Ficha de usuario (click en una fila)
+  await page
+    .locator('[data-testid="user-row-a2"]')
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-user-detail');
+  await page
+    .getByRole('button', { name: /Volver a usuarios/ })
+    .click()
+    .catch(() => undefined);
   await page
     .getByRole('button', { name: 'Grupos' })
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-groups');
+  await page
+    .getByRole('button', { name: /Roles y permisos/ })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-roles');
   await page
     .getByRole('button', { name: 'Marca' })
     .click()
@@ -356,10 +468,14 @@ const run = async () => {
     .catch(() => undefined);
   await shot(page, 'admin-storage');
   await page
-    .getByRole('button', { name: 'Preferencias' })
+    .getByRole('button', { name: 'Calendario' })
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-preferences');
+  await page
+    .getByRole('button', { name: 'Usuarios' })
+    .click()
+    .catch(() => undefined);
   await shot(page, 'admin-accounts-dark', 'dark');
 
   // Scheduling host
