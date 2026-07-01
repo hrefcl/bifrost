@@ -467,8 +467,10 @@ hallado por B+D). Verificado que el REPO SOLO basta (userland-proxy:false fue re
 necesario). TDs residuales:
 
 - **TD-MEET-CALL-E2E (MED)**: NO hay test automatizado de regresión del flujo de llamada LiveKit
-  (MeetCallView lifecycle, token→connect→publish→subscribe). El e2e estándar corre local sin LiveKit, y la
-  llamada se validó con un script Playwright standalone contra el box vivo (media fake, 2 browsers). Cualquier
+  (MeetCallView lifecycle, token→connect→publish→subscribe). El e2e estándar corre local sin LiveKit. Se agregó una HERRAMIENTA re-corrible:
+  `packages/web/e2e/meet-call.manual.mjs` (node standalone, NO en la CI) — crea su sala, acepta compliance,
+  2 browsers con fake media, asserta status='connected' + ≥2 video tiles. Correr tras cambios en MeetCallView:
+  `BOX_URL=... BOX_IP=... ADMIN_EMAIL=... ADMIN_PW=... node packages/web/e2e/meet-call.manual.mjs`. Cualquier
   cambio futuro en MeetCallView puede romper la llamada SIN que la CI lo detecte (mismo class que
   [[TD-WEB-COMPONENT-TESTS]]). Fix: un job e2e opcional que levante livekit-server efímero (docker) + testee la
   conexión, o mockear el engine de livekit-client para testear la máquina de estados de MeetCallView.
