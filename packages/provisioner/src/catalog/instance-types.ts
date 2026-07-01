@@ -154,3 +154,71 @@ export function enforceMeetInstanceFloor(type: string): {
 export function archForInstanceType(type: string): CpuArch {
   return /^[a-z]+\d+g[a-z]*\./i.test(type) ? 'arm64' : 'amd64';
 }
+
+/**
+ * Catálogo CURADO para el media-box de Bifrost Meet (modo twobox). LiveKit SFU es CPU-bound durante las
+ * llamadas, así que convienen familias NO burstable (c6g/c7g) para carga sostenida. El default `t4g.large`
+ * es económico y suficiente para llamadas chicas; para muchas llamadas simultáneas se recomienda escalar
+ * a c6g/c7g. Los precios son aproximados (on-demand Linux, us-east-1).
+ */
+export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
+  {
+    type: 't4g.large',
+    vcpu: 2,
+    memGiB: 8,
+    arch: 'arm64',
+    approxMonthlyUsd: 49,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 12,
+    note: 'Económico — PYME con llamadas chicas (burstable; para carga sostenida usá c6g).',
+  },
+  {
+    type: 'c6g.large',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 58,
+    maxMailboxes: 0,
+    meetConcurrent: 15,
+    note: 'CPU-optimizado no-burstable — mejor SFU sostenido que t4g.large.',
+  },
+  {
+    type: 'c6g.xlarge',
+    vcpu: 4,
+    memGiB: 8,
+    arch: 'arm64',
+    approxMonthlyUsd: 116,
+    maxMailboxes: 0,
+    meetConcurrent: 35,
+    note: 'Media empresa — llamadas medianas/grandes sin competir con el correo.',
+  },
+  {
+    type: 'c7g.large',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 54,
+    maxMailboxes: 0,
+    meetConcurrent: 18,
+    note: 'Graviton3, CPU-optimizado — rendimiento por vCPU superior a c6g.',
+  },
+];
+
+export const DEFAULT_LIVEKIT_INSTANCE = 't4g.large';
+
+/** Etiqueta humana para el menú del media-box. */
+export function describeLivekitInstanceChoice(i: InstanceTypeInfo): string {
+  return `${i.type} — ${String(i.vcpu)} vCPU / ${String(i.memGiB)} GiB — ~$${String(i.approxMonthlyUsd)}/mes — ~${String(i.meetConcurrent)} participantes simultáneos`;
+}
+
+/** Recomienda la instancia de media-box más chica que cubre `participants` participantes. */
+export function recommendLivekitInstanceFor(participants: number): {
+  instance: InstanceTypeInfo;
+  exceedsCatalog: boolean;
+} {
+  const eligible = [...LIVEKIT_CATALOG].sort((a, b) => a.meetConcurrent - b.meetConcurrent);
+  const fit = eligible.find((i) => i.meetConcurrent >= participants);
+  if (fit) return { instance: fit, exceedsCatalog: false };
+  const largest = eligible[eligible.length - 1];
+  return { instance: largest, exceedsCatalog: true };
+}

@@ -62,6 +62,17 @@ export interface UserDataInput {
     secretParamName: string;
   };
   /**
+   * Modo Bifrost Meet TWOBOX: LiveKit corre en un 2º EC2 dedicado (media-box). El app-box NO corre
+   * media local: apunta `LIVEKIT_WS_URL/API_URL` al media-box (`meet.<dom>`), firma tokens localmente
+   * y LEE el apiSecret del MISMO SSM SecureString que el media-box. NO setea `COMPOSE_PROFILES=meet`.
+   */
+  meetTwobox?: {
+    wsUrl: string;
+    apiUrl: string;
+    apiKey: string;
+    secretParamName: string;
+  };
+  /**
    * Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador del
    * CLI). Si se da, el box instala un helper `bifrost-ses-activate` que LEE la credencial con el rol y
    * cablea el relay de docker-mailserver. SEND-GATING (§7b): al boot el relay queda APAGADO
@@ -78,7 +89,7 @@ export interface UserDataInput {
 export const MEET_EIP_MARKER = '@@MEET_EXTERNAL_IP@@';
 
 /** Escapa caracteres peligrosos para interpolar de forma segura dentro de `"..."` en bash. */
-function sh(value: string): string {
+export function sh(value: string): string {
   return value.replace(/["\\$`]/g, '\\$&');
 }
 
@@ -87,6 +98,7 @@ function sh(value: string): string {
  * verboso lo excede). Quita SÓLO comentarios de línea completa y líneas en blanco del CUERPO del cloud-init;
  * es HEREDOC-AWARE: todo lo que va dentro de `<<'DELIM' … DELIM` (shebangs, config, el helper SES) se
  * PRESERVA intacto. Conserva el shebang `#!` y `#cloud-config`. No toca comandos ni strings.
+ * Exportada para reusar en otros user-data (p.ej. media-box).
  */
 export function stripUserDataComments(s: string): string {
   const lines = s.split('\n');
@@ -272,7 +284,38 @@ umask 077
 } >> .env
 unset LK_SECRET
 { set -x; } 2>/dev/null`
-      : ''
+      : input.meetTwobox
+        ? `# 6.b) Bifrost Meet TWOBOX — LiveKit corre en un 2º EC2 dedicado (media-box). El app-box NO corre
+# media local: apunta al media-box por meet.<dom> (WSS+HTTPS), firma tokens localmente y LEE el apiSecret
+# del MISMO SSM SecureString que el media-box. wsUrl/apiKey NO son secretos → van literales. NO se activa
+# el profile meet (sin container livekit local). MEET_PROVISIONED=1 afloja la CSP a wss:.
+apt_retry install -y awscli
+LK_SECRET_PARAM="${sh(input.meetTwobox.secretParamName)}"
+{ set +x; } 2>/dev/null   # NO trazar el secret al log de cloud-init
+LK_SECRET=""
+for _ in $(seq 1 12); do
+  LK_SECRET=$(aws ssm get-parameter --name "$LK_SECRET_PARAM" --with-decryption --region "$REGION" --query Parameter.Value --output text 2>/dev/null) || LK_SECRET=""
+  if [ -n "$LK_SECRET" ] && [ "$LK_SECRET" != "None" ]; then break; fi
+  LK_SECRET=""
+  sleep 5
+done
+if [ -z "$LK_SECRET" ]; then
+  set -x
+  echo "ERROR: Meet twobox: apiSecret ausente/vacío en SSM ($LK_SECRET_PARAM) tras reintentos. Fail-closed." >&2
+  signal_fail; exit 1
+fi
+umask 077
+{
+  echo "MEET_PROVISIONED=1"
+  echo "LIVEKIT_WS_URL=${sh(input.meetTwobox.wsUrl)}"
+  echo "LIVEKIT_API_URL=${sh(input.meetTwobox.apiUrl)}"
+  echo "LIVEKIT_API_KEY=${sh(input.meetTwobox.apiKey)}"
+  echo "MEET_PUBLIC_BASE_URL=https://webmail.\${DOMAIN}"
+  printf 'LIVEKIT_API_SECRET=%s\\n' "$LK_SECRET"
+} >> .env
+unset LK_SECRET
+{ set -x; } 2>/dev/null`
+        : ''
 }
 # Dominio del box → lo usa el host-updater (Fase 2) para el healthcheck post-update por Traefik.
 echo "BIFROST_DOMAIN=\${DOMAIN}" >> .env

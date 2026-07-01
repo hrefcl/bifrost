@@ -10,11 +10,22 @@
  * fuerte (sólo `wss://`, sin userinfo/path/query, sin hosts internos/metadata) para no habilitar un
  * canal inseguro ni un SSRF; la validación se repite en el backend (defensa en profundidad).
  */
+import { randomBytes } from 'node:crypto';
 import { domainSlug } from '../ses/naming.js';
 
-/** Parámetro SSM SecureString con el `apiSecret` del LiveKit externo (lo comparten CFN/orquestador/box). */
+/** Parámetro SSM SecureString con el `apiSecret` de LiveKit (lo comparten CFN/orquestador/box).
+ *  Se usa tanto en modo EXTERNO (el operador lo ingresa) como en modo TWOBOX (el CLI lo genera). */
 export function livekitSecretParamName(domain: string): string {
   return `/bifrost/${domainSlug(domain)}/livekit-secret`;
+}
+
+/** Genera un par apiKey/apiSecret para LiveKit con el mismo formato que el user-data usa con openssl.
+ *  apiKey: "LK" + 24 hex chars; apiSecret: 64 hex chars (32 bytes). */
+export function generateLivekitCredentials(): { apiKey: string; apiSecret: string } {
+  return {
+    apiKey: `LK${randomBytes(12).toString('hex')}`,
+    apiSecret: randomBytes(32).toString('hex'),
+  };
 }
 
 /** Hosts de metadata cloud — un wsUrl apuntando ahí sería SSRF; se rechazan siempre. */

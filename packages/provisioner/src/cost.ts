@@ -34,6 +34,10 @@ export interface CostInput {
   mailboxes: number;
   createHostedZone: boolean;
   useKms: boolean;
+  /** Costo mensual de un 2º EC2 (modo twobox: media-box dedicado). */
+  secondInstanceMonthlyUsd?: number;
+  /** Si el 2º EC2 tiene EIP pública (modo twobox). */
+  secondPublicIpv4?: boolean;
 }
 
 export interface CostBreakdown {
@@ -52,12 +56,12 @@ export interface CostBreakdown {
 const round2 = (n: number): number => Math.round(n * 100) / 100;
 
 export function estimateMonthlyCost(input: CostInput): CostBreakdown {
-  const ec2 = input.instanceMonthlyUsd;
+  const ec2 = input.instanceMonthlyUsd + (input.secondInstanceMonthlyUsd ?? 0);
   const ebs = input.ebsGiB * PRICING.ebsGp3PerGiB;
   const s3 = input.s3GiB * PRICING.s3StandardPerGiB;
   const billableEgress = Math.max(0, input.dataTransferOutGiB - PRICING.dataOutFreeGiB);
   const dataTransfer = billableEgress * PRICING.dataOutPerGiB;
-  const publicIpv4 = PRICING.publicIpv4Monthly;
+  const publicIpv4 = PRICING.publicIpv4Monthly * (input.secondPublicIpv4 ? 2 : 1);
   const kms = input.useKms ? PRICING.kmsCmkMonthly : 0;
   const route53 = input.createHostedZone ? PRICING.route53ZoneMonthly : 0;
   const total = ec2 + ebs + s3 + dataTransfer + publicIpv4 + kms + route53;
