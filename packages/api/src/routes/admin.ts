@@ -666,7 +666,10 @@ export default function adminRoutes(fastify: FastifyInstance) {
     { config: { permission: 'accounts.manage' } },
     async (request, reply) => {
       const body = createAccountSchema.parse(request.body);
-      const { user, account, isNew } = await loginOrRegister(body);
+      // `allowAdminBootstrap:false`: un alta desde el panel NUNCA crea un admin, aunque la instancia no
+      // tenga admin (evita escalada de un delegado con accounts.manage — review D). El admin se otorga
+      // sólo por el CLI `admin:grant` o el primer login de setup.
+      const { user, account, isNew } = await loginOrRegister(body, { allowAdminBootstrap: false });
       if (!isNew) {
         // El email ya existía: no es un alta. Avisar en vez de fingir creación.
         return reply.code(409).send({
@@ -713,6 +716,19 @@ export default function adminRoutes(fastify: FastifyInstance) {
           message: 'No podés deshabilitar tu propia cuenta de administrador.',
         });
       }
+      // Anti-lockout / anti-privilegio (RBAC F8): un delegado (no-admin) con accounts.manage NO puede
+      // MODIFICAR la cuenta de un ADMIN (deshabilitar, reactivar, cuota ni nombre). Sin esto, un rol
+      // custom podría incapacitar al superusuario. El admin real sí (el guard de self evita el auto-lockout).
+      if (request.adminAccess?.role !== 'admin') {
+        const target = await User.findById(account.userId).select('role').lean();
+        if (target?.role === 'admin') {
+          return reply.code(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            message: 'No podés modificar la cuenta de un administrador.',
+          });
+        }
+      }
       const set: Record<string, unknown> = {};
       if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
       if (body.status !== undefined) set.status = body.status;
@@ -744,6 +760,18 @@ export default function adminRoutes(fastify: FastifyInstance) {
           error: 'Bad Request',
           message: 'No podés eliminar tu propia cuenta de administrador.',
         });
+      }
+      // Anti-lockout / anti-privilegio (RBAC F8): un delegado (no-admin) con accounts.manage NO puede
+      // eliminar la cuenta de un ADMIN (dejaría a la instancia sin superusuario). El admin real sí.
+      if (request.adminAccess?.role !== 'admin') {
+        const target = await User.findById(account.userId).select('role').lean();
+        if (target?.role === 'admin') {
+          return reply.code(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            message: 'No podés eliminar la cuenta de un administrador.',
+          });
+        }
       }
       await Account.deleteOne({ _id: id });
       // Datos ACOTADOS A LA CUENTA (accountId-bound): se borran SIEMPRE, sea o no la última cuenta.
@@ -811,13 +839,11 @@ export default function adminRoutes(fastify: FastifyInstance) {
       return await reply.code(201).send(serializeRole(role));
     } catch (e) {
       if (isDupKey(e)) {
-        return reply
-          .code(409)
-          .send({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'Ya existe un rol con ese nombre.',
-          });
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya existe un rol con ese nombre.',
+        });
       }
       throw e;
     }
@@ -841,6 +867,15 @@ export default function adminRoutes(fastify: FastifyInstance) {
           .code(403)
           .send({ statusCode: 403, error: 'Forbidden', message: 'Rol de sistema (protegido).' });
       }
+      // Least-privilege (review D): un delegado sólo puede EDITAR roles cuyos permisos ACTUALES son ⊆ los
+      // suyos. Sin esto, con sólo cambiar el nombre podría manipular un rol más poderoso que el suyo.
+      if (!canGrant(request.adminAccess, sanitizePermissions(role.permissions))) {
+        return reply.code(403).send({
+          statusCode: 403,
+          error: 'Forbidden',
+          message: 'No podés editar un rol con permisos que vos no tenés.',
+        });
+      }
       if (body.permissions !== undefined) {
         const perms = sanitizePermissions(body.permissions);
         if (!canGrant(request.adminAccess, perms)) {
@@ -858,13 +893,11 @@ export default function adminRoutes(fastify: FastifyInstance) {
         await role.save();
       } catch (e) {
         if (isDupKey(e)) {
-          return reply
-            .code(409)
-            .send({
-              statusCode: 409,
-              error: 'Conflict',
-              message: 'Ya existe un rol con ese nombre.',
-            });
+          return reply.code(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'Ya existe un rol con ese nombre.',
+          });
         }
         throw e;
       }
@@ -877,7 +910,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
     { config: { permission: 'roles.manage' } },
     async (request, reply) => {
       const { id } = z.object({ id: objectId }).parse(request.params);
-      const role = await Role.findById(id).select('isSystem').lean();
+      const role = await Role.findById(id).select('isSystem permissions').lean();
       if (!role) {
         return reply
           .code(404)
@@ -888,6 +921,15 @@ export default function adminRoutes(fastify: FastifyInstance) {
           statusCode: 403,
           error: 'Forbidden',
           message: 'Rol de sistema (no se puede eliminar).',
+        });
+      }
+      // Least-privilege (review D): un delegado sólo puede ELIMINAR roles cuyos permisos ACTUALES son ⊆
+      // los suyos. Sin esto podría borrar (y hacer cascade-unset) un rol más poderoso que el suyo.
+      if (!canGrant(request.adminAccess, sanitizePermissions(role.permissions))) {
+        return reply.code(403).send({
+          statusCode: 403,
+          error: 'Forbidden',
+          message: 'No podés eliminar un rol con permisos que vos no tenés.',
         });
       }
       // CASCADE-UNSET: los usuarios con este rol quedan SIN rol (anti-lockout — nunca queda un

@@ -140,6 +140,37 @@ describe('admin RBAC (F8)', () => {
     await app.close();
   });
 
+  it('least-privilege: un delegado no puede editar ni eliminar un rol con permisos que no tiene', async () => {
+    const app = await buildTestApp();
+    const { headers: adminHeaders } = await seedAdmin(app);
+    // admin crea un rol MÁS poderoso que el delegado.
+    const strong = await app.inject({
+      method: 'POST',
+      url: '/api/admin/roles',
+      headers: adminHeaders,
+      payload: { name: 'potente', permissions: ['accounts.manage'] },
+    });
+    const strongId = JSON.parse(strong.body).id;
+    // delegado con roles.manage pero SIN accounts.manage.
+    const { headers } = await seedRoleHolder(app, ['roles.manage']);
+    // No puede renombrarlo (aunque no toque permisos).
+    const edit = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/roles/${strongId}`,
+      headers,
+      payload: { name: 'renombrado' },
+    });
+    expect(edit.statusCode).toBe(403);
+    // No puede eliminarlo (evita cascade-unset de un rol que no domina).
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/roles/${strongId}`,
+      headers,
+    });
+    expect(del.statusCode).toBe(403);
+    await app.close();
+  });
+
   it('cascade-unset: borrar un rol quita el acceso a sus portadores (anti dangling)', async () => {
     const app = await buildTestApp();
     const { headers: adminHeaders } = await seedAdmin(app);
@@ -243,6 +274,43 @@ describe('admin RBAC (F8)', () => {
       headers: authHeaders(app, user._id.toString()),
     });
     expect(JSON.parse(mePlain.body).adminPermissions).toEqual([]);
+    await app.close();
+  });
+
+  it('anti-lockout: un delegado con accounts.manage NO puede deshabilitar/eliminar a un admin', async () => {
+    const app = await buildTestApp();
+    // Admin objetivo (superusuario de la instancia).
+    const { user: adminUser, account: adminAccount } = await seedUserWithAccount({
+      email: 'theadmin@test.com',
+    });
+    await User.updateOne({ _id: adminUser._id }, { $set: { role: 'admin' } });
+    // Delegado con accounts.manage.
+    const { headers } = await seedRoleHolder(app, ['accounts.manage']);
+    const adminAccId = adminAccount._id.toString();
+    // No puede deshabilitar la cuenta del admin.
+    const disable = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${adminAccId}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(disable.statusCode).toBe(403);
+    // No puede eliminar la cuenta del admin.
+    const del = await app.inject({
+      method: 'DELETE',
+      url: `/api/admin/accounts/${adminAccId}`,
+      headers,
+    });
+    expect(del.statusCode).toBe(403);
+    // Un usuario normal SÍ lo puede gestionar el delegado (control positivo).
+    const { account: plainAccount } = await seedUserWithAccount({ email: 'normaluser@test.com' });
+    const okDisable = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${plainAccount._id.toString()}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(okDisable.statusCode).toBe(200);
     await app.close();
   });
 

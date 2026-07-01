@@ -19,6 +19,7 @@ import {
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
 import { User } from '../../models/User.js';
+import { Role } from '../../models/Role.js';
 import { Account } from '../../models/Account.js';
 import { Draft } from '../../models/Draft.js';
 import { Contact } from '../../models/Contact.js';
@@ -52,6 +53,28 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
   });
   beforeEach(async () => {
     await resetState();
+  });
+
+  it('anti-escalada (RBAC F8): el alta desde el panel NUNCA crea un admin, aunque no haya admin', async () => {
+    const app = await buildTestApp();
+    // Delegado con accounts.manage y NINGÚN admin en la instancia (p. ej. borrado fuera de banda).
+    const { user } = await seedUserWithAccount({ email: 'delegate@test.com' });
+    const role = await Role.create({ name: 'altas', permissions: ['accounts.manage'] });
+    await User.updateOne({ _id: user._id }, { $set: { customRoleId: role._id } });
+    expect(await User.exists({ role: 'admin' })).toBeNull();
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers: authHeaders(app, user._id.toString()),
+      payload: newAccountBody('nuevo@empresa.com'),
+    });
+    expect(create.statusCode).toBe(201);
+    // Sin el fix, el bootstrap habría hecho admin a la cuenta creada. Debe ser 'user'.
+    const created = await User.findOne({ primaryEmail: 'nuevo@empresa.com' }).select('role').lean();
+    expect(created?.role).toBe('user');
+    expect(await User.exists({ role: 'admin' })).toBeNull();
+    await app.close();
   });
 
   it('POST /accounts crea una cuenta (verifica IMAP) y GET /accounts la lista con su cuota', async () => {
