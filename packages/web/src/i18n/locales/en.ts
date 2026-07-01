@@ -230,6 +230,8 @@ export default {
     s3Title: 'S3 / compatible (MinIO, R2, …)',
     s3Desc:
       'Files are stored in an S3 bucket. Requires endpoint, bucket, region and credentials (the secret key is encrypted and never shown).',
+    s3InstanceRole:
+      'This instance uses the EC2 role to access S3 (no static keys). It is set by provisioning and not editable here.',
     endpoint: 'Endpoint (optional for AWS)',
     bucket: 'Bucket',
     region: 'Region',

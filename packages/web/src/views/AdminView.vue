@@ -356,10 +356,12 @@ async function saveBranding() {
 // ============================ ALMACENAMIENTO (wizard preexistente) ============================
 type ProviderType = 'local' | 's3';
 interface PublicS3 {
-  endpoint?: string;
+  endpoint?: string | null;
   bucket: string;
   region: string;
-  accessKeyId: string;
+  // Con useInstanceRole=true la respuesta NO trae accessKeyId (el rol de EC2 provee las creds).
+  accessKeyId?: string;
+  useInstanceRole?: boolean;
   secretConfigured: boolean;
 }
 interface StorageConfig {
@@ -375,7 +377,15 @@ const saved = ref(false);
 const error = ref('');
 const selected = ref<ProviderType>('local');
 const current = ref<StorageConfig | null>(null);
-const s3 = ref({ endpoint: '', bucket: '', region: '', accessKeyId: '', secretAccessKey: '' });
+const s3 = ref({
+  endpoint: '',
+  bucket: '',
+  region: '',
+  accessKeyId: '',
+  secretAccessKey: '',
+  // true = la instancia usa el rol de EC2 (sin claves estáticas) → lo fija el aprovisionamiento, NO la UI.
+  useInstanceRole: false,
+});
 const secretAlreadyConfigured = ref(false);
 
 async function loadStorage() {
@@ -384,10 +394,14 @@ async function loadStorage() {
     current.value = data;
     selected.value = data.providerType;
     if (data.s3) {
+      // GUARDS (?? ''): con useInstanceRole=true la config NO trae accessKeyId → sin esto, un `.trim()`
+      // posterior crasheaba toda la sección Almacenamiento (afectaba a TODO box turnkey, que usa S3+rol EC2).
       s3.value.endpoint = data.s3.endpoint ?? '';
       s3.value.bucket = data.s3.bucket;
       s3.value.region = data.s3.region;
-      s3.value.accessKeyId = data.s3.accessKeyId;
+      // accessKeyId puede faltar (useInstanceRole) → guard imprescindible: era la causa del crash `.trim()`.
+      s3.value.accessKeyId = data.s3.accessKeyId ?? '';
+      s3.value.useInstanceRole = data.s3.useInstanceRole ?? false;
       secretAlreadyConfigured.value = data.s3.secretConfigured;
     }
   } catch {
@@ -526,12 +540,14 @@ function clearStatus() {
   tested.value = null;
 }
 function s3Incomplete(): boolean {
+  if (selected.value !== 's3') return false;
+  // S3 vía rol de instancia: lo gestiona el aprovisionamiento (no se edita por UI) → no exige claves.
+  if (s3.value.useInstanceRole) return false;
   return (
-    selected.value === 's3' &&
-    (!s3.value.bucket.trim() ||
-      !s3.value.region.trim() ||
-      !s3.value.accessKeyId.trim() ||
-      !s3.value.secretAccessKey)
+    !s3.value.bucket.trim() ||
+    !s3.value.region.trim() ||
+    !s3.value.accessKeyId.trim() ||
+    !s3.value.secretAccessKey
   );
 }
 function s3Payload() {
@@ -976,7 +992,22 @@ async function save() {
                 </span>
               </label>
 
-              <div v-if="selected === 's3'" class="s3-fields" @input="clearStatus">
+              <!-- S3 vía rol de instancia EC2 (lo fija el aprovisionamiento): sólo lectura, sin claves. -->
+              <div v-if="selected === 's3' && s3.useInstanceRole" class="s3-instance-note">
+                <p class="hint">{{ t('admin.s3InstanceRole') }}</p>
+                <div class="s3-instance-info">
+                  <div>
+                    <span class="fld-lbl">{{ t('admin.bucket') }}</span>
+                    <strong>{{ s3.bucket || '—' }}</strong>
+                  </div>
+                  <div>
+                    <span class="fld-lbl">{{ t('admin.region') }}</span>
+                    <strong>{{ s3.region || '—' }}</strong>
+                  </div>
+                </div>
+              </div>
+
+              <div v-else-if="selected === 's3'" class="s3-fields" @input="clearStatus">
                 <label class="fld-lbl">{{ t('admin.endpoint') }}</label>
                 <input
                   v-model="s3.endpoint"
@@ -1008,7 +1039,7 @@ async function save() {
 
               <div class="actions">
                 <button
-                  v-if="selected === 's3'"
+                  v-if="selected === 's3' && !s3.useInstanceRole"
                   class="btn-secondary"
                   :disabled="testing || s3Incomplete()"
                   @click="testConnection"
@@ -1017,14 +1048,23 @@ async function save() {
                 </button>
                 <span v-if="tested === 'ok'" class="ok-text">{{ t('admin.testOk') }}</span>
                 <span v-if="tested === 'fail'" class="err-text">{{ t('admin.testFail') }}</span>
-                <button class="btn-primary" :disabled="saving || s3Incomplete()" @click="save">
+                <!-- S3 instance-role no se guarda por UI (lo gestiona el aprovisionamiento). -->
+                <button
+                  v-if="!(selected === 's3' && s3.useInstanceRole)"
+                  class="btn-primary"
+                  :disabled="saving || s3Incomplete()"
+                  @click="save"
+                >
                   {{ saving ? t('admin.saving') : t('admin.save') }}
                 </button>
                 <span v-if="saved" class="ok-text">{{ t('admin.saved') }}</span>
                 <span v-if="error" class="err-text">{{ error }}</span>
               </div>
 
-              <p v-if="selected === 's3' && tested !== 'ok' && !s3Incomplete()" class="warn-text">
+              <p
+                v-if="selected === 's3' && !s3.useInstanceRole && tested !== 'ok' && !s3Incomplete()"
+                class="warn-text"
+              >
                 {{ t('admin.testHint') }}
               </p>
               <p v-if="current?.updatedAt" class="current" data-testid="storage-current">
