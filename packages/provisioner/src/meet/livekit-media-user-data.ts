@@ -142,7 +142,10 @@ services:
       - '7881:7881/tcp'
       - '7882:7882/udp'
       - '3478:3478/udp'
-      - '30000-40000:30000-40000/udp'
+      # CRÍTICO: NO publicar el rango 30000-40000 acá. Docker spawnea un docker-proxy POR PUERTO (10.001
+      # procesos) → OOM que mata el boot (hallado en el deploy from-zero REAL: el OOM killeó cfn-signal). El
+      # bundled probado tampoco lo mapea; LiveKit usa el mux UDP single-port (7882). El SG abre el rango por
+      # si un TURN relay futuro lo necesita, pero el compose NO debe mapearlo. [fix from-zero HIGH]
     mem_limit: 1g
     cpus: '1.0'
     networks: [livekitnet]

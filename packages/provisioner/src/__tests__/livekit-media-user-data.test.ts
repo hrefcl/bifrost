@@ -43,7 +43,9 @@ describe('buildLivekitUserData (cloud-init media-box)', () => {
     expect(s).toContain("'7881:7881/tcp'");
     expect(s).toContain("'7882:7882/udp'");
     expect(s).toContain("'3478:3478/udp'");
-    expect(s).toContain("'30000-40000:30000-40000/udp'");
+    // CRÍTICO: NO mapear el rango 30000-40000 en el compose → Docker spawnea un docker-proxy por puerto
+    // (10.001) → OOM que mata el boot (hallado en el deploy from-zero REAL). El bundled tampoco lo mapea.
+    expect(s).not.toContain('30000-40000:30000-40000');
     // 7880 se bindea a 127.0.0.1 (para el healthcheck local), NUNCA público.
     expect(s).toContain("'127.0.0.1:7880:7880'");
     expect(s).not.toContain("'7880:7880'"); // sin binding público bare
