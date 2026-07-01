@@ -46,6 +46,22 @@ export interface UserDataInput {
    */
   enableMeet?: boolean;
   /**
+   * Modo Bifrost Meet con LiveKit EXTERNO (mutuamente excluyente con `enableMeet`). El app-box NO corre
+   * media: sólo escribe `MEET_PROVISIONED=1`+`LIVEKIT_WS_URL/API_KEY/API_URL` al `.env` (wsUrl/apiKey NO
+   * son secretos → van literales) y LEE el `apiSecret` de SSM (`secretParamName`) con el rol del box, tal
+   * como SES. NO setea `COMPOSE_PROFILES=meet` (sin container livekit local). Ver {@link livekitExternal}.
+   */
+  meetExternal?: {
+    /** WSS del signaling externo, ya validado/normalizado (wss://host[:port]). */
+    wsUrl: string;
+    /** API URL Twirp derivada (https://host[:port]). */
+    apiUrl: string;
+    /** API key (identificador, no secreto → literal en el .env). */
+    apiKey: string;
+    /** Nombre del SSM SecureString donde el CLI dejó el apiSecret (lo lee el box con el rol). */
+    secretParamName: string;
+  };
+  /**
    * Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador del
    * CLI). Si se da, el box instala un helper `bifrost-ses-activate` que LEE la credencial con el rol y
    * cablea el relay de docker-mailserver. SEND-GATING (§7b): al boot el relay queda APAGADO
@@ -196,6 +212,7 @@ ${
 } > .env`
     : `echo "STORAGE_PROVIDER=local" > .env   # adjuntos en disco del EBS (sin S3)`
 }
+chmod 600 .env   # el .env acumula secretos (mongo/redis + LiveKit): sólo root lo lee [review B/D-MED]
 ${
   input.enableMeet
     ? `# 6.b) Bifrost Meet (LiveKit self-hosted) — activado por el provisioner. Claves LiveKit GENERADAS en
@@ -219,7 +236,43 @@ MEET_EXTERNAL_IP="${MEET_EIP_MARKER}"
 if [ -n "$MEET_EXTERNAL_IP" ]; then
   sed -i "s|^  # node_ip: __MEET_EXTERNAL_IP__.*|  node_ip: \${MEET_EXTERNAL_IP}|; s|^  use_external_ip: true|  use_external_ip: false|" livekit.yaml
 fi`
-    : ''
+    : input.meetExternal
+      ? `# 6.b) Bifrost Meet con LiveKit EXTERNO — el operador ya tiene un LiveKit (p.ej. Cleverty); el app-box
+# NO corre media: sólo firma tokens y el navegador conecta directo al WSS externo. wsUrl/apiKey NO son
+# secretos → van literales. El apiSecret se LEE de SSM con el rol del box (nunca en user-data/CFN), igual
+# que SES. NO se activa el profile meet (sin container livekit local). MEET_PROVISIONED=1 afloja la CSP a wss:.
+apt_retry install -y awscli
+LK_SECRET_PARAM="${sh(input.meetExternal.secretParamName)}"
+{ set +x; } 2>/dev/null   # NO trazar el secret al log de cloud-init (set -x es global)
+# Retry (propagación IAM): la LivekitSecretAccessPolicy es un recurso aparte y puede adjuntarse/propagar
+# unos segundos DESPUÉS de que el rol quede utilizable → el primer get-parameter daría AccessDenied aunque
+# el parámetro exista. Reintenta ~60s antes de fallar-cerrado. [review B-HIGH]
+LK_SECRET=""
+for _ in $(seq 1 12); do
+  LK_SECRET=$(aws ssm get-parameter --name "$LK_SECRET_PARAM" --with-decryption --region "$REGION" --query Parameter.Value --output text 2>/dev/null) || LK_SECRET=""
+  if [ -n "$LK_SECRET" ] && [ "$LK_SECRET" != "None" ]; then break; fi
+  LK_SECRET=""
+  sleep 5
+done
+if [ -z "$LK_SECRET" ]; then
+  set -x
+  echo "ERROR: LiveKit externo: apiSecret ausente/vacío en SSM ($LK_SECRET_PARAM) tras reintentos. Fail-closed (no arranco Meet a medias)." >&2
+  signal_fail; exit 1
+fi
+umask 077
+{
+  echo "MEET_PROVISIONED=1"
+  echo "LIVEKIT_WS_URL=${sh(input.meetExternal.wsUrl)}"
+  echo "LIVEKIT_API_URL=${sh(input.meetExternal.apiUrl)}"
+  echo "LIVEKIT_API_KEY=${sh(input.meetExternal.apiKey)}"
+  echo "MEET_PUBLIC_BASE_URL=https://webmail.\${DOMAIN}"
+  # printf (no echo) para el secret: robusto ante valores con '-'/backslash. El valor viene de la variable
+  # (no re-evaluado por bash), así que no hay inyección; printf sólo evita corrupción del .env. [review D3]
+  printf 'LIVEKIT_API_SECRET=%s\\n' "$LK_SECRET"
+} >> .env
+unset LK_SECRET
+{ set -x; } 2>/dev/null`
+      : ''
 }
 # Dominio del box → lo usa el host-updater (Fase 2) para el healthcheck post-update por Traefik.
 echo "BIFROST_DOMAIN=\${DOMAIN}" >> .env

@@ -3,6 +3,8 @@ import { validateDomain, mailHostname } from '../domain.js';
 import { validateBucketName } from '../s3-naming.js';
 import {
   recommendInstance,
+  recommendInstanceFor,
+  describeInstanceChoice,
   ALLINONE_CATALOG,
   archForInstanceType,
   enforceMeetInstanceFloor,
@@ -69,6 +71,60 @@ describe('catálogo de instancias', () => {
     expect(archForInstanceType('t3.large')).toBe('amd64');
     expect(archForInstanceType('m5.large')).toBe('amd64');
     expect(archForInstanceType('c6i.large')).toBe('amd64');
+  });
+  it('incluye una instancia grande (t4g.2xlarge, ~500 buzones) para empresas grandes', () => {
+    const big = ALLINONE_CATALOG.find((i) => i.type === 't4g.2xlarge');
+    expect(big).toBeDefined();
+    expect(big?.maxMailboxes).toBeGreaterThanOrEqual(500);
+    expect(big?.meetConcurrent).toBeGreaterThan(0); // apto para Meet
+  });
+  it('los campos de capacidad son coherentes (crecen con el tamaño; medium no apto para Meet)', () => {
+    const sorted = [...ALLINONE_CATALOG].sort((a, b) => a.memGiB - b.memGiB);
+    for (let k = 1; k < sorted.length; k++) {
+      expect(sorted[k].maxMailboxes).toBeGreaterThanOrEqual(sorted[k - 1].maxMailboxes);
+    }
+    // <8 GiB → no apto para Meet self-hosted (meetConcurrent 0).
+    for (const i of ALLINONE_CATALOG) {
+      if (i.memGiB < 8) expect(i.meetConcurrent).toBe(0);
+      else expect(i.meetConcurrent).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('recommendInstanceFor (dimensiona por buzones + Meet)', () => {
+  it('elige la MÁS CHICA que cubre los buzones (solo-correo)', () => {
+    expect(recommendInstanceFor(10, false).instance.type).toBe('t4g.medium'); // ≤15
+    expect(recommendInstanceFor(50, false).instance.type).toBe('t4g.large'); // ≤50
+    expect(recommendInstanceFor(120, false).instance.type).toBe('t4g.xlarge'); // ≤150
+    expect(recommendInstanceFor(400, false).instance.type).toBe('t4g.2xlarge'); // ≤500
+  });
+  it('con Meet bundled: descarta la medium (<8 GiB) y halva la capacidad de buzones', () => {
+    // 50 buzones + Meet: la large cómoda es ~25 → no alcanza → sube a xlarge (~75) o 2xlarge.
+    const r = recommendInstanceFor(50, true);
+    expect(r.instance.meetConcurrent).toBeGreaterThan(0);
+    expect(r.instance.memGiB).toBeGreaterThanOrEqual(8);
+    // 10 buzones + Meet entran en la large (cap ~25).
+    expect(recommendInstanceFor(10, true).instance.type).toBe('t4g.large');
+  });
+  it('si supera el catálogo, devuelve la más grande con exceedsCatalog=true', () => {
+    const r = recommendInstanceFor(5000, false);
+    expect(r.instance.type).toBe('t4g.2xlarge');
+    expect(r.exceedsCatalog).toBe(true);
+  });
+});
+
+describe('describeInstanceChoice (etiqueta del menú)', () => {
+  it('muestra specs, costo y buzones; con Meet suma participantes', () => {
+    const large = ALLINONE_CATALOG.find((i) => i.type === 't4g.large');
+    if (!large) throw new Error('falta t4g.large');
+    const plain = describeInstanceChoice(large, false);
+    expect(plain).toContain('t4g.large');
+    expect(plain).toContain('8 GiB');
+    expect(plain).toContain('$49/mes');
+    expect(plain).toContain('50 buzones');
+    const withMeet = describeInstanceChoice(large, true);
+    expect(withMeet).toContain('en llamada'); // participantes de Meet
+    expect(withMeet).toContain('25 buzones'); // capacidad halvada con Meet
   });
 });
 

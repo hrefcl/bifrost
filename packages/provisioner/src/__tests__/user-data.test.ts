@@ -57,6 +57,56 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).toContain('livekit.yaml');
   });
 
+  it('con meetExternal → LIVEKIT_* externo + lee el secret de SSM, SIN profile/container/openssl local', () => {
+    const s = buildUserData({
+      ...base,
+      meetExternal: {
+        wsUrl: 'wss://livekit.cleverty.com',
+        apiUrl: 'https://livekit.cleverty.com',
+        apiKey: 'APIabc123',
+        secretParamName: '/bifrost/acme-com/livekit-secret',
+      },
+    });
+    // Provisionado (afloja CSP a wss:) apuntando al WSS externo + API Twirp derivada.
+    expect(s).toContain('MEET_PROVISIONED=1');
+    expect(s).toContain('LIVEKIT_WS_URL=wss://livekit.cleverty.com');
+    expect(s).toContain('LIVEKIT_API_URL=https://livekit.cleverty.com');
+    expect(s).toContain('LIVEKIT_API_KEY=APIabc123');
+    // El secret se LEE de SSM con el rol (nunca literal en el user-data) y NO se traza (set +x).
+    expect(s).toContain('/bifrost/acme-com/livekit-secret');
+    expect(s).toMatch(/aws ssm get-parameter .*--with-decryption/);
+    // El secret se escribe con printf (no echo) para no interpretar/comromper comillas/backticks/$().
+    expect(s).toContain('printf \'LIVEKIT_API_SECRET=%s\\n\' "$LK_SECRET"');
+    expect(s).toContain('set +x');
+    // Retry por propagación IAM antes de fallar (la policy del secret es un recurso aparte).
+    expect(s).toMatch(/for _ in \$\(seq 1 12\)/);
+    // Fail-closed si el secret está vacío/ausente.
+    expect(s).toMatch(/Fail-closed/i);
+    // El .env con secretos se asegura a 600.
+    expect(s).toContain('chmod 600 .env');
+    // NO monta media local: sin profile meet, sin generar la clave LiveKit con openssl (eso es bundled),
+    // sin marcador de EIP.
+    expect(s).not.toContain('COMPOSE_PROFILES=meet');
+    expect(s).not.toContain('LIVEKIT_API_SECRET="$(openssl');
+    expect(s).not.toContain(MEET_EIP_MARKER);
+  });
+
+  it('meetExternal y enableMeet son excluyentes: enableMeet tiene precedencia (bundled)', () => {
+    // Defensa: si por error llegaran ambos, se toma el bundled (no se mezclan las dos ramas).
+    const s = buildUserData({
+      ...base,
+      enableMeet: true,
+      meetExternal: {
+        wsUrl: 'wss://x.example.com',
+        apiUrl: 'https://x.example.com',
+        apiKey: 'k',
+        secretParamName: '/bifrost/acme-com/livekit-secret',
+      },
+    });
+    expect(s).toContain('COMPOSE_PROFILES=meet');
+    expect(s).not.toContain('LIVEKIT_WS_URL=wss://x.example.com');
+  });
+
   it('con adminMailbox → crea el buzón admin en docker-mailserver (login turnkey)', () => {
     const s = buildUserData({
       ...base,

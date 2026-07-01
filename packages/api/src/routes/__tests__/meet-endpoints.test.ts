@@ -559,12 +559,45 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
     expect(badUrl.statusCode).toBe(400);
   });
 
+  it('PATCH wsUrl no-wss (ws://, http, con path) → 400; wss:// válido → 200 (defensa en profundidad LiveKit externo)', async () => {
+    const u = await asAdmin('admin-wsurl@test.com');
+    const h = authHeaders(app, u._id.toString());
+    for (const bad of [
+      'ws://meet.insecure.com',
+      'https://meet.example.com',
+      'wss://h.example.com/rtc',
+    ]) {
+      const res = await app.inject({
+        method: 'PATCH',
+        url: '/api/admin/meet/settings',
+        headers: h,
+        payload: { wsUrl: bad },
+      });
+      expect(res.statusCode, bad).toBe(400);
+    }
+    const ok = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/meet/settings',
+      headers: h,
+      payload: { wsUrl: 'wss://livekit.cleverty.com' },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect((JSON.parse(ok.body).settings as Record<string, unknown>).wsUrl).toBe(
+      'wss://livekit.cleverty.com'
+    );
+  });
+
   it('POST /api/admin/meet/test → categoría (admin-only, sin secreto en respuesta)', async () => {
     const u = await asAdmin('admin3@test.com');
     const h = authHeaders(app, u._id.toString());
     // Con LIVEKIT_* en env + el mock de RoomServiceClient.listRooms → reachable.
     await enableMeet();
-    const res = await app.inject({ method: 'POST', url: '/api/admin/meet/test', headers: h, payload: {} });
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/meet/test',
+      headers: h,
+      payload: {},
+    });
     expect(res.statusCode).toBe(200);
     const b = JSON.parse(res.body) as { ok: boolean; category: string };
     expect(b.ok).toBe(true);
@@ -574,7 +607,11 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
       method: 'POST',
       url: '/api/admin/meet/test',
       headers: h,
-      payload: { livekitApiKey: 'k', livekitApiSecret: 's', livekitApiUrl: 'http://169.254.169.254' },
+      payload: {
+        livekitApiKey: 'k',
+        livekitApiSecret: 's',
+        livekitApiUrl: 'http://169.254.169.254',
+      },
     });
     expect((JSON.parse(bad.body) as { category: string }).category).toBe('invalid');
   });

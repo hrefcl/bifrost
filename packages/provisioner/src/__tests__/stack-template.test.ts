@@ -159,6 +159,44 @@ describe('buildStackTemplate (CloudFormation)', () => {
     });
   });
 
+  it('LiveKit externo: LivekitSecretParamName parametrizado, EnableExternalLivekit condicional, policy lee SSM + descifra vía SSM', () => {
+    // Por defecto (sin LiveKit externo) el parámetro está vacío y la policy no existe.
+    expect(t.Parameters.LivekitSecretParamName).toMatchObject({ Default: '' });
+    expect(t.Conditions.EnableExternalLivekit).toEqual({
+      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] }],
+    });
+    const pol = t.Resources.LivekitSecretAccessPolicy;
+    expect(pol?.Condition).toBe('EnableExternalLivekit');
+    expect(pol?.Properties.Roles).toEqual([{ Ref: 'InstanceRole' }]);
+    const stmts = (
+      pol?.Properties.PolicyDocument as {
+        Statement: { Action: string[]; Resource: unknown; Condition?: unknown }[];
+      }
+    ).Statement;
+    const ssmStmt = stmts.find((s) => s.Action.includes('ssm:GetParameter'));
+    // Scoped al parámetro exacto del secret externo (no a todo SSM).
+    expect(ssmStmt?.Resource).toEqual({
+      'Fn::Sub': 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LivekitSecretParamName}',
+    });
+    const kmsStmt = stmts.find((s) => s.Action.includes('kms:Decrypt'));
+    expect(kmsStmt?.Condition).toEqual({
+      StringEquals: { 'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' } },
+    });
+  });
+
+  it('Rule: MeetMode=enabled (bundled) es EXCLUYENTE con LivekitSecretParamName (externo)', () => {
+    const rules = (t as unknown as { Rules: Record<string, unknown> }).Rules;
+    const rule = rules.ExternalLivekitExcludesBundledMeet as {
+      RuleCondition: unknown;
+      Assertions: { Assert: unknown }[];
+    };
+    // Sólo aplica cuando MeetMode=enabled; ahí exige LivekitSecretParamName vacío.
+    expect(rule.RuleCondition).toEqual({ 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] });
+    expect(rule.Assertions[0].Assert).toEqual({
+      'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''],
+    });
+  });
+
   it('endurecimiento: IMDSv2 requerido, EBS NO se borra al terminar, CreationPolicy presente', () => {
     expect(t.Resources.Instance?.Properties.MetadataOptions).toEqual({
       HttpEndpoint: 'enabled',
@@ -282,9 +320,7 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
 
   it('Route53 suma A meet. y turn.meet. (cond. ManageMeetDns con AWS::NoValue); base intacta', () => {
     const records = t.Resources.DnsRecords?.Properties.RecordSets as Record<string, unknown>[];
-    const meetRecords = records.filter(
-      (r) => typeof r === 'object' && r !== null && 'Fn::If' in r
-    );
+    const meetRecords = records.filter((r) => typeof r === 'object' && r !== null && 'Fn::If' in r);
     expect(meetRecords).toHaveLength(2);
     for (const r of meetRecords) {
       const branch = (r as { 'Fn::If': unknown[] })['Fn::If'];
@@ -307,7 +343,9 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
     const emb = buildStackTemplate(script) as unknown as TplView & {
       Resources: Record<string, { Properties: Record<string, unknown> }>;
     };
-    const ud = emb.Resources.Instance.Properties.UserData as { 'Fn::Base64': { 'Fn::Join': unknown[] } };
+    const ud = emb.Resources.Instance.Properties.UserData as {
+      'Fn::Base64': { 'Fn::Join': unknown[] };
+    };
     expect(ud['Fn::Base64']).toHaveProperty('Fn::Join');
     const [sep, parts] = ud['Fn::Base64']['Fn::Join'] as [string, unknown[]];
     expect(sep).toBe('');
@@ -315,8 +353,8 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
     expect(parts[1]).toEqual({
       'Fn::If': ['EnableMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''],
     });
-    expect((parts[0] as string)).toContain('MEET_EXTERNAL_IP="');
-    expect((parts[2] as string)).toContain('echo "$DOMAIN"'); // bash var intacta, NO interpolada
+    expect(parts[0] as string).toContain('MEET_EXTERNAL_IP="');
+    expect(parts[2] as string).toContain('echo "$DOMAIN"'); // bash var intacta, NO interpolada
     // El marcador crudo ya NO aparece (fue sustituido).
     expect(JSON.stringify(ud)).not.toContain(MEET_EIP_MARKER);
   });

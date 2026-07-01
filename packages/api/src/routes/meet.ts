@@ -64,6 +64,26 @@ const settingsPatchSchema = z.object({
   onDemand: z.boolean().optional(),
 });
 
+/**
+ * Defensa en profundidad (review B/D del modo LiveKit externo): el `wsUrl` es la URL de signaling a la que
+ * conecta el NAVEGADOR → debe ser `wss://` (TLS). Rechaza `ws://` (dejaría media/token sin cifrar), http(s),
+ * userinfo y paths raros. No bloquea hosts internos a propósito: igual que el resto de Meet asume admin
+ * confiable (el bundled usa hosts internos para el apiUrl); acá sólo se garantiza el TRANSPORTE seguro.
+ */
+export function isSafeExternalWsUrl(raw: string): boolean {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (u.protocol !== 'wss:') return false;
+  if (u.username || u.password) return false;
+  if (u.search || u.hash) return false;
+  if (u.pathname !== '/' && u.pathname !== '') return false;
+  return true;
+}
+
 // Body del endpoint de prueba de conexión: usa las creds guardadas, o un candidato (sin persistir).
 const testBodySchema = z.object({
   livekitApiUrl: z.string().max(512).optional(),
@@ -174,13 +194,11 @@ export default function meetRoutes(fastify: FastifyInstance) {
         }
       }
       if (!room)
-        return reply
-          .code(500)
-          .send({
-            statusCode: 500,
-            error: 'Internal Server Error',
-            message: 'No se pudo crear la sala',
-          });
+        return reply.code(500).send({
+          statusCode: 500,
+          error: 'Internal Server Error',
+          message: 'No se pudo crear la sala',
+        });
 
       counters.meetRoomsCreated++;
       audit(request, settings, 'room.create', { slug: room.slug, userId, source: 'manual' });
@@ -209,13 +227,11 @@ export default function meetRoutes(fastify: FastifyInstance) {
       const room = await MeetRoom.findOne({ slug, userId: request.user.userId, status: 'active' });
       if (!room) return notFound(reply);
       if (room.mode !== 'personal') {
-        return reply
-          .code(409)
-          .send({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'Sólo se rota el slug de salas personales',
-          });
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Sólo se rota el slug de salas personales',
+        });
       }
       // Cierra la sala LiveKit del slug viejo (desconecta) antes de cambiar.
       await closeLiveKitRoom(settings, room.slug);
@@ -444,6 +460,13 @@ export function meetAdminRoutes(fastify: FastifyInstance) {
       return reply
         .code(400)
         .send({ statusCode: 400, error: 'Bad Request', message: 'invalid_livekit_api_url' });
+    }
+    // - el wsUrl (signaling del navegador), si se setea, debe ser wss:// (TLS). Defensa en profundidad
+    //   del modo LiveKit externo: no persistir un canal inseguro configurado por PATCH.
+    if (patch.wsUrl !== undefined && patch.wsUrl !== '' && !isSafeExternalWsUrl(patch.wsUrl)) {
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'invalid_livekit_ws_url' });
     }
     const stored = await setMeetSettings(patch);
     return { settings: toAdminMeetSettings(stored) };

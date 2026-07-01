@@ -38,6 +38,14 @@ const router = createRouter({
       name: 'scheduling',
       component: () => import('@/views/SchedulingView.vue'),
     },
+    // Home AUTENTICADO de Bifrost Meet: crear una reunión instantánea o unirse por link/código. La sala en
+    // sí vive en `/meet/:slug` (MeetJoinView, guestOk) — este `/meet` sin slug es el punto de entrada del
+    // webmail que faltaba (no había botón para crear/entrar a llamadas).
+    {
+      path: '/meet',
+      name: 'meet-home',
+      component: () => import('@/views/MeetHomeView.vue'),
+    },
     {
       path: '/admin',
       name: 'admin',
