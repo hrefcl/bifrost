@@ -8,6 +8,7 @@ import multipart from '@fastify/multipart';
 import { env } from './config/env.js';
 import { loggerOptions } from './config/logger.js';
 import authPlugin from './plugins/auth.js';
+import complianceGatePlugin from './plugins/compliance-gate.js';
 import authRoutes from './routes/auth.js';
 import healthRoutes from './routes/health.js';
 import setupRoutes from './routes/setup.js';
@@ -25,6 +26,7 @@ import signatureImageRoutes from './routes/signature-images.js';
 import attachmentRoutes from './routes/attachments.js';
 import metricsRoutes from './routes/metrics.js';
 import meetRoutes, { meetAdminRoutes } from './routes/meet.js';
+import complianceRoutes from './routes/compliance.js';
 import { counters, observeDuration } from './lib/metrics.js';
 
 export async function buildApp() {
@@ -48,7 +50,7 @@ export async function buildApp() {
       });
       return;
     }
-    const err = error as Error & { statusCode?: number };
+    const err = error as Error & { statusCode?: number; code?: string };
     const statusCode = err.statusCode ?? 500;
     // Sólo los 5xx son errores reales del servidor; 4xx no deben ensuciar los logs de error.
     if (statusCode >= 500) {
@@ -58,10 +60,17 @@ export async function buildApp() {
     }
     const message =
       statusCode >= 500 && env.NODE_ENV === 'production' ? 'Internal Server Error' : err.message;
+    // `code` (string) se incluye si el error lo trae (p.ej. ComplianceError: VERSION_STALE,
+    // COMPLIANCE_REQUIRED) → el frontend puede discriminar sin parsear el mensaje. No para 5xx en prod.
+    const code =
+      typeof err.code === 'string' && !(statusCode >= 500 && env.NODE_ENV === 'production')
+        ? err.code
+        : undefined;
     void reply.code(statusCode).send({
       statusCode,
       error: err.name,
       message,
+      ...(code ? { code } : {}),
     });
   });
 
@@ -128,6 +137,9 @@ export async function buildApp() {
 
   await app.register(setupRoutes, { prefix: '/api/setup' });
   await app.register(authPlugin);
+  // El gate de compliance se registra INMEDIATAMENTE después de authPlugin: su hook onRequest corre
+  // tras el de auth (orden de registro) → request.user ya está poblado (DESIGN §3.4).
+  await app.register(complianceGatePlugin);
 
   await app.register(healthRoutes, { prefix: '/api/health' });
   await app.register(metricsRoutes, { prefix: '/api/metrics' });
@@ -146,6 +158,7 @@ export async function buildApp() {
   await app.register(attachmentRoutes, { prefix: '/api/attachments' });
   await app.register(meetRoutes, { prefix: '/api/meet' });
   await app.register(meetAdminRoutes, { prefix: '/api/admin/meet' });
+  await app.register(complianceRoutes, { prefix: '/api/compliance' });
 
   return app;
 }

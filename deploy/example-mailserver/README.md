@@ -104,6 +104,7 @@ Ver `../../docs/admin-config-y-providers.md`.
 
 ---
 
+<<<<<<< HEAD
 ## 📹 (Opcional) Bifrost Meet — videollamadas
 
 Videollamadas self-hosted (LiveKit) en el **mismo** servidor. **Opcional**: si no lo activás, todo lo de
@@ -125,17 +126,45 @@ evento/reserva en la agenda (toggle "Reunión con video").
 ¿Ya tenés un LiveKit propio o querés LiveKit **Cloud**? Apuntalo por la **API del admin** (`wsUrl` +
 API key/secret + `POST /api/admin/meet/test`) — el panel visual es F3.7-frontend. Guía completa:
 **[`../../docs/meet/INSTALL.md`](../../docs/meet/INSTALL.md)**.
+=======
+## 📤 Envío saliente — relay SES (PERSISTENTE)
+
+AWS (y casi todo cloud) **bloquea el puerto 25 saliente** → sin un relay, el box RECIBE pero no ENVÍA a
+internet (los correos quedan `deferred` en la cola). El relay se configura en **`mailserver.env`** (lo lee
+el `env_file` del compose) — **NO lo configures a mano con `postconf` dentro del contenedor: se PIERDE en
+el primer restart** (incidente real, ver `docs/post-mortem-relay-saliente.md`). En `mailserver.env`:
+
+```
+RELAY_HOST=email-smtp.us-east-1.amazonaws.com
+RELAY_PORT=587
+RELAY_USER=<tu AccessKeyId de SES SMTP>
+RELAY_PASSWORD=<tu password SMTP de SES (derivado del SecretAccessKey)>
+```
+
+Luego `docker compose up -d mailserver`. Al vivir en el volumen, **sobrevive restarts y recreates**. El
+password SMTP de SES NO es el SecretAccessKey: se deriva (ver la CLI `bifrost-provision`, que además
+automatiza identidad/DKIM/MAIL FROM y puebla esto solo). Recordá: una cuenta SES nueva arranca en
+**sandbox** (sólo destinos verificados) → pedí _production access_ en la consola de SES.
+>>>>>>> origin/main
 
 ---
 
 ## ❓ Problemas comunes
 
+<<<<<<< HEAD
 | Síntoma             | Solución                                                                                                 |
 | ------------------- | -------------------------------------------------------------------------------------------------------- |
 | El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos.                      |
 | No puedo enviar     | Puerto 25 saliente bloqueado por tu proveedor (común en clouds) → pedí que lo abran o usá un relay SMTP. |
 | Login falla         | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`.                          |
 | Meet: media no conecta | Abrí UDP `7882`/`3478` y TCP `7881`; probá desde otra red. Detalle: `docs/meet/INSTALL.md` §5/§8.      |
+=======
+| Síntoma             | Solución                                                                                                                                                                                                               |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos.                                                                                                                                    |
+| No puedo enviar     | Puerto 25 saliente bloqueado (común en clouds). Configurá el relay SES en `mailserver.env` (ver §Envío saliente). Verificá: `docker compose exec mailserver postconf -h relayhost` debe mostrar el host SES, NO vacío. |
+| Login falla         | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`.                                                                                                                                        |
+>>>>>>> origin/main
 
 > Antes de producción real: desactivá `--api.insecure` de Traefik, configurá backups de
 > Mongo/Redis y revisá el hardening de `docs/deuda-tecnica.md` (F4).

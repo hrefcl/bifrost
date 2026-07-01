@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node -e \"require('fs').cpSync('src/compliance/seeds','dist/compliance/seeds',{recursive:true})\"",
     "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
@@ -33,6 +33,7 @@
     "isomorphic-dompurify": "^2.20.0",
     "livekit-server-sdk": "^2.16.0",
     "luxon": "^3.5.0",
+    "markdown-it": "^14.1.0",
     "mongoose": "^8.9.3",
     "nodemailer": "^9.0.1",
     "postal-mime": "^2.3.2",
@@ -42,6 +43,7 @@
   "devDependencies": {
     "@types/ioredis-mock": "^8.2.7",
     "@types/luxon": "^3.4.2",
+    "@types/markdown-it": "^14.1.2",
     "@types/node": "^22.10.0",
     "@types/nodemailer": "^8.0.1",
     "@types/sanitize-html": "^2.13.0",

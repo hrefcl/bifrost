@@ -8,7 +8,7 @@ import { useUiStore, type ListFilter } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
 import { SUPPORTED_LOCALES, LOCALE_NAMES, setLocale, type Locale } from '@/i18n';
 import AppLogo from '@/components/AppLogo.vue';
-import AppIcon from '@/components/AppIcon.vue';
+import AppIcon, { type IconName } from '@/components/AppIcon.vue';
 import AppAvatar from '@/components/AppAvatar.vue';
 import ComposerWindow from '@/components/ComposerWindow.vue';
 
@@ -27,7 +27,7 @@ const searchInput = ref<HTMLInputElement | null>(null);
 // Embudo de filtro del TopBar: aplica el filtro rápido de la lista (compartido con el Inbox vía
 // el store ui). Antes el botón no hacía nada.
 const filterMenuOpen = ref(false);
-const TOPNAV_FILTERS: { key: ListFilter; label: string; icon: string }[] = [
+const TOPNAV_FILTERS: { key: ListFilter; label: string; icon: IconName }[] = [
   { key: 'all', label: 'list.filterAll', icon: 'mail' },
   { key: 'unread', label: 'list.filterUnread', icon: 'dot' },
   { key: 'starred', label: 'list.filterStarred', icon: 'star' },
@@ -153,7 +153,7 @@ async function onLogout() {
         :title="t('nav.scheduling')"
         @click="router.push({ name: 'scheduling' })"
       >
-        <AppIcon name="users" :size="20" />
+        <AppIcon name="calendarClock" :size="20" />
       </button>
       <button
         class="icon-btn"

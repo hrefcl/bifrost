@@ -123,11 +123,8 @@ onMounted(async () => {
   <div class="sched-admin">
     <div v-if="loading" class="muted">Cargando…</div>
     <template v-else-if="settings">
-      <!-- A1: configuración -->
+      <!-- A1: configuración (el header de sección lo pone AdminView; no se duplica acá). -->
       <section class="card">
-        <h2 class="h">Agenda Inteligente</h2>
-        <p class="desc">Reuniones tipo Calendly, nativas y sin dependencias externas.</p>
-
         <label class="row">
           <input v-model="settings.enabled" type="checkbox" />
           <span><strong>Activar agenda</strong> — habilita descubrimiento y nuevas reservas.</span>
@@ -269,11 +266,13 @@ onMounted(async () => {
   flex-direction: column;
   gap: 16px;
 }
+/* Alineado al design-system del admin (AdminView): card/input/botón/campo consistentes. */
 .card {
   background: var(--surface, #fff);
   border: 1px solid var(--border, #e5e5e5);
-  border-radius: 12px;
-  padding: 20px;
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: var(--shadow-sm);
 }
 .h {
   margin: 0 0 2px;
@@ -301,41 +300,67 @@ onMounted(async () => {
 .fld {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  font-size: 13px;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 .in {
-  padding: 9px;
-  border: 1px solid var(--border, #e5e5e5);
-  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 9px 12px;
   font: inherit;
+  font-size: 13.5px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text-1);
+  outline: none;
+}
+.in:focus {
+  border-color: var(--accent);
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 12px;
+  padding-top: 6px;
 }
 .btn {
-  padding: 10px 18px;
+  padding: 9px 20px;
+  font-size: 14px;
+  font-weight: 600;
   background: var(--accent, #1b66ff);
   color: #fff;
   border: none;
   border-radius: 8px;
-  font-weight: 600;
   cursor: pointer;
+  white-space: nowrap;
+}
+.btn:hover:not(:disabled) {
+  background: var(--accent-700);
 }
 .btn:disabled {
-  opacity: 0.5;
+  opacity: 0.55;
+  cursor: default;
 }
 .btn-ghost {
-  background: none;
+  background: transparent;
   border: 1px solid var(--border, #e5e5e5);
   border-radius: 8px;
-  padding: 7px 12px;
+  padding: 9px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
   cursor: pointer;
 }
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
 .btn-ghost:disabled {
-  opacity: 0.4;
+  opacity: 0.55;
+  cursor: default;
 }
 .ok {
   color: #1e7e34;

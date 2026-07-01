@@ -45,6 +45,13 @@ export interface UserDataInput {
    * (marcador {@link MEET_EIP_MARKER}, que CFN reemplaza por la IP real). OFF ⇒ user-data byte-idéntico.
    */
   enableMeet?: boolean;
+  /**
+   * Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador del
+   * CLI). Si se da, el box instala un helper `bifrost-ses-activate` que LEE la credencial con el rol y
+   * cablea el relay de docker-mailserver. SEND-GATING (§7b): al boot el relay queda APAGADO
+   * (mailserver.env vacío); se activa sólo cuando la credencial existe en SSM (outbound `ready`).
+   */
+  sesParamName?: string;
 }
 
 /**
@@ -142,6 +149,9 @@ sed -i "s/mail\\.example\\.com/\${MAIL_HOST}/g; s/example\\.com/\${DOMAIN}/g; s/
 install -d -m 0700 secrets
 openssl rand -hex 32 > secrets/jwt_secret.txt
 openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (lo que exige la API)
+# Secreto DEDICADO de la evidencia de compliance (HMAC). NO se deriva de JWT_SECRET (que rota →
+# invalidaría evidencia histórica). 64 chars hex ≥ 32 (lo que exige la API en producción).
+openssl rand -hex 32 > secrets/compliance_hmac_secret.txt
 ${
   input.s3Bucket
     ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.
@@ -177,6 +187,135 @@ MEET_EXTERNAL_IP="${MEET_EIP_MARKER}"
 if [ -n "$MEET_EXTERNAL_IP" ]; then
   sed -i "s|^  # node_ip: __MEET_EXTERNAL_IP__.*|  node_ip: \${MEET_EXTERNAL_IP}|; s|^  use_external_ip: true|  use_external_ip: false|" livekit.yaml
 fi`
+    : ''
+}
+# Dominio del box → lo usa el host-updater (Fase 2) para el healthcheck post-update por Traefik.
+echo "BIFROST_DOMAIN=\${DOMAIN}" >> .env
+# Updater del host (botón "Actualizar" del admin): el script vive en el repo (deploy/example-mailserver/
+# bifrost-update.sh). Lee el marker que deja el API y hace pull+up+rollback. El API NUNCA toca el socket de
+# Docker. Ver bifrost-update.sh.
+chmod +x bifrost-update.sh 2>/dev/null || true
+install -d -m 0750 update-trigger
+# DISPARO: dos mecanismos complementarios (ambos corren el MISMO script con flock → nunca se solapan):
+#  (a) systemd .path → observa el marker y dispara en ~1-2s (el botón no espera al próximo tick del cron).
+#  (b) cron cada minuto → red de seguridad si el .path fallara. Antes sólo había cron → hasta 60s de latencia
+#      percibida ("demoró mucho en actualizar").
+echo '* * * * * root cd /opt/bifrost/deploy/example-mailserver && ./bifrost-update.sh >> /var/log/bifrost-update.log 2>&1' > /etc/cron.d/bifrost-update
+chmod 644 /etc/cron.d/bifrost-update
+cat > /etc/systemd/system/bifrost-update.service <<'UNIT'
+[Unit]
+Description=Bifrost host-side updater (aplica el build pedido por el admin)
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/bifrost/deploy/example-mailserver
+ExecStart=/opt/bifrost/deploy/example-mailserver/bifrost-update.sh
+UNIT
+cat > /etc/systemd/system/bifrost-update.path <<'UNIT'
+[Unit]
+Description=Observa el marker de update de Bifrost y dispara el updater al instante
+[Path]
+PathExists=/opt/bifrost/deploy/example-mailserver/update-trigger/requested
+Unit=bifrost-update.service
+[Install]
+WantedBy=multi-user.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now bifrost-update.path
+# fail2ban: el API es un PROXY IMAP confiable — TODOS los logins de TODOS los usuarios salen de la IP del
+# contenedor API. Sin este ignoreip, los fallos de password de UN usuario banean la IP del API → lockout de
+# TODO el tenant (incidente real). La red 172.16/12 es interna (no enrutable desde internet), así que esto NO
+# debilita el anti-bruteforce de IMAP/SMTP directo desde IPs públicas. docker-mailserver copia este archivo a
+# /etc/fail2ban/jail.d/user-jail.local en CADA arranque (los jail.d/*.local se leen último → ganan a jail.local).
+install -d -m 0750 config
+cat > config/fail2ban-jail.cf <<'F2B'
+[DEFAULT]
+ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16
+F2B
+chmod 0644 config/fail2ban-jail.cf
+# NOTA (review B/D): 172.16/12 + 192.168/16 cubren TODO el pool de redes bridge que Docker asigna por defecto
+# (moby ipamutils: 172.17-31/16 y 192.168/16). El modelo de Bifrost es ALL-IN-ONE single-tenant: el único
+# origen en esos rangos RFC1918 es un contenedor del propio box (confiable). NO se expone a internet (no
+# spoofeable en TCP) y el bruteforce IMAP/SMTP directo desde IPs públicas se sigue baneando. Si algún día se
+# corre en host/VPC compartido, estrechar a la subnet exacta de la red del compose.
+${
+  input.sesParamName
+    ? `# 6.b) OUTBOUND SES: el relay arranca APAGADO (send-gating §7b). Un helper lo activa SÓLO cuando la
+# credencial SMTP existe en SSM (= el orquestador del CLI la publica al quedar el outbound 'ready'),
+# escribiéndola en config/user-patches.sh (PERSISTENTE: docker-mailserver lo re-corre en cada arranque →
+# sobrevive restart/reboot, a diferencia de una config en caliente). awscli para leer el SecureString.
+apt_retry install -y awscli
+SES_PARAM="${sh(input.sesParamName)}"
+printf 'SES_PARAM=%s\\nSES_REGION=%s\\nCOMPOSE_DIR=%s\\n' "$SES_PARAM" "$REGION" "$(pwd)" > /etc/bifrost-ses.conf
+cat > /usr/local/bin/bifrost-ses-activate <<'ACT'
+#!/bin/bash
+# Cablea el relay SES leyendo la credencial SMTP de SSM (con el rol del box). Idempotente y graceful:
+# si la credencial aún no existe (outbound no-ready), NO toca nada y sale 0 (relay sigue apagado).
+set -euo pipefail
+. /etc/bifrost-ses.conf
+VAL=$(aws ssm get-parameter --name "$SES_PARAM" --with-decryption --region "$SES_REGION" --query Parameter.Value --output text 2>/dev/null) || { echo "bifrost-ses: credencial no disponible aún; relay apagado"; exit 0; }
+RUSER=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["accessKeyId"])')
+RPASS=$(printf '%s' "$VAL" | python3 -c 'import sys,json;print(json.load(sys.stdin)["smtpPassword"])')
+cd "$COMPOSE_DIR"
+RELAY="email-smtp.$SES_REGION.amazonaws.com"
+# El relay se persiste vía config/user-patches.sh: docker-mailserver lo corre en CADA arranque del
+# contenedor → sobrevive restart/reboot/recreate. NO se usa 'compose up' confiando en que recree por el
+# cambio de env_file (comportamiento FRÁGIL/version-dependiente que dejaría el relay sin aplicar). Este
+# mecanismo está PROBADO contra un restart real. (Comillas simples internas para los valores de postconf
+# → cero backslashes que el generador del user-data malinterprete.)
+mkdir -p config
+umask 077
+{
+  echo '#!/bin/bash'
+  echo "postconf -e 'relayhost = [$RELAY]:587'"
+  echo "postconf -e 'smtp_sasl_auth_enable = yes'"
+  echo "postconf -e 'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd'"
+  echo "postconf -e 'smtp_sasl_security_options = noanonymous'"
+  echo "postconf -e 'smtp_tls_security_level = encrypt'"
+  echo "echo '[$RELAY]:587 $RUSER:$RPASS' > /etc/postfix/sasl_passwd"
+  echo 'postmap hash:/etc/postfix/sasl_passwd'
+  echo 'chmod 600 /etc/postfix/sasl_passwd /etc/postfix/sasl_passwd.db'
+  echo 'postfix reload || true'
+} > config/user-patches.sh.new
+chmod 700 config/user-patches.sh.new
+# Sólo re-aplicar si cambió (el cron corre cada 5 min; evita exec/flush innecesarios).
+if ! cmp -s config/user-patches.sh.new config/user-patches.sh 2>/dev/null; then
+  mv config/user-patches.sh.new config/user-patches.sh
+  # Aplicar YA en el contenedor corriendo (sin esperar un restart) + flushear la cola atascada.
+  docker compose exec -T mailserver bash /tmp/docker-mailserver/user-patches.sh || true
+  docker compose exec -T mailserver postqueue -f || true
+  echo "bifrost-ses: relay ACTIVADO y persistido (RELAY_USER=$RUSER)"
+else
+  rm -f config/user-patches.sh.new
+fi
+
+# HEALTH PROBE del saliente (corre en cada tick del cron) → convierte un corte SILENCIOSO en detectable.
+# Hace AUTH a SES:587 SIN mandar correo (valida puerto 587 abierto + TLS + credenciales). La clave va por
+# ENV (no por argv → no aparece en 'ps'). Loguea OK o ALERTA con causa en /var/log/bifrost-ses.log.
+LOG=/var/log/bifrost-ses.log
+if RHOST="$RELAY" RUSR="$RUSER" RPWD="$RPASS" python3 - <<'PY' 2>>"$LOG"
+import smtplib, os, sys
+try:
+    s = smtplib.SMTP(os.environ["RHOST"], 587, timeout=15)
+    s.starttls(); s.login(os.environ["RUSR"], os.environ["RPWD"]); s.quit()
+except Exception as e:
+    print("probe-error:", e, file=sys.stderr); sys.exit(1)
+PY
+then
+  echo "$(date -Is) bifrost-ses: relay OK (AUTH a SES:587 exitoso)" >> "$LOG"
+else
+  echo "$(date -Is) bifrost-ses: ALERTA — el relay NO funciona (fallo AUTH/conexión a SES:587). El saliente externo NO sale. Revisá creds SES / puerto 587." >> "$LOG"
+fi
+# Alerta de cola: mail atascado = relay roto o SES rechazando. Cuenta entradas de cola (IDs hex).
+QN=$(docker compose exec -T mailserver postqueue -p 2>/dev/null | grep -cE '^[0-9A-F]{8,}' || true)
+if [ "\${QN:-0}" -gt 5 ]; then
+  echo "$(date -Is) bifrost-ses: ALERTA — $QN mensajes ATASCADOS en la cola de envío (revisá el relay)." >> "$LOG"
+fi
+ACT
+chmod 755 /usr/local/bin/bifrost-ses-activate
+# Timer pull-based: el box se auto-activa dentro de ~5 min de que la credencial aparezca en SSM, y
+# RE-aplica el relay tras un reboot (sobrevive reinicios). No requiere push del operador al box.
+echo '*/5 * * * * root /usr/local/bin/bifrost-ses-activate >> /var/log/bifrost-ses.log 2>&1' > /etc/cron.d/bifrost-ses
+chmod 644 /etc/cron.d/bifrost-ses`
     : ''
 }
 
@@ -238,6 +377,14 @@ for _ in $(seq 1 36); do docker compose exec -T mailserver setup email list >/de
 docker compose exec -T mailserver setup email add "$ADMIN_MAILBOX" "$ADMIN_MAILBOX_PASS" \\
   || echo "buzón admin ya existía o setup no estaba listo"
 echo "bifrost-provision: buzón admin $ADMIN_MAILBOX listo" >> /var/log/bifrost-provision.log`
+    : ''
+}
+
+${
+  input.sesParamName
+    ? `# 7.c) Intentar activar el relay SES YA (si la credencial ya está en SSM). Graceful: si aún no está
+# (outbound no-ready), no hace nada; el cron reintenta cada 5 min. Sobrevive reboots.
+/usr/local/bin/bifrost-ses-activate || true`
     : ''
 }
 

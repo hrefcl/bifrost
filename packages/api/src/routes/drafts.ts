@@ -5,6 +5,7 @@ import { Account } from '../models/Account.js';
 import { User } from '../models/User.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { sendDraft } from '../services/smtp.js';
+import { checkOutboundLimit, maxRecipientsPerMessage } from '../services/outbound-limit.js';
 import { appendToSent } from '../services/imap.js';
 import { autoSaveContacts } from '../services/contacts.js';
 import { randomToken } from '../config/crypto.js';
@@ -315,6 +316,62 @@ export default function draftRoutes(fastify: FastifyInstance) {
       return reply
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Account not found' });
+    }
+
+    // Tope de destinatarios por MENSAJE (anti amplificación): sin esto un solo draft con miles de
+    // destinatarios pasa el schema y agota el cupo de una. 400 (validación), revierte a editing. [D-MED]
+    const maxPerMsg = maxRecipientsPerMessage();
+    if (recipients > maxPerMsg) {
+      request.log.warn(
+        { accountId: String(claimed.accountId), userId, recipients, max: maxPerMsg },
+        'outbound: mensaje con demasiados destinatarios RECHAZADO'
+      );
+      await Draft.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'editing' }, $unset: { sendingSince: 1 } }
+      );
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `Demasiados destinatarios en un mensaje (${String(recipients)}); el máximo es ${String(maxPerMsg)}. Dividí el envío.`,
+      });
+    }
+
+    // Rate-limit de envío saliente POR BUZÓN (anti spam-cannon): acota destinatarios/ventana vía Redis.
+    // Si se excede, revertimos el draft a 'editing' (lo reclamamos a 'sending' arriba) y devolvemos 429
+    // con Retry-After. Guardrail del producto para que un abuso (cuenta comprometida) no escale a miles.
+    const limit = await checkOutboundLimit(String(claimed.accountId), recipients);
+    if (limit.degraded) {
+      // Fail-open: Redis caído → el cap anti-abuso está OFF. El operador debe saberlo CON la causa raíz.
+      request.log.error(
+        { accountId: String(claimed.accountId), err: limit.degradedReason },
+        'outbound rate-limit DEGRADED (Redis no disponible): envío permitido sin cap'
+      );
+    }
+    if (!limit.allowed) {
+      // Señal de posible abuso (cuenta comprometida / envío masivo) — visible para el operador.
+      request.log.warn(
+        {
+          accountId: String(claimed.accountId),
+          userId,
+          scope: limit.scope,
+          recipients,
+          max: limit.limit,
+        },
+        'outbound rate-limit: envío BLOQUEADO por exceso de destinatarios'
+      );
+      await Draft.updateOne(
+        { _id: claimed._id },
+        { $set: { status: 'editing' }, $unset: { sendingSince: 1 } }
+      );
+      return reply
+        .code(429)
+        .header('Retry-After', String(limit.retryAfterSec ?? 60))
+        .send({
+          statusCode: 429,
+          error: 'Too Many Requests',
+          message: `Límite de envío por ${limit.scope ?? 'ventana'} alcanzado (${String(limit.limit)} destinatarios). Reintentá en ${String(limit.retryAfterSec)}s.`,
+        });
     }
 
     // Firma del usuario: se añade SERVER-SIDE al enviar (no al draft persistido) para preservar el

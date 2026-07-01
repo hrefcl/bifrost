@@ -6,6 +6,12 @@ dotenv.config();
 
 const CRITICAL_VARS = ['MONGODB_URI', 'REDIS_URL', 'JWT_SECRET', 'ENCRYPTION_KEY'] as const;
 
+// Secretos que pueden venir por archivo (docker secrets). Incluye los críticos + COMPLIANCE_HMAC_SECRET:
+// éste NO es crítico para el boot (en dev la API arranca sin él), pero en producción el firmado de la
+// evidencia de compliance lo EXIGE (≥32 chars) → el provisioner lo genera y lo monta como secret
+// (COMPLIANCE_HMAC_SECRET_FILE). Así la firma de evidencia queda turnkey, sin el valor en claro.
+const FILE_BACKED_VARS = [...CRITICAL_VARS, 'COMPLIANCE_HMAC_SECRET'] as const;
+
 /**
  * Secretos OPCIONALES con soporte `<VAR>_FILE` (no críticos para el boot). Bifrost Meet sólo necesita
  * LIVEKIT_* cuando la feature está activa; con Meet OFF estos no existen y el boot debe seguir OK
@@ -24,7 +30,8 @@ const OPTIONAL_FILE_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const;
  * no silenciado; pero su AUSENCIA total no rompe nada (Meet OFF no setea `_FILE`).
  */
 export function resolveFileSecrets(): void {
-  for (const key of [...CRITICAL_VARS, ...OPTIONAL_FILE_VARS]) {
+  // Críticos + COMPLIANCE_HMAC_SECRET (FILE_BACKED_VARS) + LIVEKIT_* opcionales (OPTIONAL_FILE_VARS).
+  for (const key of [...FILE_BACKED_VARS, ...OPTIONAL_FILE_VARS]) {
     const filePath = process.env[`${key}_FILE`];
     const current = process.env[key];
     if (filePath && (!current || current.trim() === '')) {

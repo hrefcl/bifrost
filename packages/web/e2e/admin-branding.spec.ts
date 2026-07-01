@@ -45,7 +45,7 @@ test.describe('punch-list PM (sesión 6)', () => {
     const newEmail = 'creada-e2e@empresa.com';
     await login(page, ADMIN);
     await page.goto('/admin');
-    await expect(page.locator('.admin-title')).toBeVisible();
+    await expect(page.locator('[data-testid="admin-section-title"]')).toBeVisible();
 
     // Alta.
     await page.getByRole('button', { name: '+ New account' }).click();

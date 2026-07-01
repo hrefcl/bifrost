@@ -1,5 +1,6 @@
 import type { StackParameter } from '../aws/cloudformation.js';
 import { archForInstanceType, type CpuArch } from '../catalog/instance-types.js';
+import { sesParamName } from '../ses/naming.js';
 
 /** Path SSM del AMI Ubuntu 22.04 más reciente para una arquitectura (CFN lo resuelve al deploy). */
 export function ubuntuAmiSsmPath(arch: CpuArch): string {
@@ -28,6 +29,8 @@ export interface WizardAnswers {
   hostedZoneId?: string;
   /** Habilitar Bifrost Meet (LiveKit): 2º SG (puertos media), A meet./turn.meet., EIP→node_ip, piso. */
   enableMeet?: boolean;
+  /** Habilitar outbound SES: da al rol del box permiso de leer la credencial SMTP de SSM. */
+  enableSes?: boolean;
 }
 
 /** Nombre de bucket derivado del dominio (S3: minúsculas, sin puntos consecutivos, único-ish). */
@@ -56,5 +59,8 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     // 'enabled' activa el 2º SG (puertos media LiveKit), los A meet./turn.meet. y la inyección de la
     // EIP en node_ip. Default 'disabled' → base byte-idéntica (instalación funciona igual con Meet OFF).
     { key: 'MeetMode', value: a.enableMeet ? 'enabled' : 'disabled' },
+    // SES on → el rol del box puede leer la credencial SMTP de ESTE parámetro (mismo nombre que escribe
+    // el orquestador y lee el user-data). Vacío = outbound SES off.
+    { key: 'SesParamName', value: a.enableSes ? sesParamName(a.domain) : '' },
   ];
 }

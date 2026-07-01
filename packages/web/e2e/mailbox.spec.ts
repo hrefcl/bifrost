@@ -541,12 +541,12 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
 
   // El acceso a Admin es un botón-icono (escudo) en la topbar, sólo para role==='admin'.
   await page.getByRole('button', { name: 'Administration' }).click();
-  await expect(page.getByRole('heading', { name: 'Administration' })).toBeVisible({
-    timeout: 15_000,
-  });
-  // El panel admin ahora tiene pestañas (Cuentas/Marca/Almacenamiento); el wizard de storage vive
-  // en la pestaña "Storage" (el default es "Accounts").
-  await page.getByRole('button', { name: 'Storage' }).click();
+  // El rediseño (Google Workspace) muestra un sidebar; el <h1> es el título de la sección activa
+  // (data-testid="admin-section-title"). "Administration" pasó a ser la marca del sidebar, no un heading.
+  await expect(page.getByTestId('admin-section-title')).toBeVisible({ timeout: 15_000 });
+  // El nav del admin es un sidebar con un item por sección; el wizard de storage vive en "Storage"
+  // (el default es "Accounts").
+  await page.getByTestId('admin-section-storage').click();
   // La config actual se cargó desde GET /admin/config/storage (default local).
   await expect(page.getByText('Local server', { exact: false })).toBeVisible();
 
@@ -561,11 +561,12 @@ test('admin: el admin ve el link Admin, abre el wizard de storage y guarda local
   expect((await patchResp).status()).toBe(200);
   await expect(page.getByText('Saved', { exact: true })).toBeVisible({ timeout: 15_000 });
 
-  // Footer de versión (abajo de almacenamiento): muestra el build del WEB (baked en el bundle) para
-  // detectar cache tras un deploy. En el server E2E el build queda 'dev' pero el footer debe estar.
+  // Footer de versión (en el sidebar del admin): muestra el build del WEB (baked en el bundle) para
+  // detectar cache tras un deploy. El rediseño lo renderiza como "web {build}" (antes "web build {build}");
+  // en el server E2E el build queda 'dev' pero el footer debe estar.
   const buildInfo = page.getByTestId('build-info');
   await expect(buildInfo).toBeVisible();
-  await expect(buildInfo.getByTestId('build-web')).toContainText('web build');
+  await expect(buildInfo.getByTestId('build-web')).toContainText('web');
 });
 
 test('admin: un usuario normal NO ve el link Admin y /admin lo redirige al inbox', async ({

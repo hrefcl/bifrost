@@ -38,7 +38,24 @@ gen() { # gen <archivo> <comando-de-generación>
 }
 gen jwt_secret.txt "openssl rand -hex 32"
 gen encryption_key.txt "openssl rand -hex 32" # 64 hex = 32 bytes (AES-256)
+gen compliance_hmac_secret.txt "openssl rand -hex 32" # evidencia HMAC de compliance (lo exige el API en prod)
 echo "✅ Secretos listos en ./secrets/ (NO los subas a git)"
+
+# 3.b) fail2ban: el API es un PROXY IMAP confiable — TODOS los logins de TODOS los usuarios salen de la IP del
+# contenedor API. Sin este ignoreip, los fallos de password de UN usuario banean la IP del API → lockout de TODO
+# el tenant. La red 172.16/12 es interna (no enrutable desde internet), no debilita el anti-bruteforce externo.
+# docker-mailserver copia este archivo a /etc/fail2ban/jail.d/user-jail.local en cada arranque.
+mkdir -p config
+if [[ ! -s config/fail2ban-jail.cf ]]; then
+  printf '[DEFAULT]\nignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16\n' > config/fail2ban-jail.cf
+  echo "✅ fail2ban: whitelisteada la red Docker (evita lockout del tenant por el proxy del API)"
+elif ! grep -q '172.16.0.0/12' config/fail2ban-jail.cf; then
+  # Deploy manual previo con un fail2ban-jail.cf propio que NO whitelistea la red Docker → vulnerable al
+  # lockout del tenant. No lo piso (puede tener customizaciones), pero aviso fuerte. [review B]
+  echo "⚠️  config/fail2ban-jail.cf existe pero NO whitelistea la red Docker (172.16.0.0/12)." >&2
+  echo "    Sin eso, los fallos de password de UN usuario banean la IP del contenedor API → lockout de TODO" >&2
+  echo "    el tenant. Agregá manualmente a [DEFAULT]: ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16" >&2
+fi
 
 # 4) Imprimir DNS
 PUBIP="$(curl -fsS https://api.ipify.org 2>/dev/null || echo 'TU.IP.PUBLICA')"

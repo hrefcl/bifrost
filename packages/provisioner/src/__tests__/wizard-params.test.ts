@@ -51,6 +51,13 @@ describe('assembleStackParams', () => {
     );
   });
 
+  it('sin enableSes → SesParamName vacío (outbound off); con enableSes → el nombre derivado del dominio', () => {
+    expect(get(assembleStackParams(baseAnswers), 'SesParamName')).toBe('');
+    expect(get(assembleStackParams({ ...baseAnswers, enableSes: true }), 'SesParamName')).toBe(
+      '/bifrost/acme-com/ses-smtp'
+    );
+  });
+
   it('con VPC existente elegida la pasa', () => {
     const p = assembleStackParams({
       ...baseAnswers,

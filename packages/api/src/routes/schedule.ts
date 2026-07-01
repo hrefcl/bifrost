@@ -331,7 +331,15 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
   fastify.patch('/availability/:id', async (request, reply) => {
     const { id } = request.params as { id: string };
     objectId.parse(id);
-    const body = availabilityBody.partial().parse(request.body);
+    // `expectedUpdatedAt` (OPCIONAL, backward-compatible): control de concurrencia optimista (review
+    // B-HIGH). Si se envía, el UPDATE es un CAS atómico: el filtro exige que `updatedAt` no haya
+    // cambiado; como `timestamps:true` bumpea `updatedAt` en cada findOneAndUpdate, dos escrituras
+    // concurrentes sobre el MISMO baseline → la 2ª no matchea → 409 (cierra el lost-update real, no
+    // sólo la ventana TOCTOU del chequeo en cliente). Sin el campo, comportamiento idéntico al previo.
+    const body = availabilityBody
+      .partial()
+      .extend({ expectedUpdatedAt: z.string().datetime().optional() })
+      .parse(request.body);
     if (body.timezone !== undefined && !isValidZone(body.timezone)) {
       return reply
         .code(400)
@@ -341,16 +349,33 @@ export default function scheduleRoutes(fastify: FastifyInstance) {
     if (body.overrides) assertOverrides(body.overrides);
     // isDefault:true → set atómico del puntero. isDefault:false se IGNORA (el default sólo cambia
     // fijando OTRO como default → nunca quedan cero defaults; review B).
-    const { isDefault, ...rest } = body;
+    const { isDefault, expectedUpdatedAt, ...rest } = body;
+    const filter: Record<string, unknown> = { _id: id, userId: request.user.userId };
+    if (expectedUpdatedAt !== undefined) filter.updatedAt = new Date(expectedUpdatedAt);
     const sched = await AvailabilitySchedule.findOneAndUpdate(
-      { _id: id, userId: request.user.userId },
+      filter,
       { $set: rest },
       { new: true }
     );
-    if (!sched)
+    if (!sched) {
+      // Con CAS activo, un no-match puede ser "cambió bajo nuestros pies" (409) y no "no existe" (404).
+      if (expectedUpdatedAt !== undefined) {
+        const stillExists = await AvailabilitySchedule.exists({
+          _id: id,
+          userId: request.user.userId,
+        });
+        if (stillExists) {
+          return reply.code(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'La disponibilidad cambió en otra sesión',
+          });
+        }
+      }
       return reply
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Schedule not found' });
+    }
     if (isDefault === true) await setDefaultSchedule(request.user.userId, id);
     const defaultId = await getDefaultId(request.user.userId);
     return serializeAvailabilitySchedule(sched, sched._id.toString() === defaultId);

@@ -6,6 +6,11 @@ export const counters = {
   // Bifrost Meet (in-memory single-node — se resetean al reiniciar el proceso; ver DESIGN §13).
   meetRoomsCreated: 0,
   meetTokensIssued: 0,
+  // Compliance (DESIGN §10): señales de aceptación/publicación de políticas y del gate.
+  complianceAcceptances: 0,
+  compliancePublishes: 0,
+  complianceGateBlocks: 0,
+  complianceGateErrors: 0,
 };
 
 // Histograma de latencia de requests (segundos). Buckets cumulativos estilo Prometheus.
@@ -67,6 +72,20 @@ export function renderMetrics(): string {
       '# HELP webmail_meet_tokens_issued_total Bifrost Meet access tokens issued',
       '# TYPE webmail_meet_tokens_issued_total counter',
       `webmail_meet_tokens_issued_total ${String(counters.meetTokensIssued)}`,
+      '# HELP webmail_compliance_acceptances_total Compliance policy acceptances recorded',
+      '# TYPE webmail_compliance_acceptances_total counter',
+      `webmail_compliance_acceptances_total ${String(counters.complianceAcceptances)}`,
+      '# HELP webmail_compliance_publishes_total Compliance document versions published',
+      '# TYPE webmail_compliance_publishes_total counter',
+      `webmail_compliance_publishes_total ${String(counters.compliancePublishes)}`,
+      '# HELP webmail_compliance_gate_blocks_total Requests blocked by the compliance gate',
+      '# TYPE webmail_compliance_gate_blocks_total counter',
+      `webmail_compliance_gate_blocks_total ${String(counters.complianceGateBlocks)}`,
+      // Señal temprana de falla: errores del gate que caen en fail-open (un valor creciente = bug que
+      // está dejando pasar tráfico sin enforcear → alertar).
+      '# HELP webmail_compliance_gate_errors_total Compliance gate errors (fail-open)',
+      '# TYPE webmail_compliance_gate_errors_total counter',
+      `webmail_compliance_gate_errors_total ${String(counters.complianceGateErrors)}`,
       ...histogramLines(),
     ].join('\n') + '\n'
   );

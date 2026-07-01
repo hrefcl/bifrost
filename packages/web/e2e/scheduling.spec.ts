@@ -124,14 +124,32 @@ test('agenda pública: invitado reserva, ve confirmación y cancela por token', 
     await expect(typeButton).toBeVisible({ timeout: 15_000 });
     await typeButton.click();
 
-    // 3b) Vista de reserva: navegar a "mañana" esperando la request de slots; elegir el primero.
+    // 3b) Vista de reserva (rediseño: calendario mensual). Elegir "mañana" en la tz del host
+    // (determinista) por su data-testid; la carga de slots es por-día al hacer click. Si "mañana"
+    // cae en el mes siguiente al visible, avanzar el calendario primero.
     await expect(g.getByRole('heading', { name: 'Charla 30 min' })).toBeVisible({
       timeout: 15_000,
     });
+    const isoFmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: HOST_TZ,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
+    const monthFmt = new Intl.DateTimeFormat('en-CA', {
+      timeZone: HOST_TZ,
+      year: 'numeric',
+      month: '2-digit',
+    });
+    const tomorrow = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const tomorrowIso = isoFmt.format(tomorrow); // YYYY-MM-DD en tz del host
+    if (monthFmt.format(tomorrow) !== monthFmt.format(new Date())) {
+      await g.getByRole('button', { name: 'Mes siguiente' }).click();
+    }
     const slotsResp = g.waitForResponse(
       (r) => r.url().includes('/slots') && r.request().method() === 'GET'
     );
-    await g.getByRole('button', { name: '›' }).click();
+    await g.locator(`[data-testid="pub-day-${tomorrowIso}"]`).click();
     const slotsData = (await (await slotsResp).json()) as { slots: { start: string }[] };
     expect(slotsData.slots.length, 'mañana debe tener huecos').toBeGreaterThan(0);
     const firstSlot = g.locator('.slot').first();

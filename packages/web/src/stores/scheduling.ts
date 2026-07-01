@@ -64,7 +64,14 @@ export const useSchedulingStore = defineStore('scheduling', () => {
     await fetchSchedules();
     return data;
   }
-  async function updateSchedule(id: string, patch: Partial<AvailabilityInput>) {
+  /**
+   * `expectedUpdatedAt` (opcional): control de concurrencia optimista. Si se pasa, el backend hace un
+   * CAS atómico y responde 409 si el horario cambió desde ese `updatedAt` (review B-HIGH).
+   */
+  async function updateSchedule(
+    id: string,
+    patch: Partial<AvailabilityInput> & { expectedUpdatedAt?: string }
+  ) {
     const { data } = await api.patch<AvailabilitySchedule>(`/schedule/availability/${id}`, patch);
     await fetchSchedules();
     return data;
@@ -72,6 +79,66 @@ export const useSchedulingStore = defineStore('scheduling', () => {
   async function deleteSchedule(id: string) {
     await api.delete(`/schedule/availability/${id}`);
     await fetchSchedules();
+  }
+
+  /** Firma estable de un set de overrides (orden-independiente) para detectar cambios concurrentes. */
+  function overridesSignature(list: AvailabilityOverride[]): string {
+    return JSON.stringify(
+      [...list]
+        .sort((a, b) => a.date.localeCompare(b.date))
+        .map((o) => ({
+          d: o.date,
+          n: o.note ?? '',
+          i: o.intervals.map((iv) => `${iv.start}-${iv.end}`),
+        }))
+    );
+  }
+
+  /**
+   * Guarda excepciones (overrides) de forma segura ante concurrencia (review C-MUST-1 / B-HIGH):
+   *  1. RE-FETCH fresco del schedule (no confiar en el estado en memoria, posiblemente stale),
+   *  2. PRE-CHEQUEO en cliente (UX/early-exit): si `baseline` (lo que el usuario tenía al abrir el
+   *     editor) ya no coincide con el array fresco, otra sesión lo cambió → se aborta antes de la red,
+   *  3. aplicar la mutación puntual SOBRE el array recién traído (clonado),
+   *  4. PATCH enviando SOLO `{ overrides }` + `expectedUpdatedAt` → el backend hace un CAS ATÓMICO
+   *     (filtro por `updatedAt`); si otra escritura ganó la carrera, responde 409 → 'overrides-conflict'.
+   *     El `$set` parcial NO pisa `weeklyRules`/`timezone` (availabilityBody.partial()). El guard real es
+   *     el CAS del backend; el pre-chequeo en cliente sólo evita un round-trip en el caso común.
+   * `baseline=null` omite el pre-chequeo en cliente (el CAS atómico sigue activo).
+   */
+  async function saveOverrides(
+    scheduleId: string,
+    baseline: AvailabilityOverride[] | null,
+    mutate: (current: AvailabilityOverride[]) => AvailabilityOverride[]
+  ) {
+    await fetchSchedules();
+    const fresh = schedules.value.find((s) => s.id === scheduleId);
+    if (!fresh) throw new Error('schedule-not-found');
+    // Pre-chequeo en cliente (UX/early-exit): si el array fresco difiere del baseline, otra sesión lo
+    // cambió → conflicto antes de la red.
+    if (baseline !== null && overridesSignature(baseline) !== overridesSignature(fresh.overrides)) {
+      throw new Error('overrides-conflict');
+    }
+    const cloned: AvailabilityOverride[] = fresh.overrides.map((o) => ({
+      date: o.date,
+      note: o.note,
+      intervals: o.intervals.map((iv) => ({ start: iv.start, end: iv.end })),
+    }));
+    const next = mutate(cloned);
+    // CAS ATÓMICO autoritativo (review B-HIGH): `expectedUpdatedAt` = updatedAt del doc fresco; si otra
+    // escritura ganó la carrera entre el fetch y este PATCH, el backend responde 409 → 'overrides-conflict'.
+    try {
+      return await updateSchedule(scheduleId, {
+        overrides: next,
+        expectedUpdatedAt: fresh.updatedAt,
+      });
+    } catch (e) {
+      if ((e as { response?: { status?: number } }).response?.status === 409) {
+        await fetchSchedules(); // refrescar para que la UI muestre el estado real al reintentar
+        throw new Error('overrides-conflict');
+      }
+      throw e;
+    }
   }
 
   // ── profile (username) ──
@@ -112,6 +179,7 @@ export const useSchedulingStore = defineStore('scheduling', () => {
     createSchedule,
     updateSchedule,
     deleteSchedule,
+    saveOverrides,
     fetchProfile,
     setUsername,
     fetchBookings,

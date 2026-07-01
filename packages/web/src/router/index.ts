@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useComplianceStore } from '@/stores/compliance';
 import LoginView from '@/views/LoginView.vue';
 import InboxView from '@/views/InboxView.vue';
 
@@ -42,6 +43,11 @@ const router = createRouter({
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
       meta: { requiresAdmin: true },
+    },
+    {
+      path: '/compliance/accept',
+      name: 'compliance-gate',
+      component: () => import('@/views/ComplianceGateView.vue'),
     },
     // ── Páginas PÚBLICAS de agenda (invitados externos; también accesibles logueado para previsualizar) ──
     {
@@ -88,6 +94,21 @@ router.beforeEach((to) => {
   // Gate de admin en el cliente (defensa en UX; el backend re-valida rol en cada endpoint).
   if (to.meta.requiresAdmin && auth.user?.role !== 'admin') {
     return { name: 'inbox' };
+  }
+  // Gate de compliance (UX; el backend es la autoridad real vía 403 COMPLIANCE_REQUIRED).
+  // - block_full: se FUERZA la pantalla de aceptación (no se puede usar nada hasta aceptar).
+  // - block_partial: NO se fuerza (el user puede leer/navegar), pero el interceptor lo lleva al gate
+  //   ante un 403 de write; ahí debe poder QUEDARSE para aceptar. Por eso sólo se expulsa del gate
+  //   cuando NO queda ningún pendiente bloqueante (full o partial) — sin esto, block_partial rebotaba (B P4).
+  if (auth.isAuthenticated) {
+    const compliance = useComplianceStore();
+    const hasBlocking = compliance.blockFull || compliance.blockPartial;
+    if (compliance.blockFull && to.name !== 'compliance-gate') {
+      return { name: 'compliance-gate' };
+    }
+    if (to.name === 'compliance-gate' && !hasBlocking) {
+      return { name: 'inbox' };
+    }
   }
   return true;
 });

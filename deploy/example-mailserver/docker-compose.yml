@@ -55,6 +55,12 @@ services:
       # system" al crear live/). Comparte el volumen con Traefik (que escribe acme.json). [deploy real]
       - ./letsencrypt:/etc/letsencrypt
       - /etc/localtime:/etc/localtime:ro
+    # Relay saliente (SES): las credenciales SMTP viven en mailserver.env, que arranca VACÍO (relay
+    # apagado = send-gating). El helper bifrost-ses-activate del box lo puebla con RELAY_HOST/PORT/USER/
+    # PASSWORD leyendo la credencial de SSM cuando el outbound queda 'ready'. Vacío → docker-mailserver
+    # no ve RELAY_HOST y entrega directo (sólo sirve si el puerto 25 saliente está abierto).
+    env_file:
+      - mailserver.env
     environment:
       - OVERRIDE_HOSTNAME=mail.example.com
       - ENABLE_FAIL2BAN=1
@@ -93,7 +99,9 @@ services:
 
   # --- Bifrost API (reemplaza el backend de Roundcube) ------------------------
   api:
-    image: ghcr.io/hrefcl/bifrost/api:latest
+    # Tag PINNEABLE: el updater (Fase 2) fija BIFROST_TAG=sha-<commit> en .env para actualizar a un build
+    # EXACTO y CONSISTENTE (web+api del mismo commit) y poder hacer rollback. Default :latest (sin updater).
+    image: ghcr.io/hrefcl/bifrost/api:${BIFROST_TAG:-latest}
     restart: unless-stopped
     depends_on: [mongo, redis]
     environment:
@@ -106,6 +114,9 @@ services:
       # docker secrets). NO commitees valores reales.
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       ENCRYPTION_KEY_FILE: /run/secrets/encryption_key
+      # Secreto DEDICADO para firmar la evidencia de compliance (HMAC). Obligatorio en producción; el
+      # provisioner lo genera en ./secrets/compliance_hmac_secret.txt. NO se deriva de JWT_SECRET.
+      COMPLIANCE_HMAC_SECRET_FILE: /run/secrets/compliance_hmac_secret
       FRONTEND_URL: https://webmail.example.com
       CORS_ORIGIN: https://webmail.example.com
       # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
@@ -129,12 +140,19 @@ services:
       # Flag de "Meet provisionado" (capacidad de infra): el provisioner lo setea al habilitar Meet. Gobierna
       # el aflojamiento de la CSP a `wss:` (api+web) para permitir config runtime del LiveKit desde el admin.
       MEET_PROVISIONED: ${MEET_PROVISIONED:-}
-    secrets: [jwt_secret, encryption_key]
+      # Dir donde el API deja el MARKER de "actualizar" (Fase 2). El host-updater (fuera del contenedor)
+      # lo lee y hace el pull+up. El API NUNCA toca el socket de Docker.
+      UPDATE_TRIGGER_DIR: /app/update-trigger
+    secrets: [jwt_secret, encryption_key, compliance_hmac_secret]
+    volumes:
+      # Marker de update (host↔API). El API SÓLO escribe el tag pedido acá; el host-updater lo valida.
+      - ./update-trigger:/app/update-trigger
     networks: [mailnet]
 
   # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
   web:
-    image: ghcr.io/hrefcl/bifrost/web:latest
+    # Mismo tag pinneable que api → web+api siempre del MISMO commit (evita la desync de `:latest`).
+    image: ghcr.io/hrefcl/bifrost/web:${BIFROST_TAG:-latest}
     restart: unless-stopped
     depends_on: [api]
     environment:
@@ -195,6 +213,8 @@ secrets:
     file: ./secrets/jwt_secret.txt
   encryption_key:
     file: ./secrets/encryption_key.txt
+  compliance_hmac_secret:
+    file: ./secrets/compliance_hmac_secret.txt
 
 volumes:
   mongo-data:

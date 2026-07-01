@@ -49,6 +49,22 @@ async function main() {
   const app = await buildApp();
   serverApp = app;
 
+  // Compliance: siembra idempotente de los 7 documentos por defecto + reconcilia la denormalización
+  // (sana cualquier crash entre publish y recomputeDenorm — B P1 HIGH-2). Patrón reconcile-indexes.
+  const { seedComplianceDocuments } = await import('./compliance/seedDocuments.js');
+  const { reconcileComplianceDenorm } = await import('./services/compliance.js');
+  await seedComplianceDocuments().then(
+    (n) => {
+      if (n > 0) app.log.info(`seeded ${String(n)} compliance document(s)`);
+    },
+    (err: unknown) => {
+      app.log.error(err);
+    }
+  );
+  await reconcileComplianceDenorm().catch((err: unknown) => {
+    app.log.error(err);
+  });
+
   // Worker IN-PROCESO de la cola de agenda (BullMQ): procesa el email de confirmación + el reconciler
   // que encola el booking público (Fase 3.4). No-op en mock/test. Cableado aquí para cumplir el
   // contrato de ciclo de vida (review B HIGH de Fase 3.0). El cierre va en doShutdown.

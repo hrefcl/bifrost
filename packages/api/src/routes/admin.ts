@@ -6,6 +6,7 @@ import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js'
 import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
 import { loginOrRegister } from '../services/auth.js';
 import { checkForUpdate } from '../services/update-check.js';
+import { requestUpdate, getUpdateState, isUpdateInProgress } from '../services/update-apply.js';
 import { BUILD_INFO } from '../lib/buildInfo.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
@@ -18,6 +19,11 @@ import { CalendarEvent } from '../models/CalendarEvent.js';
 import { Booking, serializeBooking } from '../models/Booking.js';
 import { EventType } from '../models/EventType.js';
 import { getSchedulingSettings, setSchedulingSettings } from '../services/scheduling/settings.js';
+import {
+  getCalendarSettings,
+  setCalendarSettings,
+  CalendarSettingsError,
+} from '../services/calendar-settings.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
 const objectId = z.string().regex(/^[a-f0-9]{24}$/i, 'id inválido');
@@ -122,6 +128,40 @@ export default function adminRoutes(fastify: FastifyInstance) {
     return checkForUpdate(force !== undefined);
   });
 
+  // APLICAR la actualización (Fase 2). El API NO toca Docker: deja un marker que el host-updater
+  // (bifrost-update.sh, fuera del contenedor) lee y aplica con pull+up+rollback. HARDENING: el target lo
+  // fija el SERVIDOR (el sha del último build), NO el cliente → no se puede pedir un tag arbitrario.
+  // Rate-limit bajo (acción cara que dispara cambios en el host) + idempotente (no re-encola si está en curso).
+  fastify.post(
+    '/update/apply',
+    { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
+    async (request, reply) => {
+      if (isUpdateInProgress()) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya hay una actualización en curso',
+        });
+      }
+      const status = await checkForUpdate(true);
+      if (!status.updateAvailable || !status.latest) {
+        return reply
+          .code(409)
+          .send({ statusCode: 409, error: 'Conflict', message: 'No hay actualización disponible' });
+      }
+      // El SERVIDOR elige el sha (de GitHub); el cliente no provee tag. Doble validación (acá + el host).
+      const tag = requestUpdate(status.latest.sha);
+      request.log.warn(
+        { adminId: request.user.userId, target: tag, build: status.latest.build },
+        'update Fase 2 ENCOLADO'
+      );
+      return { queued: true, target: tag, build: status.latest.build };
+    }
+  );
+
+  // Estado del update en curso/último (lo escribe el host-updater) — para que el front lo pollee.
+  fastify.get('/update/status', () => getUpdateState());
+
   // Config del storage de adjuntos (wizard Paso 1). GET sin secretos.
   fastify.get('/config/storage', async () => {
     return getStorageConfigPublic();
@@ -201,6 +241,40 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.patch('/scheduling/settings', async (request) => {
     const body = schedulingSettingsSchema.parse(request.body);
     return setSchedulingSettings(body);
+  });
+
+  // ───────── Preferencias de calendario (F5) ─────────
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const calendarSettingsSchema = z
+    .object({
+      timezone: z.string().refine(isValidZone, 'zona horaria inválida').optional(),
+      weekStart: z.union([z.literal(0), z.literal(1)]).optional(),
+      dayStart: z.string().regex(HHMM, 'hora inválida (HH:MM)').optional(),
+      dayEnd: z.string().regex(HHMM, 'hora inválida (HH:MM)').optional(),
+      defaultDurationMin: z.number().int().min(5).max(480).optional(),
+      defaultView: z.enum(['day', 'week', 'month']).optional(),
+      showWeekends: z.boolean().optional(),
+      autoInvite: z.boolean().optional(),
+      syncAgenda: z.boolean().optional(),
+    })
+    .strict();
+
+  fastify.get('/config/calendar', async () => {
+    return getCalendarSettings();
+  });
+
+  fastify.patch('/config/calendar', async (request, reply) => {
+    const patch = calendarSettingsSchema.parse(request.body);
+    // La validación del invariante (end>start sobre el merge) vive en el servicio, con su misma
+    // lectura de `current` → cierra el TOCTOU de dos PATCH concurrentes (review B-MED).
+    try {
+      return await setCalendarSettings(patch);
+    } catch (e) {
+      if (e instanceof CalendarSettingsError) {
+        return reply.code(400).send({ statusCode: 400, error: 'Bad Request', message: e.message });
+      }
+      throw e;
+    }
   });
 
   // Auditoría de reservas (A2): lista global con filtros y paginación. Sólo lectura.

@@ -381,3 +381,78 @@ Tras B v3 APPROVE (9.1), una ronda hostil B(Codex)+D(Kimi) sobre el código nuev
 **Deuda LOW aceptada (no bloqueante, documentada):**
 - **TD-SCHED-LIMIT-RACE**: el chequeo de `maxEventTypesPerUser` (count + create) no es atómico; dos POST concurrentes podrían exceder el límite por 1. Es un soft-limit de plan/config, no un invariante de seguridad. Fix futuro si se quiere estricto: contador atómico/lock por usuario.
 - **TD-SCHED-SUMMARY-AUDIT**: `GET /admin/scheduling/summary` no está gateado por `auditEnabled` (sí lo está `/bookings`). Sólo expone agregados (conteos), es admin-only. Si el producto exige "ningún dato derivado de bookings con auditoría off", gatearlo también.
+
+---
+
+## Outbound / relay SES (post-incidente 2026-06-30 — ver docs/post-mortem-relay-saliente.md)
+
+Incidente real: el saliente del box aulion.app estuvo caído ~11h (relay SES no persistido → se perdió en
+un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`). Resuelto en el box
+(user-patches.sh puente) y de raíz en la rama `feat/ses-outbound` (env_file mailserver.env persistente).
+
+- **TD-OUTBOUND-MONITOR (P1) — RESUELTO** (rama feat/ses-outbound): el helper corre en cada tick del cron
+  un health-probe (AUTH a SES:587 sin mandar correo → valida puerto+TLS+creds) + alerta de cola atascada,
+  logueando ALERTA con causa en /var/log/bifrost-ses.log. Validado funcionalmente contra SES (OK con creds
+  buenas, 535 con malas). Pendiente menor: enrutar la alerta a una notificación (mail local al admin).
+- **TD-OUTBOUND-MAILFROM (P2)**: identidad SES de aulion.app sin custom MAIL FROM → SPF no alinea (DMARC
+  pasa por DKIM igual). El turnkey ya configura `bounce.<dominio>`; aplicarlo al box vivo.
+- **TD-SES-IAM-CLEANUP (P3)**: dos IAM users SES (`aulion-ses-smtp` + `bifrost-ses-smtp`), cruft de setups
+  manuales. Consolidar a uno (el turnkey usa nombre determinístico por dominio).
+
+## fail2ban / lockout de tenant (incidente 2026-06-30)
+
+- **TD-FAIL2BAN-PROXY-LOCKOUT (HIGH) — RESUELTO** (este commit): el API es un proxy IMAP; todos los logins
+  del tenant salen de la IP del contenedor API. fail2ban (jail dovecot) la baneaba ante fallos de password
+  de UN usuario → **lockout total del tenant**. Fix turnkey: `config/fail2ban-jail.cf` con
+  `[DEFAULT] ignoreip = 127.0.0.1/8 ::1 172.16.0.0/12 192.168.0.0/16` (docker-mailserver lo copia a
+  `jail.d/user-jail.local`, leído último → gana a `jail.local`). Escrito por `user-data.ts` (CLI) y
+  `setup.sh` (manual). Seguro: esos rangos son RFC1918 internos (no spoofeables desde internet) y el
+  bruteforce IMAP/SMTP directo desde IPs públicas se sigue baneando. **Trade-off aceptado (review B/D):** el
+  whitelist es ancho (cubre todo el pool default de Docker: moby `172.17-31/16` + `192.168/16`) → exime
+  cualquier RFC1918 con reachability a IMAP/SMTP, no sólo el contenedor API. Aceptable porque Bifrost es
+  **all-in-one single-tenant** (único origen interno = el propio box). En host/VPC compartido, estrechar a la
+  subnet exacta del compose (`ipam` pin) — descartado hoy: pinnear subnet arriesga colisión con la VPC del
+  cliente y rompería `compose up` (peor para turnkey). El anti-bruteforce del login web NO
+  dependía de fail2ban: vive en el API (`/auth/login` 10/min, key por IP real vía `trustProxy`). Aplicado
+  y verificado en el box vivo (unban + `ignoreip` persistente tras `reload`).
+- **TD-AUTH-XFF-SPOOF (MED)**: `trustProxy: true` (app.ts) hace que Fastify tome la IP del cliente del
+  X-Forwarded-For *completo* (leftmost, claim del cliente). Un atacante puede rotar XFF falsos para evadir
+  el rate-limit por-IP de `/login` (10/min) y del global (100/min). Pre-existente, no introducido por el fix
+  de fail2ban. Fix: configurar `trustProxy` con el hop confiable (Traefik) — p.ej. número de saltos o la
+  subred del proxy — para derivar la IP real no-spoofeable; o keyear el rate-limit por `email` además de IP.
+
+## Auto-auditoría 2026-06-30 (sesión fail2ban/update/rediseño)
+
+- **TD-SES-PROPAGATION (LOW)**: `orchestrateSesOutbound` crea el IAM user+policy+access-key y publica la
+  credencial SMTP en SSM en el MISMO paso (cuando el outbound queda `ready`), sin un envío de verificación.
+  IAM es eventually-consistent: existe una ventana teórica donde la policy aún no propagó y el primer envío
+  podría rebotar `554`. En la práctica está mitigado: el relay del box recién activa al próximo tick del cron
+  (hasta ~1 min después), > propagación típica de IAM (segundos). El incidente real de Aulion fue por un IAM
+  user creado ANTES del fix #27 (policy sin config-set), no por propagación. Hardening bulletproof (alinea con
+  "la CLI debe funcionar de una"): test-send a `success@simulator.amazonses.com` con el config-set antes de
+  declarar `ready`/publicar, reintentando hasta `250`. No bloqueante.
+- **TD-PUBLIC-BOOKING-EMAIL-AMP (LOW-MED)**: `POST /schedule/public/:u/:e/book` manda un correo de confirmación
+  vía el SMTP del host a `invitee.email` (elegido por quien reserva). Con el bypass de rate-limit por XFF-spoof
+  (ver [[TD-AUTH-XFF-SPOOF]]) un atacante podría usarlo como amplificador (mail con dominio del host a
+  destinatarios arbitrarios). Acotado: rate-limit 20/min por IP en el `book`, contenido fijo (plantilla de
+  confirmación), y gateado por `publicLinksEnabled` (OFF por defecto). Fix real = cerrar el XFF-spoof
+  (trustProxy con hop confiable) y/o key del limiter por IP+slug del host. Verificado en auditoría hostil:
+  el resto de la superficie pública de scheduling está bien blindada (tenant isolation por user._id, zod en
+  todo input, token de gestión por hash, fail-closed 503 si Redis cae, privacidad de location.value).
+
+## Auto-auditoría 2026-07-01 (crash storage + rediseño UI)
+
+- **TD-WEB-COMPONENT-TESTS (MED — causa de un incidente real)**: el web tiene `vitest` pero SIN infra de
+  tests de componente (`@vue/test-utils` + happy-dom/jsdom). La lógica de las vistas vive inline en los SFC
+  (ej. `s3Incomplete`/`loadStorage` en AdminView), así que NO es unit-testeable. Consecuencia concreta: el
+  crash de Almacenamiento con S3+rol-de-instancia (accessKeyId undefined → `.trim()`) se coló porque el e2e
+  sólo probaba storage LOCAL y no hay test de componente que cubra el caso instance-role. Fix: agregar
+  `@vue/test-utils`+happy-dom y un test que monte la sección storage con una config S3-instance-role mockeada
+  (sin accessKeyId) y verifique que renderiza la nota read-only sin throw. Alternativa: extraer la lógica de
+  storage a un composable/lib puro y testearla ahí (patrón actual de tests). Registrado tras arreglar el crash
+  en #34 (verificado en vivo en Aulion, box instance-role real).
+- **TD-CALENDAR-VISUAL-REVIEW (LOW)**: el sidebar del calendario (#36) se mergeó verificado con
+  vue-tsc+eslint+vite build pero SIN review visual (no se puede renderizar en el harness). Riesgo principal:
+  la cadena de altura flex (`.cal` → `.cal-body` → `.cal-grid` → FullCalendar height:100%) y el pulido fino
+  vs la referencia Google. Additivo/no-crítico (no toca CRUD de eventos ni modales). Pendiente: review visual
+  del usuario en Aulion + iteración (left-nav consistente tipo Workspace, pulido contra la referencia).
