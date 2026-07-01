@@ -36,7 +36,10 @@ const slugParam = z.object({ slug: z.string().regex(SLUG_RE) });
 const createRoomSchema = z.object({
   name: z.string().min(1).max(200),
   maxParticipants: z.number().int().min(2).max(1000).optional(),
-  allowExternal: z.boolean().optional(),
+  // SEGURIDAD: `allowExternal` NO se acepta acá. Una sala manual NO puede overridear la política de invitados
+  // externos de la instancia (`settings.allowExternal`, que fija el admin); si se aceptara, cualquier usuario
+  // autenticado la saltearía vía API/devtools. El override sólo lo setean las salas de booking (path aparte,
+  // C-M5). [review B — HIGH]
 });
 
 const tokenBodySchema = z.object({
@@ -185,7 +188,7 @@ export default function meetRoutes(fastify: FastifyInstance) {
             status: 'active',
             source: 'manual',
             maxParticipants,
-            allowExternalOverride: body.allowExternal === true ? true : undefined,
+            // Sin override: la sala manual hereda la política de externos de la instancia. [review B — HIGH]
           });
           break;
         } catch (err) {

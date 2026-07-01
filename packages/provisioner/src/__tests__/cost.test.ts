@@ -68,4 +68,31 @@ describe('estimateMonthlyCost', () => {
     });
     expect(c.perMailbox).toBe(c.total);
   });
+
+  it('modo twobox: suma 2º EC2 y 2º EIP al costo', () => {
+    const single = estimateMonthlyCost({
+      instanceMonthlyUsd: 49,
+      ebsGiB: 40,
+      s3GiB: 0,
+      dataTransferOutGiB: 0,
+      mailboxes: 10,
+      createHostedZone: false,
+      useKms: false,
+    });
+    const twobox = estimateMonthlyCost({
+      instanceMonthlyUsd: 49,
+      secondInstanceMonthlyUsd: 58,
+      secondPublicIpv4: true,
+      ebsGiB: 40,
+      s3GiB: 0,
+      dataTransferOutGiB: 0,
+      mailboxes: 10,
+      createHostedZone: false,
+      useKms: false,
+    });
+    expect(twobox.ec2).toBeCloseTo(49 + 58, 2);
+    expect(twobox.publicIpv4).toBeCloseTo(PRICING.publicIpv4Monthly * 2, 2);
+    expect(twobox.total).toBeCloseTo(twobox.ec2 + twobox.ebs + twobox.publicIpv4, 2);
+    expect(twobox.total).toBeGreaterThan(single.total);
+  });
 });

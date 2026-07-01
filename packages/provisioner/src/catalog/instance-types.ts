@@ -154,3 +154,93 @@ export function enforceMeetInstanceFloor(type: string): {
 export function archForInstanceType(type: string): CpuArch {
   return /^[a-z]+\d+g[a-z]*\./i.test(type) ? 'arm64' : 'amd64';
 }
+
+/**
+ * Catálogo CURADO para el media-box de Bifrost Meet (modo twobox). FILOSOFÍA: "separar, NO duplicar" — si
+ * bundled corría mail + LiveKit juntos en 1× t4g.large (8 GiB), al SEPARAR cada mitad es más liviana → el
+ * media-box (SÓLO LiveKit, ~1-2 GiB) entra cómodo en `t4g.medium` (4 GiB, ~$24). Así el 2-box mínimo =
+ * 2× t4g.medium (~$48) ≈ el costo de 1× t4g.large bundled, pero con la media separada del correo. Default
+ * `t4g.medium` (MÍNIMO). LiveKit SFU es CPU-bound: para MUCHAS llamadas sostenidas se escala a t4g.large o
+ * c6g/c7g (no burstable). Precios aproximados (on-demand Linux, us-east-1).
+ */
+export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
+  {
+    type: 't4g.small',
+    vcpu: 2,
+    memGiB: 2,
+    arch: 'arm64',
+    approxMonthlyUsd: 12,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 6,
+    note: 'ULTRA-MÍNIMO (~$12) — LiveKit pide ~1 GiB y usa la MISMA 2 vCPU que los t4g grandes (CPU-bound). Entra en 2 GiB; RAM justa en el boot (pull+apt). Sólo llamadas 1-a-1/chicas ocasionales — validá con tu carga.',
+  },
+  {
+    type: 't4g.medium',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 24,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 8,
+    note: 'MÍNIMO SEGURO — 2-box económico, llamadas chicas/ocasionales (4 GiB dan margen sobre LiveKit).',
+  },
+  {
+    type: 't4g.large',
+    vcpu: 2,
+    memGiB: 8,
+    arch: 'arm64',
+    approxMonthlyUsd: 49,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 12,
+    note: 'Holgado — más margen de RAM (burstable; para carga sostenida usá c6g/c7g).',
+  },
+  {
+    type: 'c6g.large',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 58,
+    maxMailboxes: 0,
+    meetConcurrent: 15,
+    note: 'CPU-optimizado no-burstable — mejor SFU sostenido que t4g.large.',
+  },
+  {
+    type: 'c6g.xlarge',
+    vcpu: 4,
+    memGiB: 8,
+    arch: 'arm64',
+    approxMonthlyUsd: 116,
+    maxMailboxes: 0,
+    meetConcurrent: 35,
+    note: 'Media empresa — llamadas medianas/grandes sin competir con el correo.',
+  },
+  {
+    type: 'c7g.large',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 54,
+    maxMailboxes: 0,
+    meetConcurrent: 18,
+    note: 'Graviton3, CPU-optimizado — rendimiento por vCPU superior a c6g.',
+  },
+];
+
+export const DEFAULT_LIVEKIT_INSTANCE = 't4g.medium';
+
+/** Etiqueta humana para el menú del media-box. */
+export function describeLivekitInstanceChoice(i: InstanceTypeInfo): string {
+  return `${i.type} — ${String(i.vcpu)} vCPU / ${String(i.memGiB)} GiB — ~$${String(i.approxMonthlyUsd)}/mes — ~${String(i.meetConcurrent)} participantes simultáneos`;
+}
+
+/** Recomienda la instancia de media-box más chica que cubre `participants` participantes. */
+export function recommendLivekitInstanceFor(participants: number): {
+  instance: InstanceTypeInfo;
+  exceedsCatalog: boolean;
+} {
+  const eligible = [...LIVEKIT_CATALOG].sort((a, b) => a.meetConcurrent - b.meetConcurrent);
+  const fit = eligible.find((i) => i.meetConcurrent >= participants);
+  if (fit) return { instance: fit, exceedsCatalog: false };
+  const largest = eligible[eligible.length - 1];
+  return { instance: largest, exceedsCatalog: true };
+}

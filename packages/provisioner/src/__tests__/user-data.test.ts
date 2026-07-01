@@ -91,7 +91,29 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain(MEET_EIP_MARKER);
   });
 
-  it('meetExternal y enableMeet son excluyentes: enableMeet tiene precedencia (bundled)', () => {
+  it('con meetTwobox → apunta al media-box, lee secret de SSM, SIN profile/container local', () => {
+    const s = buildUserData({
+      ...base,
+      meetTwobox: {
+        wsUrl: 'wss://meet.acme.com',
+        apiUrl: 'https://meet.acme.com',
+        apiKey: 'APIabc123',
+        secretParamName: '/bifrost/acme-com/livekit-secret',
+      },
+    });
+    expect(s).toContain('MEET_PROVISIONED=1');
+    expect(s).toContain('LIVEKIT_WS_URL=wss://meet.acme.com');
+    expect(s).toContain('LIVEKIT_API_URL=https://meet.acme.com');
+    expect(s).toContain('LIVEKIT_API_KEY=APIabc123');
+    expect(s).toContain('/bifrost/acme-com/livekit-secret');
+    expect(s).toMatch(/aws ssm get-parameter .*--with-decryption/);
+    expect(s).toContain('printf \'LIVEKIT_API_SECRET=%s\\n\' "$LK_SECRET"');
+    // NO monta media local.
+    expect(s).not.toContain('COMPOSE_PROFILES=meet');
+    expect(s).not.toContain(MEET_EIP_MARKER);
+  });
+
+  it('meetExternal, meetTwobox y enableMeet son excluyentes: enableMeet tiene precedencia (bundled)', () => {
     // Defensa: si por error llegaran ambos, se toma el bundled (no se mezclan las dos ramas).
     const s = buildUserData({
       ...base,

@@ -73,7 +73,9 @@ export async function deployStack(
       TemplateBody: input.templateBody,
       Parameters: toCfnParams(input.params),
       Capabilities: ['CAPABILITY_NAMED_IAM'],
-      OnFailure: 'DELETE',
+      // Default DELETE (limpia solo si falla). BIFROST_KEEP_ON_FAILURE=1 (DEBUG) → DO_NOTHING: deja las
+      // instancias fallidas vivas para leer su cloud-init log (diagnóstico del from-zero). No para prod.
+      OnFailure: process.env.BIFROST_KEEP_ON_FAILURE ? 'DO_NOTHING' : 'DELETE',
     })
   );
   return 'created';

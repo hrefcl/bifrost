@@ -1,8 +1,9 @@
 # Bifrost Meet — instalación, operación y troubleshooting
 
 Videollamadas self-hosted (LiveKit) integradas al webmail, la agenda y el correo. **Opcional y
-modular**: la instalación funciona IGUAL con Meet apagado. Mismo EC2 (no hay un 2º servidor), costo
-mínimo, sin SaaS. Esta guía es para el **operador** que instala/mantiene el servidor.
+modular**: la instalación funciona IGUAL con Meet apagado. Costo mínimo si no se usa; o self-hosted en el
+mismo EC2, o en un **2º EC2 dedicado** para más concurrencia, o apuntando a un LiveKit/Cloud externo.
+Esta guía es para el **operador** que instala/mantiene el servidor.
 
 > Documentación relacionada: diseño técnico en [`DESIGN.md`](./DESIGN.md), bitácora de revisión en
 > [`REVIEW-LOG.md`](./REVIEW-LOG.md), y la **Fase 0 funcional por pantalla** en
@@ -10,21 +11,23 @@ mínimo, sin SaaS. Esta guía es para el **operador** que instala/mantiene el se
 
 ---
 
-## 1. Las dos formas de tener Meet
+## 1. Las cuatro formas de tener Meet
 
-Meet puede usar **tres** backends de LiveKit; se elige por dónde apuntás las credenciales:
+Meet puede usar **cuatro** backends de LiveKit; se elige en el wizard del provisioner o más tarde por
+URL/credenciales:
 
 | Modo | Cuándo | Cómo se configura |
 |---|---|---|
-| **Bundled (self-hosted en el mismo EC2)** | Default turnkey; un solo servidor, costo mínimo | El provisioner lo arma (este doc, §2) |
-| **LiveKit externo self-hosted** | Ya tenés un LiveKit propio en otra máquina | Credenciales en el admin → URL wss + API key/secret |
-| **LiveKit Cloud (pago)** | Querés SFU gestionado / escala | Credenciales en el admin → URL `wss://<proj>.livekit.cloud` + key/secret |
+| **off** | Sin videollamadas | `--meet-mode off` (default) |
+| **bundled** | Default turnkey; un solo servidor, costo mínimo | `--meet-mode bundled` o `--enable-meet` |
+| **twobox** | LiveKit en un **2º EC2 dedicado**; el correo no compite | `--meet-mode twobox` (§2.1) |
+| **external** | Ya tenés LiveKit propio o Cloud | `--meet-mode external`, o luego por admin API (§6) |
 
-El **modo es automático por la URL**: si el admin carga credenciales en la DB, mandan sobre el bundled;
-para volver al bundled hay que resetear los campos explícitamente (secret vacío **y** `wsUrl` al del
-bundled — ver el PATCH exacto en §6; borrar sólo el secret no alcanza).
+El **modo es automático por la URL**: si el admin carga credenciales externas en la DB, mandan sobre
+cualquier modo self-hosted; para volver al bundled/twobox hay que resetear los campos explícitamente
+(secret vacío **y** `wsUrl` al del modo local — ver el PATCH exacto en §6; borrar sólo el secret no alcanza).
 
-> **Estado (2026-06):** el bundled (§2) y el backend de credenciales externas/Cloud (API + prueba de
+> **Estado (2026-06):** bundled, twobox y el backend de credenciales externas/Cloud (API + prueba de
 > conexión, §6) están operativos. El **panel visual** de configuración del servidor en el admin llega con
 > F3.7-frontend; hasta entonces la config externa/Cloud se hace por la API del admin (§6).
 
@@ -55,7 +58,7 @@ Qué hace al activarlo:
 - **Sin Meet**: nada de lo anterior aplica; el stack es byte-idéntico al de sólo-correo.
 
 **Interruptor maestro — ya viene encendido.** Un deploy **provisionado** (`MEET_PROVISIONED=1`, que setea
-el provisioner con `--enable-meet`) arranca con Meet **ON** por default: no hace falta ningún paso extra.
+el provisioner con bundled/twobox) arranca con Meet **ON** por default: no hace falta ningún paso extra.
 Si querés **apagarlo** (o volver a encenderlo), o si hiciste un deploy manual sin `MEET_PROVISIONED`, usá:
 
 ```http
@@ -69,9 +72,45 @@ Probá una reunión (§7).
 
 ---
 
+## 2.1 Activar el modo 2-box (`twobox`)
+
+```bash
+bifrost-provision
+# … respondé el wizard …
+# Modo de Meet  → 2-box (LiveKit en EC2 dedicado)
+```
+
+o sin preguntar: `bifrost-provision --meet-mode twobox [--livekit-instance-type t4g.medium]`.
+
+Qué hace al activarlo:
+
+- **Dos instancias EC2**: el app-box habitual (correo/web/agenda) sin LiveKit, más un **media-box**
+  dedicado con su propia EIP, Security Group, **rol IAM propio mínimo** (sólo SSM+cfn-signal, sin S3/SES) y
+  user-data.
+- **Tipo del media-box**: default `t4g.medium` (~$24, 4 GiB — LiveKit pide ~1-2 GiB). Opciones: `t4g.small`
+  (~$12, ultra-mínimo opt-in), `t4g.large`, o `c6g.large`/`c6g.xlarge`/`c7g.large` (no-burstable, para muchas
+  llamadas sostenidas), o cualquier tipo con `--livekit-instance-type` (fuera del catálogo con advertencia).
+  El app-box no sufre piso de RAM por Meet (LiveKit vive aparte). **"Separar, no duplicar":** 2× t4g.medium
+  (~$48) ≈ 1× t4g.large bundled, pero con la media separada del correo.
+- **Credenciales**: el CLI genera un par `apiKey`/`apiSecret`, los guarda en **SSM SecureString**
+  (`/bifrost/<dom>/livekit-secret`) y ambas instancias los leen con el rol IAM. Nunca viajan en el template.
+- **Cloud-init del app-box**: `MEET_PROVISIONED=1`, **sin** `COMPOSE_PROFILES=meet`, apunta a
+  `LIVEKIT_WS_URL=wss://meet.<dom>`, `LIVEKIT_API_URL=https://meet.<dom>` y lee el secret de SSM.
+- **Cloud-init del media-box**: instala Docker, Caddy (reverse proxy + TLS), LiveKit, fija
+  `rtc.node_ip` = EIP del media-box y expone `wss://meet.<dom>`.
+- **DNS**: `meet.<dom>` y `turn.meet.<dom>` apuntan a la EIP del **media-box**.
+- **Seguridad**: el puerto **7880** nunca se publica; Caddy habla con LiveKit por la red docker interna.
+  El SG del media-box abre 22, 443, 7881/tcp, 7882/udp y 3478/udp.
+- **Outputs de CFN**: `MeetUrl` (app-box) y `MediaPublicIp` (media-box).
+
+Para **volver de twobox a bundled** hay que reprovisionar con `--meet-mode bundled` (o `--enable-meet`).
+Para apagar Meet temporalmente sin reprovisionar, usá el toggle de la API (`enabled: false`).
+
+---
+
 ## 3. Puertos (firewall / Security Group)
 
-Meet abre **sólo 3 puertos** sobre los del correo/web. **Nunca** un rango `1-65535`.
+Meet abre **sólo 3 puertos** de media sobre los del correo/web. **Nunca** un rango `1-65535`.
 
 | Puerto | Protocolo | Para qué |
 |---|---|---|
@@ -79,25 +118,36 @@ Meet abre **sólo 3 puertos** sobre los del correo/web. **Nunca** un rango `1-65
 | 7882 | UDP | Mux de media (single-port, todo el RTP/RTCP) |
 | 3478 | UDP | TURN/STUN embebido (no usamos coturn) |
 
-- El **7880** (API de signaling de LiveKit) **nunca** se publica: sólo lo alcanza Traefik por la red
-  docker interna. El signaling del navegador entra por **`wss://meet.<dom>` (443/TLS)**, que Traefik
-  rutea a `livekit:7880`.
-- Si gestionás tu propio firewall (no el SG del stack), abrí esos 3 puertos a `0.0.0.0/0`.
+- **Bundled**: esos 3 puertos van en un **2º Security Group** asociado al app-box. El SG base queda
+  intacto. El **7880** (API de signaling de LiveKit) **nunca** se publica: sólo lo alcanza Traefik por
+  la red docker interna. El signaling del navegador entra por **`wss://meet.<dom>` (443/TLS)**, que
+  Traefik rutea a `livekit:7880`.
+- **Twobox**: esos 3 puertos (más 22 y 443) van en el **Security Group del media-box**. El app-box no
+  lleva puertos media. Caddy expone `wss://meet.<dom>` (443/TLS) y reverse-proxima a `livekit:7880` por
+  la red docker interna.
+- **External**: el app-box no abre puertos media; la conectividad depende del proveedor externo.
+- Si gestionás tu propio firewall (no el SG del stack), abrí los 3 puertos de media a `0.0.0.0/0` en el
+  servidor que corre LiveKit.
 
 ---
 
 ## 4. Costos
 
-Meet **no agrega un servidor**: corre en el mismo EC2. El costo es el **piso de RAM**:
-
-| Escenario | Instancia | ~USD/mes |
+| Escenario | Instancias | ~USD/mes |
 |---|---|---|
-| Sólo correo (mínimo) | t4g.medium (4 GiB) | ~$24 |
-| Correo + Meet (piso) | t4g.large (8 GiB) | ~$49 |
+| Sólo correo (mínimo) | `t4g.medium` (4 GiB) | ~$24 |
+| Correo + Meet **bundled** | `t4g.large` (8 GiB) | ~$49 |
+| Correo + Meet **twobox** MÍNIMO | app-box `t4g.medium` + media-box `t4g.medium` + 2ª EIP | ~$48 |
+| Correo + Meet **twobox** (50 buzones) | app-box `t4g.large` + media-box `t4g.medium` + 2ª EIP | ~$73 |
+| Meet **external** | la que ya tengas para correo | $0 infra local |
 
-Es decir, **~+$25/mes** por habilitar Meet (la diferencia medium→large). Si ya estabas en `t4g.large`
-por otras razones, Meet agrega **$0** de instancia. Tráfico de media: sale por el data-transfer normal
-de EC2 (las llamadas son P2P-vía-SFU en tu propio servidor, sin egress a un tercero).
+- **Bundled**: **~+$25/mes** por el piso de RAM (medium→large). Si ya estabas en `t4g.large`, Meet agrega
+  **$0** de instancia.
+- **Twobox**: **~+$50/mes** respecto del sólo-correo (media-box + 2ª Elastic IP). El app-box puede
+  quedarse en `t4g.medium` porque no comparte CPU/RAM con LiveKit. Es la opción para muchas llamadas o
+  para no arriesgar la estabilidad del correo.
+- Tráfico de media: sale por el data-transfer normal de EC2 (las llamadas son P2P-vía-SFU en tu propio
+  servidor, sin egress a un tercero).
 
 ---
 
@@ -159,9 +209,13 @@ Notas:
 
 ## 7. Checklist de prueba manual (post-deploy)
 
-1. **DNS**: `dig +short meet.<dom>` y `dig +short turn.meet.<dom>` devuelven la Elastic IP.
+1. **DNS**: `dig +short meet.<dom>` y `dig +short turn.meet.<dom>` devuelven la Elastic IP correcta
+   (app-box en bundled; media-box en twobox).
 2. **TLS**: `https://meet.<dom>/` responde (426/200 — el cert ACME puede tardar unos minutos).
-3. **Contenedor**: `docker compose ps livekit` → `Up`. `docker compose logs livekit` sin errores de config.
+3. **Contenedor LiveKit**:
+   - **Bundled**: `docker compose ps livekit` → `Up` en el app-box.
+   - **Twobox**: en el **media-box**, `docker compose ps livekit` → `Up`; en el app-box no hay contenedor
+     `livekit`.
 4. **Toggle**: en una reserva/evento con Meet, el link `https://webmail.<dom>/meet/<slug>` abre la sala.
 5. **Cámara/mic**: entran y publican; el audio local no hace eco (no se reproduce a sí mismo).
 6. **Compartir pantalla**: el botón comparte y el resto la ve en spotlight.
@@ -177,7 +231,7 @@ Si 7 falla pero 1-6 andan: probablemente la red del invitado sólo deja 443/TCP 
 | Síntoma | Causa probable | Acción |
 |---|---|---|
 | El link abre pero la media no conecta | UDP 7882/3478 cerrados, o red del invitado sólo-443 | Verificá el SG/firewall (§3); probá desde otra red; ver §5 |
-| `wss://meet.<dom>` no abre (426 nunca) | Traefik no rutea / cert ACME pendiente / livekit caído | `docker compose logs traefik livekit`; esperá el cert |
+| `wss://meet.<dom>` no abre (426 nunca) | Traefik/Caddy no rutea / cert ACME pendiente / livekit caído | `docker compose logs traefik livekit` (bundled) o `docker compose logs caddy livekit` (twobox); esperá el cert |
 | Error CSP `connect-src wss:` en consola del navegador | `MEET_PROVISIONED` no seteado | Confirmá `MEET_PROVISIONED=1` en `.env` y recreá `web`+`api` |
 | Al unirse: 503 / "servicio no disponible" | Credenciales LiveKit rotas (ver `livekitSource`) | La API del admin (`GET /api/admin/meet/settings`) muestra `livekitSource: error`: reingresá key/secret (§6/§9) |
 | ICE falla / clientes ven IP privada | `node_ip` mal o EIP no asociada | Verificá `rtc.node_ip` = Elastic IP en `livekit.yaml` |
@@ -193,8 +247,11 @@ Logs útiles: `docker compose logs -f livekit traefik api`. La imagen está **pi
 - **Claves LiveKit del bundled** (`LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` en `.env`): generá nuevas
   (`openssl rand -hex 32`), reemplazalas en `.env` y `docker compose up -d livekit api` (ambas deben
   coincidir: el JWT que mintea la API tiene que validar contra la key del contenedor LiveKit).
+- **Claves LiveKit del twobox** (SSM SecureString `/bifrost/<dom>/livekit-secret`): actualizá el
+  parámetro en SSM con el nuevo `apiSecret` (y el `apiKey` correspondiente si también lo cambiás), luego
+  reiniciá los contenedores `api` del app-box y `livekit` del media-box para que re-lean el secreto.
 - **Credenciales externas/Cloud guardadas en la DB**: rotalas por la API del admin (§6, `PATCH
-  /api/admin/meet/settings`) — el secret se re-cifra. Para limpiarlas, mandá el secret vacío (vuelve al bundled).
+  /api/admin/meet/settings`) — el secret se re-cifra. Para limpiarlas, mandá el secret vacío (vuelve al modo local).
 - **`ENCRYPTION_KEY`** (clave maestra que cifra el secret en la DB): si la rotás, el secret guardado deja
   de desencriptar → la API del admin reporta `livekitSource: error` y las salas dan 503. **Solución**:
   reingresá la key/secret de LiveKit (`PATCH /api/admin/meet/settings`) → se re-cifran con la nueva `ENCRYPTION_KEY`.
@@ -203,8 +260,9 @@ Logs útiles: `docker compose logs -f livekit traefik api`. La imagen está **pi
 
 ## 10. Registro de decisiones (por qué es así)
 
-- **Mismo EC2, sin 2º servidor**: la tesis de costo de Bifrost (correo casi-gratis para PYMEs) no
-  sobrevive a un servidor extra. LiveKit en la misma caja, profile `meet`, límites cgroup.
+- **Bundled por default**: la tesis de costo de Bifrost (correo casi-gratis para PYMEs) prioriza un
+  solo EC2. LiveKit corre en la misma caja con profile `meet` y límites cgroup. Para quien necesite
+  aislamiento o más concurrencia, el modo **twobox** agrega un 2º EC2 dedicado a media.
 - **Opcional/modular**: con Meet OFF la instalación es byte-idéntica → no penaliza a quien no lo usa.
 - **Screen share en el MVP**; UI estilo Google Meet.
 - **TURN/TLS diferido** (decisión de producto): no abrimos el TURNS estándar (5349/tcp) hoy; cobertura

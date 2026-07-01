@@ -140,50 +140,63 @@ ES el teardown; el template resuelve el AMI por SSM). De `aws/compute.ts` queda 
 
 ## 3.quater — Bifrost Meet (opcional, videollamadas LiveKit)
 
-El wizard ofrece **3 modos** de Meet (select, o flags `--meet-mode off|bundled|external`):
+El wizard ofrece **4 modos** de Meet (select, o flags `--meet-mode off|bundled|twobox|external`):
 
-- **off** (default) — sin videollamadas. Base byte-idéntica.
-- **bundled** — LiveKit **self-hosted en ESTE EC2** (alias `--enable-meet`). Abre puertos media, exige
-  ≥8 GiB RAM y sube el costo. Detallado abajo (`MeetMode='enabled'`).
-- **external** — apuntar a un **LiveKit que ya tenés** (p.ej. Cleverty). El app-box NO corre media (sin
-  2º SG, sin DNS meet./turn., sin piso de RAM): sólo firma tokens y el navegador conecta al WSS externo.
-  El wizard pide `wss://` + apiKey + apiSecret (flags `--meet-external-url/-key/-secret` o la env var
-  `BIFROST_LIVEKIT_SECRET`). El **wsUrl se valida fuerte** (sólo `wss://`, sin userinfo/path/query, sin
-  hosts internos/metadata/IPv4-mapped/NAT64 — anti-SSRF; se re-valida en el backend). El **apiSecret NO
-  viaja en user-data/CFN**: el CLI lo escribe a un **SSM SecureString** (KMS) y el box lo lee al boot con
-  el rol (mismo patrón que SES: param `LivekitSecretParamName` + policy `LivekitSecretAccessPolicy` con
-  `ssm:GetParameter` scoped + `kms:Decrypt` vía `kms:ViaService`). `MeetMode` queda `disabled` (sin infra
-  media local) pero el `.env` lleva `MEET_PROVISIONED=1` + `LIVEKIT_WS_URL/API_URL/API_KEY`. Fail-closed:
-  si el secret falta en SSM al boot (tras retry por propagación IAM), el provisioning aborta.
+| Modo | Infra local | Cuándo usarlo | Costo extra aprox. |
+|---|---|---|---|
+| **off** (default) | Ninguna | Sin videollamadas | $0 |
+| **bundled** | LiveKit en el **mismo EC2** | PYME chica, pocas llamadas | ~+$25/mes (piso RAM) |
+| **twobox** | **2º EC2 dedicado** a LiveKit | Muchas llamadas; el correo no compite CPU/RAM | ~2× infra (2 EC2 + 2 EIP) |
+| **external** | Ninguna; apunta a un LiveKit ajeno | Ya tenés un LiveKit/Cloud gestionado | $0 infra local |
 
-**Selección de instancia por capacidad.** El menú de EC2 (curado) muestra por cada tipo el costo y a
-**cuántos buzones apunta** (y participantes de Meet si es bundled), y **recomienda** la más chica que cubre
-los buzones elegidos: `t4g.medium` (~15), `large` (~50), `xlarge` (~150), `2xlarge` (~500). Con Meet
-bundled sólo ofrece las ≥8 GiB y halva la capacidad de buzones (el SFU comparte CPU/RAM). Los `t4g` son
-**burstable** → para Meet intensivo conviene LiveKit **externo** o una familia no-burstable (opción "Otro").
+### bundled (`MeetMode='enabled'`)
+LiveKit self-hosted en el mismo EC2. Abre puertos media, exige ≥8 GiB RAM y sube el costo. El menú de EC2
+sólo ofrece instancias ≥8 GiB y halva la capacidad de buzones. El **piso** sube a `t4g.large`. El template
+crea un **2º Security Group** con los puertos media (`7881/tcp`, `7882/udp`, `3478/udp`); el SG base queda
+byte-idéntico. Los registros `meet.<dom>`/`turn.meet.<dom>` apuntan a la EIP del app-box.
+
+### twobox (`MeetMode='twobox'`)
+LiveKit corre en un **2º EC2 dedicado** (media-box) con su propia EIP y Security Group. El app-box no lleva
+LiveKit local: firma tokens y el navegador conecta al media-box por `wss://meet.<dom>`. El CLI:
+1. Genera un par `apiKey`/`apiSecret` y lo guarda en **SSM SecureString** (`LivekitSecretParamName`); ambos
+   boxes lo leen con su rol.
+2. Ofrece un catálogo curado para el media-box con **default `t4g.medium` (~$24)**: `t4g.small` (~$12,
+   ultra-mínimo, opt-in), `t4g.medium`, `t4g.large`, y `c6g.large`/`c6g.xlarge`/`c7g.large` (no-burstable,
+   para muchas llamadas sostenidas). Flag: `--livekit-instance-type <tipo>`. **Filosofía "separar, NO
+   duplicar":** el media-box es SÓLO LiveKit (~1-2 GiB) → no necesita 8 GiB; un 2-box mínimo = 2× t4g.medium
+   (~$48) ≈ el costo de 1× t4g.large bundled, pero con la media separada del correo.
+3. Escribe dos user-data: el del app-box (sin `COMPOSE_PROFILES=meet`) y el del media-box (LiveKit + Caddy
+   auto-TLS). El media-box publica SÓLO `7881/7882/3478` + `127.0.0.1:7880` (health local); **NO mapea el
+   rango `30000-40000` en el compose** (haría 10.001 `docker-proxy` → OOM; hallado en el deploy real).
+4. Crea los recursos condicionales `LivekitSecurityGroup` (22/80/443 + media, nunca 7880), `LivekitElasticIP`,
+   `LivekitInstance`, `LivekitEIPAssociation` y un **`LivekitInstanceRole`/`Profile` PROPIO y mínimo**
+   (cfn-signal + `ssm:GetParameter` + `kms:Decrypt`, SIN S3/SES — least-privilege, no reusa el rol del
+   app-box). `meet.<dom>`/`turn.meet.<dom>` apuntan a la EIP del media-box; el app-box firma tokens contra el
+   twirp `https://meet.<dom>`. Las dos instancias señalizan `cfn-signal` independiente (sin deadlock).
+
+### external (`MeetMode='external'`)
+Apunta a un LiveKit que ya tenés (p.ej. Cleverty o LiveKit Cloud). El app-box NO corre media: sólo firma
+tokens. El wizard pide `wss://` + apiKey + apiSecret (flags `--meet-external-url/-key/-secret` o env var
+`BIFROST_LIVEKIT_SECRET`). El **wsUrl se valida fuerte** (sólo `wss://`, sin userinfo/path/query, sin hosts
+internos/metadata/IPv4-mapped/NAT64 — anti-SSRF; se re-valida en el backend). El **apiSecret NO viaja en
+user-data/CFN**: el CLI lo escribe a un **SSM SecureString** (KMS) y el box lo lee al boot con el rol
+(mismo patrón que SES: `ssm:GetParameter` scoped + `kms:Decrypt` vía `kms:ViaService`). Fail-closed: si el
+secret falta en SSM al boot, el provisioning aborta.
+
+**Secret compartido (twobox/external).** El parámetro SSM (`/bifrost/<dom>/livekit-secret`) es leído por
+el app-box y, en twobox, también por el media-box. El CLI lo publica justo antes del deploy.
+
+**Selección de instancia por capacidad.** El menú de EC2 del app-box muestra costo + buzones (y participantes
+de Meet si es bundled), recomendando la más chica que cubre los buzones: `t4g.medium` (~15), `large` (~50),
+`xlarge` (~150), `2xlarge` (~500). Con twobox el app-box no sufre piso de RAM; el media-box se elige aparte.
+Los `t4g` son **burstable** → para Meet intensivo conviene **twobox** con `c6g`/`c7g` o **external**.
 Flags no-interactivos: `--mailboxes N`, `--instance-type <tipo>` (fuera de catálogo + bundled exige
-`--allow-unknown-meet-instance`).
-
-En **bundled**, el template gana un parámetro `MeetMode='enabled'` que, por **condición** (igual patrón que
-`CreateNetwork`/`CreateS3`):
-- crea un **2º Security Group** con SÓLO los puertos media de LiveKit (`7881/tcp`, `7882/udp`, `3478/udp`)
-  — el SG base queda **byte-idéntico**; se asocia al EC2 vía `Fn::If[EnableMeet, MeetSG, AWS::NoValue]`;
-- agrega los registros **A `meet.<dom>`** y **A `turn.meet.<dom>`** → la EIP (cond. a gestionar el DNS);
-- expone el output `MeetUrl`.
-
-El **piso de instancia** sube a `t4g.large` (≥8 GiB) para tipos del **catálogo** con <8 GiB; un tipo fuera
-del catálogo se respeta con un aviso (el wizard no puede verificar su RAM). LiveKit + mailserver no entran
-en 4 GiB (mismo EC2, ~+$25/mes). El **cloud-init** escribe `MEET_PROVISIONED=1` + `COMPOSE_PROFILES=meet`
-+ `LIVEKIT_WS_URL` + `LIVEKIT_API_URL=http://livekit:7880` + claves LiveKit al `.env`, y fija `rtc.node_ip`
-= EIP en `livekit.yaml` (ICE determinista). Como `MEET_PROVISIONED` queda seteado, el interruptor maestro
-en la app (`settings.enabled`) arranca en `true` por default (turnkey) — se puede apagar con `PATCH
-/api/admin/meet/settings {"enabled":false}` (toggle visual: F3.7).
+`--allow-unknown-meet-instance`), `--livekit-instance-type <tipo>` (twobox).
 
 > **Detalle clave — la EIP en `node_ip` NO sale de IMDS.** El `EIPAssociation` asocia DESPUÉS de que el
 > cloud-init señaliza (`CreationPolicy`), así que IMDS daría la IP **efímera** de launch. Se inyecta por
-> **CloudFormation** con `GetAtt ElasticIP.PublicIp`, concatenado al user-data vía **`Fn::Join`** (no
-> `Fn::Sub`: éste interpolaría todos los `${VAR}` del bash del cloud-init). El `GetAtt` crea la dependencia
-> implícita `Instance→ElasticIP`, así que CFN asigna la EIP primero y su IP ya se conoce al lanzar.
+> **CloudFormation** con `GetAtt <EIP>.PublicIp`, concatenado al user-data vía **`Fn::Join`** (no
+> `Fn::Sub`). El `GetAtt` crea la dependencia implícita `Instance→EIP`, así CFN conoce la IP antes del launch.
 
 Con `MeetMode='disabled'` (default) **nada de esto aplica**: el stack es idéntico al de sólo-correo.
 Guía de operación/troubleshooting: [`meet/INSTALL.md`](./meet/INSTALL.md).

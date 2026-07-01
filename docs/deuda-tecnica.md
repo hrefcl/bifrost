@@ -489,3 +489,48 @@ necesario). TDs residuales:
   ruteo Traefik (meet.<dom> → livekit:7880 por bridge) y el wiring del api → desproporcionado. Aceptable para
   el modelo de Bifrost (PYME, pocas llamadas concurrentes; el buffer default alcanza). Fix futuro sólo si se
   apunta a escala alta: livekit en host-net + re-cablear Traefik/api al host, o un sidecar.
+
+## Auto-auditoría 2026-07-01b (UI de Meet desplegada)
+
+- **TD-MEET-ROOM-PROLIFERATION (LOW-MED, escalabilidad 10x)**: el botón "Nueva reunión" de `MeetHomeView`
+  hace `POST /api/meet/rooms` que SIEMPRE crea una `MeetRoom` personal nueva (mode `personal`, SIN `expiresAt`).
+  Cada click acumula una sala en Mongo que nunca se purga (el TTL `purgeAt` sólo aplica a `per_event`). A 10x
+  usuarios creando reuniones repetidamente, la colección crece sin techo y no hay UI para listar/borrar las
+  propias salas. Impacto real bajo hoy (docs livianos, sin media hasta el primer join), pero es basura que se
+  acumula. Fix propuesto: (a) semántica get-or-create de UNA sala personal por usuario (estilo "personal room"
+  de Google Meet) reutilizable + botón "rotar link"; o (b) TTL/GC de salas personales sin uso reciente; o
+  (c) UI de "mis salas" con borrar. (a) es la de mejor UX. Requiere cambio de backend en `POST /meet/rooms`.
+- **TD-MEET-UI-NONADMIN-UNVERIFIED (LOW)**: la UI de Meet (`/meet`, botón nav) se verificó en vivo SÓLO como
+  admin. El backend `POST /meet/rooms` usa `request.user.userId` sin gate de rol y el botón nav gatea por
+  `meetEnabled` (no por rol) → un usuario NO-admin DEBERÍA verlo y poder crear salas. No verificado end-to-end
+  con un buzón no-admin (requiere provisionar uno). Sin riesgo de authz aparente (salas scoped a userId).
+- **VERIFICADO (no es deuda, se registra por trazabilidad)**: llamada 2-partes end-to-end ARRANCANDO desde la
+  UI nueva (Nueva reunión → Entrar ahora → 2º browser por el link compartido → ambos connected + 2 video tiles),
+  Playwright contra Aulion build 162. El render (botón nav + /meet + crear) y la llamada real ambos pasan.
+
+## From-zero deploy del 2-box (2026-07-01) — hallazgos reales
+
+- **TD-MEET-TWOBOX-OOM-PORTRANGE (HIGH — RESUELTO en `256fe50`)**: el compose del media-box publicaba
+  `30000-40000:30000-40000/udp` → Docker levanta un `docker-proxy` POR PUERTO (10.001 procesos) → OOM que
+  mató el boot (`Out of memory: Killed process (cfn-signal)`). Ni los 196 tests ni `cfn validate-template`
+  lo cazan — SÓLO el deploy real. Fix: no mapear el rango (el bundled probado tampoco; LiveKit usa el mux
+  7882). El SG lo deja abierto por si un TURN relay futuro lo necesita.
+- **TD-MEET-TWOBOX-DEFAULT-INSTANCE (LOW)**: el media-box recomienda por default `t4g.large` (BURSTABLE) —
+  para un box dedicado a media (SFU sostenido) debería ser compute-optimized (`c6g/c7g`, ya en LIVEKIT_CATALOG).
+  `DEFAULT_LIVEKIT_INSTANCE`/`recommendLivekitInstanceFor` deberían apuntar a compute. Funciona igual (t4g.large
+  tiene 8GB) pero no es la elección óptima para llamadas sostenidas.
+- **TD-MAILSERVER-CERT-CRASHLOOP (MED — robustez turnkey)**: docker-mailserver con `SSL_TYPE=letsencrypt`
+  **hard-crashea en loop** si no hay cert en el acme.json de Traefik (`Cannot find a valid DOMAIN → Shutting
+  down`). En un deploy normal Traefik consigue el cert en minutos y se cura solo, PERO si Let's Encrypt está
+  rate-limited (5 certs/dominio-exacto por 168h — se agota testeando el mismo dominio repetido) el mailserver
+  queda caído indefinidamente → IMAP abajo → login imposible. El correo no debería caer entero por un cert
+  pendiente. Mejora: fallback self-signed hasta que llegue el cert real, y/o usar LE **staging** en pruebas.
+  (Observado en el from-zero: ~5 redeploys de aulion.app en un día agotaron el límite; webmail y Meet igual
+  arriba, sólo el mailserver en loop. Reset del límite ~16h.)
+- **TD-DNS-EXISTING-RECORDS-ROLLBACK (MED — robustez turnkey)**: si se elige "gestionar DNS desde el stack" y
+  la zona Route53 YA tiene registros que la CLI intenta crear (SPF/DMARC TXT, MX, A), el `AWS::Route53::RecordSet`
+  FALLA ("already exists") → **rollback de TODO el stack** (los 2 EC2, VPC, etc. se cancelan). La CLI avisa
+  ("si tu zona YA tiene MX/TXT puede chocar") pero no lo maneja. Hallado en el from-zero de aulion.dev (tenía
+  SPF/DMARC de un setup SES previo). Mejora: usar un custom resource que UPSERT (change-batch UPSERT en vez de
+  RecordSet CREATE), o pre-chequear la zona y ofrecer sobreescribir/omitir los que chocan. Workaround actual:
+  borrar los registros que chocan antes, o elegir DNS='n' y cargarlos a mano.

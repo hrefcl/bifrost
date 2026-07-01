@@ -78,31 +78,67 @@ describe('assembleStackParams', () => {
     expect(keys).not.toContain('UserData');
   });
 
-  it('MeetMode: default disabled (Meet OFF); enableMeet → enabled', () => {
-    expect(get(assembleStackParams(baseAnswers), 'MeetMode')).toBe('disabled');
-    expect(get(assembleStackParams({ ...baseAnswers, enableMeet: false }), 'MeetMode')).toBe(
+  it('MeetMode: off → disabled; bundled → enabled; external/twobox se pasan tal cual', () => {
+    expect(get(assembleStackParams({ ...baseAnswers, meetMode: 'off' }), 'MeetMode')).toBe(
       'disabled'
     );
-    expect(get(assembleStackParams({ ...baseAnswers, enableMeet: true }), 'MeetMode')).toBe(
+    expect(get(assembleStackParams({ ...baseAnswers, meetMode: 'bundled' }), 'MeetMode')).toBe(
       'enabled'
+    );
+    expect(get(assembleStackParams({ ...baseAnswers, meetMode: 'external' }), 'MeetMode')).toBe(
+      'external'
+    );
+    expect(get(assembleStackParams({ ...baseAnswers, meetMode: 'twobox' }), 'MeetMode')).toBe(
+      'twobox'
     );
   });
 
-  it('LivekitSecretParamName: vacío por defecto; con meetExternal → el nombre del param SSM', () => {
-    expect(get(assembleStackParams(baseAnswers), 'LivekitSecretParamName')).toBe('');
-    const p = assembleStackParams({
+  it('LivekitSecretParamName: vacío por defecto; con external/twobox → el nombre del param SSM', () => {
+    expect(
+      get(assembleStackParams({ ...baseAnswers, meetMode: 'off' }), 'LivekitSecretParamName')
+    ).toBe('');
+    const external = assembleStackParams({
       ...baseAnswers,
-      meetExternal: { secretParamName: '/bifrost/acme-com/livekit-secret' },
+      meetMode: 'external',
+      livekitSecretParamName: '/bifrost/acme-com/livekit-secret',
     });
-    expect(get(p, 'LivekitSecretParamName')).toBe('/bifrost/acme-com/livekit-secret');
+    expect(get(external, 'LivekitSecretParamName')).toBe('/bifrost/acme-com/livekit-secret');
+    const twobox = assembleStackParams({
+      ...baseAnswers,
+      meetMode: 'twobox',
+      livekitSecretParamName: '/bifrost/acme-com/livekit-secret',
+      livekitInstanceType: 'c6g.large',
+    });
+    expect(get(twobox, 'LivekitSecretParamName')).toBe('/bifrost/acme-com/livekit-secret');
   });
 
-  it('Meet EXTERNO NO monta media local → MeetMode queda disabled (sin 2º SG/DNS/EIP)', () => {
+  it('Meet EXTERNO NO monta media local → MeetMode external (sin 2º SG/DNS/EIP del bundled)', () => {
     const p = assembleStackParams({
       ...baseAnswers,
-      meetExternal: { secretParamName: '/bifrost/acme-com/livekit-secret' },
+      meetMode: 'external',
+      livekitSecretParamName: '/bifrost/acme-com/livekit-secret',
     });
-    expect(get(p, 'MeetMode')).toBe('disabled');
+    expect(get(p, 'MeetMode')).toBe('external');
     expect(get(p, 'LivekitSecretParamName')).not.toBe('');
+  });
+
+  it('Meet TWOBOX pasa LivekitInstanceType/LivekitImageId según arquitectura', () => {
+    const arm = assembleStackParams({
+      ...baseAnswers,
+      meetMode: 'twobox',
+      livekitInstanceType: 'c6g.large',
+      livekitSecretParamName: '/bifrost/acme-com/livekit-secret',
+    });
+    expect(get(arm, 'LivekitInstanceType')).toBe('c6g.large');
+    expect(get(arm, 'LivekitImageId')).toContain('/arm64/');
+
+    const x86 = assembleStackParams({
+      ...baseAnswers,
+      meetMode: 'twobox',
+      livekitInstanceType: 'c6i.large',
+      livekitSecretParamName: '/bifrost/acme-com/livekit-secret',
+    });
+    expect(get(x86, 'LivekitInstanceType')).toBe('c6i.large');
+    expect(get(x86, 'LivekitImageId')).toContain('/amd64/');
   });
 });
