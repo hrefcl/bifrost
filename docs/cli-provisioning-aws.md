@@ -158,12 +158,21 @@ byte-idéntico. Los registros `meet.<dom>`/`turn.meet.<dom>` apuntan a la EIP de
 ### twobox (`MeetMode='twobox'`)
 LiveKit corre en un **2º EC2 dedicado** (media-box) con su propia EIP y Security Group. El app-box no lleva
 LiveKit local: firma tokens y el navegador conecta al media-box por `wss://meet.<dom>`. El CLI:
-1. Genera un par `apiKey`/`apiSecret` y lo guarda en **SSM SecureString** (`LivekitSecretParamName`).
-2. Ofrece un catálogo curado para el media-box (`t4g.large`, `c6g.large`, `c6g.xlarge`, `c7g.large`);
-   default `t4g.large`. Flag: `--livekit-instance-type <tipo>`.
-3. Escribe dos user-data: el del app-box (sin `COMPOSE_PROFILES=meet`) y el del media-box (LiveKit + Caddy).
-4. Crea los recursos condicionales `LivekitSecurityGroup`, `LivekitElasticIP`, `LivekitInstance` y
-   `LivekitEIPAssociation`. `meet.<dom>`/`turn.meet.<dom>` apuntan a la EIP del media-box.
+1. Genera un par `apiKey`/`apiSecret` y lo guarda en **SSM SecureString** (`LivekitSecretParamName`); ambos
+   boxes lo leen con su rol.
+2. Ofrece un catálogo curado para el media-box con **default `t4g.medium` (~$24)**: `t4g.small` (~$12,
+   ultra-mínimo, opt-in), `t4g.medium`, `t4g.large`, y `c6g.large`/`c6g.xlarge`/`c7g.large` (no-burstable,
+   para muchas llamadas sostenidas). Flag: `--livekit-instance-type <tipo>`. **Filosofía "separar, NO
+   duplicar":** el media-box es SÓLO LiveKit (~1-2 GiB) → no necesita 8 GiB; un 2-box mínimo = 2× t4g.medium
+   (~$48) ≈ el costo de 1× t4g.large bundled, pero con la media separada del correo.
+3. Escribe dos user-data: el del app-box (sin `COMPOSE_PROFILES=meet`) y el del media-box (LiveKit + Caddy
+   auto-TLS). El media-box publica SÓLO `7881/7882/3478` + `127.0.0.1:7880` (health local); **NO mapea el
+   rango `30000-40000` en el compose** (haría 10.001 `docker-proxy` → OOM; hallado en el deploy real).
+4. Crea los recursos condicionales `LivekitSecurityGroup` (22/80/443 + media, nunca 7880), `LivekitElasticIP`,
+   `LivekitInstance`, `LivekitEIPAssociation` y un **`LivekitInstanceRole`/`Profile` PROPIO y mínimo**
+   (cfn-signal + `ssm:GetParameter` + `kms:Decrypt`, SIN S3/SES — least-privilege, no reusa el rol del
+   app-box). `meet.<dom>`/`turn.meet.<dom>` apuntan a la EIP del media-box; el app-box firma tokens contra el
+   twirp `https://meet.<dom>`. Las dos instancias señalizan `cfn-signal` independiente (sin deadlock).
 
 ### external (`MeetMode='external'`)
 Apunta a un LiveKit que ya tenés (p.ej. Cleverty o LiveKit Cloud). El app-box NO corre media: sólo firma
