@@ -47,10 +47,10 @@ test.describe('punch-list PM (sesión 6)', () => {
     await page.goto('/admin');
     await expect(page.locator('[data-testid="admin-section-title"]')).toBeVisible();
 
-    // Alta.
-    await page.getByRole('button', { name: '+ New account' }).click();
+    // Alta (rediseño: botón "+ New user", form en .create-card).
+    await page.getByRole('button', { name: '+ New user' }).click();
     await page.getByPlaceholder('user@empresa.com').fill(newEmail);
-    await page.locator('.create-form input[type="password"]').fill('pw-e2e');
+    await page.locator('.create-card input[type="password"]').fill('pw-e2e');
     await page.getByPlaceholder('imap.empresa.com').fill('imap.test');
     await page.getByPlaceholder('smtp.empresa.com').fill('smtp.test');
     const createResp = page.waitForResponse(
@@ -59,26 +59,29 @@ test.describe('punch-list PM (sesión 6)', () => {
     await page.getByRole('button', { name: 'Create account' }).click();
     expect((await createResp).status(), 'alta 201').toBe(201);
 
-    // Aparece en la tabla.
-    const row = page.locator('tr', { has: page.locator('.acc-email', { hasText: newEmail }) });
+    // Aparece en la lista (rediseño: cada fila es un botón .user-row con .uemail).
+    const row = page.locator('.user-row', { has: page.locator('.uemail', { hasText: newEmail }) });
     await expect(row).toBeVisible();
 
-    // Deshabilitar → estado "Disabled".
+    // Deshabilitar: abrir la ficha (click en la fila) y usar "Disable" del panel Perfil.
+    await row.click();
+    await expect(page.locator('[data-testid="user-detail"]')).toBeVisible();
     const patchResp = page.waitForResponse(
       (r) => r.url().includes('/api/admin/accounts/') && r.request().method() === 'PATCH'
     );
-    await row.getByTitle('Disable').click();
+    await page.getByRole('button', { name: 'Disable' }).click();
     await patchResp;
-    await expect(row.locator('.status')).toHaveText(/Disabled/);
+    // El estado se refleja en la hero card de la ficha.
+    await expect(page.locator('.user-hero .status-dot')).toHaveText(/Disabled/);
 
-    // Eliminar (confirm) → desaparece.
+    // Eliminar (confirm) desde la ficha → se cierra y la cuenta desaparece de la lista.
     page.once('dialog', (d) => void d.accept());
     const delResp = page.waitForResponse(
       (r) => r.url().includes('/api/admin/accounts/') && r.request().method() === 'DELETE'
     );
-    await row.getByTitle('Delete').click();
+    await page.getByRole('button', { name: 'Delete' }).click();
     expect((await delResp).status(), 'delete 200').toBe(200);
-    await expect(page.locator('.acc-email', { hasText: newEmail })).toHaveCount(0);
+    await expect(page.locator('.uemail', { hasText: newEmail })).toHaveCount(0);
   });
 
   test('PM-04: branding white-label aplica el nombre de empresa y se puede limpiar', async ({

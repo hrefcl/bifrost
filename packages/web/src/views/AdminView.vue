@@ -895,14 +895,15 @@ async function save() {
             </button>
           </div>
           <p v-if="updateMsg" class="ub-msg-sm" data-testid="update-msg">{{ updateMsg }}</p>
-          <!-- Chip de versión (rediseño maqueta): reemplaza las líneas build sueltas. -->
+          <!-- Chip de versión (rediseño maqueta): reemplaza las líneas build sueltas. El testid
+               `build-web` va en la línea "web {build}" (contrato del e2e: detecta cache tras deploy). -->
           <div class="admin-verchip">
             <AppIcon name="shield" :size="16" />
             <div class="admin-verchip-text">
-              <span class="bi-app" data-testid="build-web"
-                >{{ brand.name }} v{{ BUILD_INFO.version }}</span
+              <span class="bi-app">{{ brand.name }} v{{ BUILD_INFO.version }}</span>
+              <span class="bi-dim" data-testid="build-web"
+                >web {{ BUILD_INFO.build }} · {{ BUILD_INFO.sha }}</span
               >
-              <span class="bi-dim">build {{ BUILD_INFO.build }} · {{ BUILD_INFO.sha }}</span>
               <span v-if="apiBuild" class="bi-dim" data-testid="build-api">api {{ apiBuild }}</span>
             </div>
           </div>
