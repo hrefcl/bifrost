@@ -12,6 +12,7 @@
 
 import { stringify as yamlStringify } from 'yaml';
 import { MEET_EIP_MARKER } from '../mailserver/user-data.js';
+import { LIVEKIT_EIP_MARKER } from '../meet/livekit-media-user-data.js';
 
 /** Puertos abiertos: 22 (SSH, CIDR configurable) + correo/web (a internet). */
 const MAIL_PORTS = [25, 80, 443, 143, 465, 587, 993] as const;
@@ -35,8 +36,12 @@ const MEET_PORTS = [
  * (`Fn::Base64` del literal) y omite el parámetro `UserData` — necesario porque un parámetro String
  * de CFN tope a 4096 chars y el cloud-init real son ~5KB (bug hallado en el deploy real). Sin
  * `userData`, deja el parámetro `UserData` (template genérico para validación/uso parametrizado).
+ * En modo twobox, `livekitUserData` se embebe en el recurso `LivekitInstance`.
  */
-export function buildStackTemplate(userData?: string): Record<string, unknown> {
+export function buildStackTemplate(
+  userData?: string,
+  livekitUserData?: string
+): Record<string, unknown> {
   const projectTags = [
     { Key: 'Project', Value: 'Bifrost' },
     { Key: 'ManagedBy', Value: 'bifrost-provision' },
@@ -51,7 +56,8 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
 
   const template: Record<string, unknown> = {
     AWSTemplateFormatVersion: '2010-09-09',
-    Description: 'Bifrost all-in-one (docker-mailserver + webmail) — VPC opcional, EC2, EIP.',
+    Description:
+      'Bifrost all-in-one (docker-mailserver + webmail) — VPC opcional, EC2, EIP. Modo twobox: 2º EC2 dedicado a LiveKit.',
     Parameters: {
       DomainName: { Type: 'String', Description: 'Dominio de correo (ej. empresa.com)' },
       // Default Graviton t4g.large → DEBE coincidir con la arch del ImageId default (arm64). Un deploy
@@ -86,16 +92,27 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       // Zona Route53 para gestionar el DNS (A/MX/SPF/DMARC) desde el stack. Vacío = NO gestionar DNS
       // acá (el CLI imprime los registros para cargarlos a mano — seguro si la zona ya tiene records).
       HostedZoneId: { Type: 'String', Default: '' },
-      // 'enabled' = Bifrost Meet (LiveKit): suma el 2º SG (puertos media), los A meet./turn.meet. y la
-      // inyección de la EIP en node_ip. Default 'disabled' (SEGURO): base byte-idéntica, Meet OFF.
-      MeetMode: { Type: 'String', Default: 'disabled', AllowedValues: ['enabled', 'disabled'] },
+      // Modo Bifrost Meet: 'disabled' (default, seguro), 'enabled' (bundled, LiveKit en el mismo EC2),
+      // 'external' (LiveKit ajeno, secret en SSM) o 'twobox' (2º EC2 dedicado a LiveKit).
+      MeetMode: {
+        Type: 'String',
+        Default: 'disabled',
+        AllowedValues: ['disabled', 'enabled', 'external', 'twobox'],
+      },
+      // Tipo de EC2 para el media-box en modo twobox. Default t4g.large (económico, suficiente para PYME).
+      LivekitInstanceType: { Type: 'String', Default: 't4g.large' },
+      // AMI para el media-box (el wizard pasa el SSM path según la arquitectura del tipo elegido).
+      LivekitImageId: {
+        Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>',
+        Default:
+          '/aws/service/canonical/ubuntu/server/22.04/stable/current/arm64/hvm/ebs-gp2/ami-id',
+      },
       // Nombre del parámetro SSM SecureString con la credencial SMTP de SES (lo escribe el orquestador
       // del CLI post-stack). Vacío = outbound SES deshabilitado. Con valor, el rol del box puede LEERLO
       // (ssm:GetParameter + kms:Decrypt) para cablear el relay cuando el outbound esté `ready`. §3/§7b.
       SesParamName: { Type: 'String', Default: '' },
-      // Nombre del SSM SecureString con el apiSecret de un LiveKit EXTERNO (lo escribe el orquestador del
-      // CLI). Vacío = sin LiveKit externo. Con valor, el rol del box puede LEERLO (ssm:GetParameter +
-      // kms:Decrypt) para cablear Meet contra el LiveKit externo. Excluyente con MeetMode='enabled'.
+      // Nombre del SSM SecureString con el apiSecret de LiveKit (modo external o twobox). Vacío = sin
+      // LiveKit externo/twobox. Con valor, el rol del box puede LEERLO (ssm:GetParameter + kms:Decrypt).
       LivekitSecretParamName: { Type: 'String', Default: '' },
     },
     // CloudFormation Rules: validan parámetros ANTES de crear recursos y rechazan el deploy con un
@@ -114,16 +131,15 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           },
         ],
       },
-      // Meet BUNDLED (MeetMode=enabled) y Meet EXTERNO (LivekitSecretParamName!='') son EXCLUYENTES: el
-      // wizard nunca los pasa juntos, pero un deploy manual por consola/CLI podría → estado inconsistente
-      // (SG de media local + policy de secret externo, y el user-data toma bundled). Rechazar temprano. [D]
+      // Meet BUNDLED (MeetMode=enabled) requiere LivekitSecretParamName vacío (no tiene sentido secret
+      // externo cuando las claves se generan en el host). Los modos external/twobox SÍ usan el param.
       ExternalLivekitExcludesBundledMeet: {
         RuleCondition: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
         Assertions: [
           {
             Assert: { 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] },
             AssertDescription:
-              'MeetMode=enabled (LiveKit bundled) es incompatible con LivekitSecretParamName (LiveKit externo). Para LiveKit externo usá MeetMode=disabled.',
+              'MeetMode=enabled (LiveKit bundled) es incompatible con LivekitSecretParamName. Para LiveKit externo/twobox usá MeetMode=external o twobox.',
           },
         ],
       },
@@ -135,20 +151,39 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       CreateS3: { 'Fn::Equals': [{ Ref: 'S3Mode' }, 'create'] },
       // Gestionar el DNS desde el stack sólo si se dio una zona (opt-in; el default es no tocar DNS).
       ManageDns: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
-      // Bifrost Meet activo → 2º SG + records meet./turn.meet. + EIP en node_ip.
-      EnableMeet: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
-      // DNS de Meet sólo si AMBOS: se gestiona el DNS Y Meet está activo (records meet./turn.meet.).
+      // Bifrost Meet BUNDLED: LiveKit en el mismo EC2 (2º SG, DNS meet./turn. → EIP del app-box).
+      EnableBundledMeet: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+      // Bifrost Meet TWOBOX: 2º EC2 dedicado a LiveKit.
+      EnableTwobox: { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+      // Cualquier modo Meet activo (para DNS meet./turn. y output MeetUrl).
+      EnableAnyMeet: {
+        'Fn::Or': [
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'external'] },
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+        ],
+      },
+      // DNS de Meet sólo si se gestiona el DNS Y Meet es bundled o twobox (en external el LiveKit
+      // ajeno ya tiene su propio DNS; no apuntamos meet.<dom> a nuestra infra).
       ManageMeetDns: {
         'Fn::And': [
           { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
-          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+          {
+            'Fn::Or': [
+              { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+              { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+            ],
+          },
         ],
       },
       // Outbound SES habilitado: dar al rol del box permiso de leer la credencial SMTP de SSM.
       EnableSes: { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'SesParamName' }, ''] }] },
-      // LiveKit externo: dar al rol del box permiso de leer el apiSecret de Meet de SSM.
-      EnableExternalLivekit: {
-        'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] }],
+      // LiveKit externo/twobox: dar al rol permiso de leer el apiSecret de Meet de SSM.
+      EnableLivekitSecret: {
+        'Fn::Or': [
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'external'] },
+          { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+        ],
       },
     },
     Resources: {
@@ -211,12 +246,12 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           Tags: projectTags,
         },
       },
-      // 2º SG CONDICIONAL (sólo Meet ON): puertos MEDIA de LiveKit. Recurso SEPARADO a propósito → el SG
+      // 2º SG CONDICIONAL (sólo Meet BUNDLED): puertos MEDIA de LiveKit. Recurso SEPARADO a propósito → el SG
       // base queda BYTE-IDÉNTICO con Meet OFF (los tests lo asertan). Se asocia a la instancia vía lista
       // condicional (abajo). Puertos mínimos (7881/tcp, 7882/udp, 3478/udp) — NUNCA 1-65535.
       MeetSecurityGroup: {
         Type: 'AWS::EC2::SecurityGroup',
-        Condition: 'EnableMeet',
+        Condition: 'EnableBundledMeet',
         Properties: {
           GroupDescription: 'Bifrost Meet (LiveKit media)',
           VpcId: { 'Fn::If': ['CreateNetwork', { Ref: 'VPC' }, { Ref: 'ExistingVpcId' }] },
@@ -238,11 +273,17 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           InstanceType: { Ref: 'InstanceType' },
           KeyName: { Ref: 'KeyName' },
           SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
-          // SG base SIEMPRE; el 2º SG (Meet) sólo con Meet ON. `AWS::NoValue` ELIMINA el elemento con
-          // Meet OFF → la lista efectiva es `[SecurityGroup]`, idéntica al stack pre-Meet.
+          // SG base SIEMPRE; el 2º SG (Meet bundled) sólo con MeetMode=enabled. `AWS::NoValue` ELIMINA el
+          // elemento cuando no aplica → la lista efectiva es `[SecurityGroup]`, idéntica al stack pre-Meet.
           SecurityGroupIds: [
             { Ref: 'SecurityGroup' },
-            { 'Fn::If': ['EnableMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
+            {
+              'Fn::If': [
+                'EnableBundledMeet',
+                { Ref: 'MeetSecurityGroup' },
+                { Ref: 'AWS::NoValue' },
+              ],
+            },
           ],
           // IMDSv2 obligatorio (HttpTokens required) — cierra el SSRF a credenciales de IMDSv1.
           // HopLimit=2: la API corre en un CONTENEDOR Docker → alcanzar el IMDS suma un hop de red; con
@@ -276,6 +317,69 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
         Properties: {
           AllocationId: { 'Fn::GetAtt': ['ElasticIP', 'AllocationId'] },
           InstanceId: { Ref: 'Instance' },
+        },
+      },
+
+      // ---- Bifrost Meet TWOBOX: 2º EC2 dedicado a LiveKit (condición EnableTwobox) ----
+      // SG del media-box: 443 para WSS vía Caddy + puertos media de LiveKit. NUNCA 7880 público.
+      LivekitSecurityGroup: {
+        Type: 'AWS::EC2::SecurityGroup',
+        Condition: 'EnableTwobox',
+        Properties: {
+          GroupDescription: 'Bifrost Meet media-box (LiveKit + Caddy)',
+          VpcId: { 'Fn::If': ['CreateNetwork', { Ref: 'VPC' }, { Ref: 'ExistingVpcId' }] },
+          SecurityGroupIngress: [
+            { IpProtocol: 'tcp', FromPort: 22, ToPort: 22, CidrIp: { Ref: 'SshCidr' } },
+            // 80: ACME HTTP-01 + redirect http→https de Caddy (Let's Encrypt). 443: WSS/API vía Caddy. [B#1]
+            { IpProtocol: 'tcp', FromPort: 80, ToPort: 80, CidrIp: '0.0.0.0/0' },
+            { IpProtocol: 'tcp', FromPort: 443, ToPort: 443, CidrIp: '0.0.0.0/0' },
+            ...MEET_PORTS.map((p) => ({ ...p, CidrIp: '0.0.0.0/0' })),
+          ],
+          Tags: projectTags,
+        },
+      },
+      LivekitElasticIP: {
+        Type: 'AWS::EC2::EIP',
+        Condition: 'EnableTwobox',
+        Properties: { Domain: 'vpc', Tags: projectTags },
+      },
+      LivekitInstance: {
+        Type: 'AWS::EC2::Instance',
+        Condition: 'EnableTwobox',
+        CreationPolicy: { ResourceSignal: { Count: 1, Timeout: 'PT15M' } },
+        Properties: {
+          ImageId: { Ref: 'LivekitImageId' },
+          InstanceType: { Ref: 'LivekitInstanceType' },
+          KeyName: { Ref: 'KeyName' },
+          SubnetId: { 'Fn::If': ['CreateNetwork', { Ref: 'Subnet' }, { Ref: 'ExistingSubnetId' }] },
+          SecurityGroupIds: [{ Ref: 'LivekitSecurityGroup' }],
+          MetadataOptions: {
+            HttpEndpoint: 'enabled',
+            HttpTokens: 'required',
+            HttpPutResponseHopLimit: 2,
+          },
+          BlockDeviceMappings: [
+            {
+              DeviceName: '/dev/sda1',
+              Ebs: {
+                VolumeSize: 40,
+                VolumeType: 'gp3',
+                Encrypted: true,
+                DeleteOnTermination: true,
+              },
+            },
+          ],
+          UserData: { 'Fn::Base64': { Ref: 'UserData' } },
+          IamInstanceProfile: { Ref: 'LivekitInstanceProfile' }, // rol propio mínimo (no el del app-box) [B-HIGH]
+          Tags: [...projectTags, { Key: 'Name', Value: { 'Fn::Sub': 'livekit-${DomainName}' } }],
+        },
+      },
+      LivekitEIPAssociation: {
+        Type: 'AWS::EC2::EIPAssociation',
+        Condition: 'EnableTwobox',
+        Properties: {
+          AllocationId: { 'Fn::GetAtt': ['LivekitElasticIP', 'AllocationId'] },
+          InstanceId: { Ref: 'LivekitInstance' },
         },
       },
 
@@ -466,12 +570,12 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
           },
         },
       },
-      // Lectura del apiSecret de un LiveKit EXTERNO (SSM SecureString) SÓLO si se configuró uno. El box lo
-      // lee con el rol al boot y cablea Meet contra el LiveKit externo. Espeja SesAccessPolicy (el mismo
-      // patrón seguro): el secret nunca viaja en user-data/CFN, sólo el rol puede descifrarlo vía SSM.
+      // Lectura del apiSecret de LiveKit (modo external o twobox) desde SSM SecureString. El box lo lee
+      // con el rol al boot. Espeja SesAccessPolicy (el mismo patrón seguro): el secret nunca viaja en
+      // user-data/CFN, sólo el rol puede descifrarlo vía SSM.
       LivekitSecretAccessPolicy: {
         Type: 'AWS::IAM::Policy',
-        Condition: 'EnableExternalLivekit',
+        Condition: 'EnableLivekitSecret',
         Properties: {
           PolicyName: 'bifrost-livekit-ssm',
           Roles: [{ Ref: 'InstanceRole' }],
@@ -504,6 +608,68 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       InstanceProfile: {
         Type: 'AWS::IAM::InstanceProfile',
         Properties: { Roles: [{ Ref: 'InstanceRole' }] },
+      },
+
+      // Rol PROPIO y MÍNIMO del media-box (modo twobox): NO reusa el rol del app-box (que tiene S3/SES/KMS).
+      // Sólo cfn-signal sobre este stack + leer el apiSecret de LiveKit de SSM + descifrarlo vía SSM.
+      // Least-privilege: el media-box no toca buzones, adjuntos ni SES. [review B — HIGH]
+      LivekitInstanceRole: {
+        Type: 'AWS::IAM::Role',
+        Condition: 'EnableTwobox',
+        Properties: {
+          AssumeRolePolicyDocument: {
+            Version: '2012-10-17',
+            Statement: [
+              {
+                Effect: 'Allow',
+                Principal: { Service: 'ec2.amazonaws.com' },
+                Action: 'sts:AssumeRole',
+              },
+            ],
+          },
+          Policies: [
+            {
+              PolicyName: 'bifrost-livekit-base',
+              PolicyDocument: {
+                Version: '2012-10-17',
+                Statement: [
+                  {
+                    Effect: 'Allow',
+                    Action: 'cloudformation:SignalResource',
+                    Resource: {
+                      'Fn::Sub':
+                        'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/${AWS::StackName}/*',
+                    },
+                  },
+                  {
+                    Effect: 'Allow',
+                    Action: ['ssm:GetParameter'],
+                    Resource: {
+                      'Fn::Sub':
+                        'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LivekitSecretParamName}',
+                    },
+                  },
+                  {
+                    Effect: 'Allow',
+                    Action: ['kms:Decrypt'],
+                    Resource: '*',
+                    Condition: {
+                      StringEquals: {
+                        'kms:ViaService': { 'Fn::Sub': 'ssm.${AWS::Region}.amazonaws.com' },
+                      },
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+          Tags: projectTags,
+        },
+      },
+      LivekitInstanceProfile: {
+        Type: 'AWS::IAM::InstanceProfile',
+        Condition: 'EnableTwobox',
+        Properties: { Roles: [{ Ref: 'LivekitInstanceRole' }] },
       },
 
       // ---- DNS (condición ManageDns: sólo si se dio una zona Route53) ----
@@ -548,8 +714,8 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
               TTL: '300',
               ResourceRecords: ['"v=DMARC1; p=quarantine"'],
             },
-            // A meet.<dom> y turn.meet.<dom> → EIP, SÓLO con Meet ON (ManageMeetDns). `AWS::NoValue`
-            // elimina el elemento con Meet OFF → el grupo de records queda idéntico al pre-Meet.
+            // A meet.<dom> y turn.meet.<dom> → app-box EIP (bundled) o media-box EIP (twobox),
+            // SÓLO cuando ManageMeetDns es true. `AWS::NoValue` elimina el elemento cuando no aplica.
             {
               'Fn::If': [
                 'ManageMeetDns',
@@ -557,7 +723,11 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
                   Name: { 'Fn::Sub': 'meet.${DomainName}' },
                   Type: 'A',
                   TTL: '300',
-                  ResourceRecords: [{ Ref: 'ElasticIP' }],
+                  ResourceRecords: [
+                    {
+                      'Fn::If': ['EnableTwobox', { Ref: 'LivekitElasticIP' }, { Ref: 'ElasticIP' }],
+                    },
+                  ],
                 },
                 { Ref: 'AWS::NoValue' },
               ],
@@ -569,7 +739,11 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
                   Name: { 'Fn::Sub': 'turn.meet.${DomainName}' },
                   Type: 'A',
                   TTL: '300',
-                  ResourceRecords: [{ Ref: 'ElasticIP' }],
+                  ResourceRecords: [
+                    {
+                      'Fn::If': ['EnableTwobox', { Ref: 'LivekitElasticIP' }, { Ref: 'ElasticIP' }],
+                    },
+                  ],
                 },
                 { Ref: 'AWS::NoValue' },
               ],
@@ -579,7 +753,10 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
       },
     },
     Outputs: {
-      PublicIp: { Description: 'IP pública (apuntá el A/MX acá)', Value: { Ref: 'ElasticIP' } },
+      PublicIp: {
+        Description: 'IP pública del app-box (mail/webmail/MX; meet/turn en modo bundled)',
+        Value: { Ref: 'ElasticIP' },
+      },
       InstanceId: { Value: { Ref: 'Instance' } },
       VpcId: { Value: { 'Fn::If': ['CreateNetwork', { Ref: 'VPC' }, { Ref: 'ExistingVpcId' }] } },
       S3Bucket: {
@@ -592,40 +769,72 @@ export function buildStackTemplate(userData?: string): Record<string, unknown> {
         Description: 'Región del bucket (para el provider S3 vía rol del EC2)',
         Value: { Ref: 'AWS::Region' },
       },
+      MediaPublicIp: {
+        Condition: 'EnableTwobox',
+        Description: 'IP pública del media-box (meet.<dom> / turn.meet.<dom> en modo twobox)',
+        Value: { Ref: 'LivekitElasticIP' },
+      },
       MeetUrl: {
-        Condition: 'EnableMeet',
-        Description: 'URL pública de Bifrost Meet (apuntá meet.<dom> y turn.meet.<dom> a la IP)',
+        Condition: 'EnableAnyMeet',
+        Description:
+          'URL pública de Bifrost Meet (apuntá meet.<dom> y turn.meet.<dom> a la IP correcta)',
         Value: { 'Fn::Sub': 'https://meet.${DomainName}' },
       },
     },
   };
 
-  // Si nos dan el cloud-init, lo EMBEBEMOS (literal) y quitamos el parámetro UserData: un parámetro
-  // String de CFN tope a 4096 chars y el script real son ~5KB. El template body sí admite el tamaño.
+  // Si nos dan el cloud-init del app-box, lo EMBEBEMOS (literal) y quitamos el parámetro UserData:
+  // un parámetro String de CFN tope a 4096 chars y el script real son ~5KB. El template body sí admite.
+  // El cloud-init del media-box (modo twobox) se embebe en el recurso LivekitInstance.
+  const resources = template.Resources as Record<string, { Properties: Record<string, unknown> }>;
   if (userData !== undefined) {
     const params = template.Parameters as Record<string, unknown>;
     delete params.UserData;
-    const resources = template.Resources as Record<string, { Properties: Record<string, unknown> }>;
-    resources.Instance.Properties.UserData = { 'Fn::Base64': embedUserData(userData) };
+    resources.Instance.Properties.UserData = {
+      'Fn::Base64': embedUserData(userData, {
+        marker: MEET_EIP_MARKER,
+        eipResource: 'ElasticIP',
+        condition: 'EnableBundledMeet',
+      }),
+    };
+    // CRÍTICO: borrado el parámetro `UserData`, `LivekitInstance.UserData` (que lo referenciaba) quedaría
+    // con un `Ref: UserData` COLGANTE. CFN valida los Ref aunque el recurso sea CONDICIONAL (EnableTwobox) →
+    // rechazaría TODO deploy (incluso no-twobox). Si no se embebe el media user-data, placeholder literal. [B-HIGH]
+    if (livekitUserData === undefined) {
+      resources.LivekitInstance.Properties.UserData = { 'Fn::Base64': '' };
+    }
+  }
+  if (livekitUserData !== undefined) {
+    resources.LivekitInstance.Properties.UserData = {
+      'Fn::Base64': embedUserData(livekitUserData, {
+        marker: LIVEKIT_EIP_MARKER,
+        eipResource: 'LivekitElasticIP',
+        condition: 'EnableTwobox',
+      }),
+    };
   }
 
   return template;
 }
 
 /**
- * Embebe el user-data en el template. Si contiene el marcador de la EIP (Meet ON), lo sustituye por
- * `GetAtt ElasticIP.PublicIp` vía **`Fn::Join`** — NO `Fn::Sub`: `Fn::Sub` interpolaría TODOS los
+ * Embebe el user-data en el template. Si contiene el marcador de la EIP, lo sustituye por
+ * `GetAtt <eipResource>.PublicIp` vía **`Fn::Join`** — NO `Fn::Sub`: `Fn::Sub` interpolaría TODOS los
  * `${VAR}` del bash del cloud-init (cada variable rompería salvo escaparla `${!VAR}`, frágil). `Fn::Join`
- * concatena las partes literales SIN tocar el `$`. Misma propiedad que el diseño exige: la IP la inyecta
- * CFN desde la EIP asignada (NO IMDS — el EIPAssociation asocia DESPUÉS de que user-data señaliza, así
- * que IMDS devolvería la IP efímera de launch). `GetAtt ElasticIP.PublicIp` crea la dependencia
- * implícita Instance→ElasticIP, así que CFN asigna la EIP primero y su PublicIp ya se conoce. Sin
- * marcador (Meet OFF) → Base64 del literal, idéntico al embedding pre-Meet.
+ * concatena las partes literales SIN tocar el `$`. La IP la inyecta CFN desde la EIP asignada (NO IMDS —
+ * el EIPAssociation asocia DESPUÉS de que user-data señaliza, así que IMDS devolvería la IP efímera de
+ * launch). `GetAtt <eipResource>.PublicIp` crea la dependencia implícita Instance→EIP. Sin marcador →
+ * Base64 del literal.
  */
-function embedUserData(userData: string): unknown {
-  if (!userData.includes(MEET_EIP_MARKER)) return userData;
-  const parts = userData.split(MEET_EIP_MARKER);
-  const eip = { 'Fn::If': ['EnableMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''] };
+function embedUserData(
+  userData: string,
+  opts: { marker: string; eipResource: string; condition: string }
+): unknown {
+  if (!userData.includes(opts.marker)) return userData;
+  const parts = userData.split(opts.marker);
+  const eip = {
+    'Fn::If': [opts.condition, { 'Fn::GetAtt': [opts.eipResource, 'PublicIp'] }, ''],
+  };
   const joinList: unknown[] = [];
   parts.forEach((part, i) => {
     joinList.push(part);

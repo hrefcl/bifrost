@@ -52,6 +52,16 @@ describe('buildStackTemplate (CloudFormation)', () => {
     expect((buildStackTemplate() as unknown as TplView).Parameters.UserData).toBeDefined();
   });
 
+  it('embebido NO-twobox: LivekitInstance no deja un Ref:UserData COLGANTE al borrar el parámetro [B-HIGH]', () => {
+    // CFN valida los Ref aunque el recurso sea condicional (EnableTwobox). Si LivekitInstance conservara
+    // Ref:UserData tras borrar el parámetro, TODO deploy (incluso no-twobox) sería rechazado.
+    const emb = buildStackTemplate('#!/bin/bash\necho hola') as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+    };
+    expect(emb.Resources.LivekitInstance.Properties.UserData).toEqual({ 'Fn::Base64': '' });
+    expect(JSON.stringify(emb)).not.toContain('"Ref":"UserData"');
+  });
+
   it('los defaults de InstanceType e ImageId son arch-consistentes (deploy pelado no rompe) [D]', () => {
     // Un deploy sin wizard usa ambos defaults juntos: deben ser la MISMA arch o la instancia no bootea.
     const instType = (t.Parameters.InstanceType as { Default: string }).Default;
@@ -159,14 +169,17 @@ describe('buildStackTemplate (CloudFormation)', () => {
     });
   });
 
-  it('LiveKit externo: LivekitSecretParamName parametrizado, EnableExternalLivekit condicional, policy lee SSM + descifra vía SSM', () => {
-    // Por defecto (sin LiveKit externo) el parámetro está vacío y la policy no existe.
+  it('LiveKit externo/twobox: LivekitSecretParamName parametrizado, EnableLivekitSecret condicional, policy lee SSM + descifra vía SSM', () => {
+    // Por defecto (sin LiveKit externo/twobox) el parámetro está vacío y la policy no existe.
     expect(t.Parameters.LivekitSecretParamName).toMatchObject({ Default: '' });
-    expect(t.Conditions.EnableExternalLivekit).toEqual({
-      'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'LivekitSecretParamName' }, ''] }],
+    expect(t.Conditions.EnableLivekitSecret).toEqual({
+      'Fn::Or': [
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'external'] },
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+      ],
     });
     const pol = t.Resources.LivekitSecretAccessPolicy;
-    expect(pol?.Condition).toBe('EnableExternalLivekit');
+    expect(pol?.Condition).toBe('EnableLivekitSecret');
     expect(pol?.Properties.Roles).toEqual([{ Ref: 'InstanceRole' }]);
     const stmts = (
       pol?.Properties.PolicyDocument as {
@@ -255,24 +268,41 @@ describe('buildStackTemplate (CloudFormation)', () => {
 });
 
 describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
-  it('MeetMode param default disabled; conditions EnableMeet/ManageMeetDns presentes', () => {
+  it('MeetMode param default disabled; 4 valores incluyendo external/twobox', () => {
     expect(t.Parameters.MeetMode).toMatchObject({
       Default: 'disabled',
-      AllowedValues: ['enabled', 'disabled'],
+      AllowedValues: ['disabled', 'enabled', 'external', 'twobox'],
     });
-    expect(t.Conditions.EnableMeet).toEqual({ 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] });
-    // ManageMeetDns = hay zona Route53 Y Meet ON.
+    expect(t.Conditions.EnableBundledMeet).toEqual({
+      'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'],
+    });
+    expect(t.Conditions.EnableTwobox).toEqual({
+      'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'],
+    });
+    expect(t.Conditions.EnableAnyMeet).toEqual({
+      'Fn::Or': [
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'external'] },
+        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+      ],
+    });
+    // ManageMeetDns = hay zona Route53 Y Meet bundled/twobox (external gestiona su propio DNS).
     expect(t.Conditions.ManageMeetDns).toEqual({
       'Fn::And': [
         { 'Fn::Not': [{ 'Fn::Equals': [{ Ref: 'HostedZoneId' }, ''] }] },
-        { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+        {
+          'Fn::Or': [
+            { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'enabled'] },
+            { 'Fn::Equals': [{ Ref: 'MeetMode' }, 'twobox'] },
+          ],
+        },
       ],
     });
   });
 
-  it('2º SG (MeetSecurityGroup) condicional EnableMeet con EXACTAMENTE los puertos media (mínimos)', () => {
+  it('2º SG (MeetSecurityGroup) condicional EnableBundledMeet con EXACTAMENTE los puertos media (mínimos)', () => {
     const sg = t.Resources.MeetSecurityGroup;
-    expect(sg?.Condition).toBe('EnableMeet');
+    expect(sg?.Condition).toBe('EnableBundledMeet');
     const ingress = sg?.Properties.SecurityGroupIngress as {
       IpProtocol: string;
       FromPort: number;
@@ -311,14 +341,14 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
     expect(base.every((x) => x.IpProtocol === 'tcp')).toBe(true);
   });
 
-  it('la Instance asocia el 2º SG SOLO con Meet ON (AWS::NoValue lo elimina con Meet OFF)', () => {
+  it('la Instance asocia el 2º SG SOLO con Meet bundled (AWS::NoValue lo elimina con Meet OFF/twobox)', () => {
     expect(t.Resources.Instance?.Properties.SecurityGroupIds).toEqual([
       { Ref: 'SecurityGroup' },
-      { 'Fn::If': ['EnableMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
+      { 'Fn::If': ['EnableBundledMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
     ]);
   });
 
-  it('Route53 suma A meet. y turn.meet. (cond. ManageMeetDns con AWS::NoValue); base intacta', () => {
+  it('Route53 suma A meet. y turn.meet. (cond. ManageMeetDns) apuntando a EIP correcta; base intacta', () => {
     const records = t.Resources.DnsRecords?.Properties.RecordSets as Record<string, unknown>[];
     const meetRecords = records.filter((r) => typeof r === 'object' && r !== null && 'Fn::If' in r);
     expect(meetRecords).toHaveLength(2);
@@ -326,16 +356,27 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
       const branch = (r as { 'Fn::If': unknown[] })['Fn::If'];
       expect(branch[0]).toBe('ManageMeetDns');
       expect(branch[2]).toEqual({ Ref: 'AWS::NoValue' });
+      const record = branch[1] as { ResourceRecords: unknown[] };
+      // El target es condicional: media-box EIP en twobox, app-box EIP en bundled.
+      expect(record.ResourceRecords[0]).toEqual({
+        'Fn::If': ['EnableTwobox', { Ref: 'LivekitElasticIP' }, { Ref: 'ElasticIP' }],
+      });
     }
     // Los 5 records base (A mail, A webmail, MX, SPF, DMARC) siguen incondicionales.
     const baseRecords = records.filter((r) => !('Fn::If' in r));
     expect(baseRecords).toHaveLength(5);
   });
 
-  it('Output MeetUrl condicional EnableMeet', () => {
+  it('Output MeetUrl condicional EnableAnyMeet (bundled/external/twobox)', () => {
     const out = (t.Outputs.MeetUrl ?? {}) as { Condition?: string; Value?: unknown };
-    expect(out.Condition).toBe('EnableMeet');
+    expect(out.Condition).toBe('EnableAnyMeet');
     expect(out.Value).toEqual({ 'Fn::Sub': 'https://meet.${DomainName}' });
+  });
+
+  it('Output MediaPublicIp condicional EnableTwobox', () => {
+    const out = (t.Outputs.MediaPublicIp ?? {}) as { Condition?: string; Value?: unknown };
+    expect(out.Condition).toBe('EnableTwobox');
+    expect(out.Value).toEqual({ Ref: 'LivekitElasticIP' });
   });
 
   it('user-data CON marcador EIP → Fn::Join inyecta GetAtt ElasticIP.PublicIp (NO Fn::Sub, NO IMDS)', () => {
@@ -351,7 +392,7 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
     expect(sep).toBe('');
     // La EIP se inyecta como GetAtt condicional (no IMDS); el `$DOMAIN` bash queda LITERAL (no Fn::Sub).
     expect(parts[1]).toEqual({
-      'Fn::If': ['EnableMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''],
+      'Fn::If': ['EnableBundledMeet', { 'Fn::GetAtt': ['ElasticIP', 'PublicIp'] }, ''],
     });
     expect(parts[0] as string).toContain('MEET_EXTERNAL_IP="');
     expect(parts[2] as string).toContain('echo "$DOMAIN"'); // bash var intacta, NO interpolada
@@ -365,5 +406,101 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
       Resources: Record<string, { Properties: Record<string, unknown> }>;
     };
     expect(emb.Resources.Instance.Properties.UserData).toEqual({ 'Fn::Base64': script });
+  });
+});
+
+describe('buildStackTemplate — Bifrost Meet TWOBOX', () => {
+  const LIVEKIT_EIP_MARKER = '@@LIVEKIT_EXTERNAL_IP@@';
+
+  it('crea recursos dedicados del media-box condicionales a EnableTwobox', () => {
+    const tw = buildStackTemplate() as unknown as TplView;
+    expect(tw.Resources.LivekitSecurityGroup?.Condition).toBe('EnableTwobox');
+    expect(tw.Resources.LivekitElasticIP?.Condition).toBe('EnableTwobox');
+    expect(tw.Resources.LivekitInstance?.Condition).toBe('EnableTwobox');
+    expect(tw.Resources.LivekitEIPAssociation?.Condition).toBe('EnableTwobox');
+  });
+
+  it('el SG del media-box abre 443 + puertos media; NUNCA 7880', () => {
+    const tw = buildStackTemplate() as unknown as TplView;
+    const ingress = tw.Resources.LivekitSecurityGroup?.Properties.SecurityGroupIngress as {
+      FromPort: number;
+      IpProtocol: string;
+    }[];
+    const ports = ingress.map((r) => r.FromPort);
+    expect(ports).toContain(22);
+    expect(ports).toContain(443);
+    for (const p of [7881, 7882, 3478, 30000]) expect(ports).toContain(p);
+    expect(ports).not.toContain(7880);
+  });
+
+  it('el app-box NO asocia MeetSecurityGroup en twobox', () => {
+    const tw = buildStackTemplate() as unknown as TplView;
+    expect(tw.Resources.Instance?.Properties.SecurityGroupIds).toEqual([
+      { Ref: 'SecurityGroup' },
+      { 'Fn::If': ['EnableBundledMeet', { Ref: 'MeetSecurityGroup' }, { Ref: 'AWS::NoValue' }] },
+    ]);
+  });
+
+  it('el media-box usa un rol IAM PROPIO y MÍNIMO (no el del app-box) + CreationPolicy [B-HIGH]', () => {
+    const tw = buildStackTemplate() as unknown as TplView;
+    // Rol propio, NO el InstanceProfile del app-box (que tiene S3/SES/KMS).
+    expect(tw.Resources.LivekitInstance?.Properties.IamInstanceProfile).toEqual({
+      Ref: 'LivekitInstanceProfile',
+    });
+    expect(
+      (tw.Resources.LivekitInstance as unknown as { CreationPolicy?: unknown }).CreationPolicy
+    ).toBeTruthy();
+    // El rol propio existe, es condicional a twobox, y su policy es mínima: cfn-signal + ssm:GetParameter +
+    // kms:Decrypt, SIN S3/SES.
+    const role = tw.Resources.LivekitInstanceRole;
+    expect(role?.Condition).toBe('EnableTwobox');
+    const actions = JSON.stringify((role?.Properties as { Policies: unknown[] }).Policies);
+    expect(actions).toContain('cloudformation:SignalResource');
+    expect(actions).toContain('ssm:GetParameter');
+    expect(actions).toContain('kms:Decrypt');
+    expect(actions).not.toContain('s3:');
+    expect(actions).not.toContain('ses:');
+    expect(tw.Resources.LivekitInstanceProfile?.Condition).toBe('EnableTwobox');
+  });
+
+  it('el SG del media-box abre 80 (ACME) y 443, nunca 7880 [B#1]', () => {
+    const tw = buildStackTemplate() as unknown as TplView;
+    const ingress = (
+      tw.Resources.LivekitSecurityGroup?.Properties as {
+        SecurityGroupIngress: { FromPort: number }[];
+      }
+    ).SecurityGroupIngress;
+    const ports = ingress.map((r) => r.FromPort);
+    expect(ports).toContain(80);
+    expect(ports).toContain(443);
+    expect(ports).not.toContain(7880);
+  });
+
+  it('livekitUserData se embebe en LivekitInstance con Fn::Join de LivekitElasticIP', () => {
+    const mediaScript = `#!/bin/bash\nLIVEKIT_EIP="${LIVEKIT_EIP_MARKER}"`;
+    const emb = buildStackTemplate(undefined, mediaScript) as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+    };
+    const ud = emb.Resources.LivekitInstance.Properties.UserData as {
+      'Fn::Base64': { 'Fn::Join': unknown[] };
+    };
+    expect(ud['Fn::Base64']).toHaveProperty('Fn::Join');
+    const [sep, parts] = ud['Fn::Base64']['Fn::Join'] as [string, unknown[]];
+    expect(sep).toBe('');
+    expect(parts[1]).toEqual({
+      'Fn::If': ['EnableTwobox', { 'Fn::GetAtt': ['LivekitElasticIP', 'PublicIp'] }, ''],
+    });
+  });
+
+  it('con appUserData y livekitUserData se embeben ambos', () => {
+    const appScript = '#!/bin/bash\necho app';
+    const mediaScript = `#!/bin/bash\nLIVEKIT_EIP="${LIVEKIT_EIP_MARKER}"`;
+    const emb = buildStackTemplate(appScript, mediaScript) as unknown as TplView & {
+      Resources: Record<string, { Properties: Record<string, unknown> }>;
+      Parameters: Record<string, unknown>;
+    };
+    expect(emb.Parameters.UserData).toBeUndefined();
+    expect(emb.Resources.Instance.Properties.UserData).toHaveProperty('Fn::Base64');
+    expect(emb.Resources.LivekitInstance.Properties.UserData).toHaveProperty('Fn::Base64');
   });
 });

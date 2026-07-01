@@ -9,6 +9,7 @@ import { listVpcs, listSubnets } from './aws/vpc.js';
 import { listPublicHostedZones, matchHostedZone } from './aws/route53.js';
 import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
+import { buildLivekitUserData } from './meet/livekit-media-user-data.js';
 import { buildStackTemplate, templateToYaml, templateToJson } from './infra/stack-template.js';
 import { assembleStackParams, deriveBucketName, type WizardAnswers } from './wizard/params.js';
 import {
@@ -26,6 +27,10 @@ import {
   recommendInstanceFor,
   describeInstanceChoice,
   enforceMeetInstanceFloor,
+  LIVEKIT_CATALOG,
+  recommendLivekitInstanceFor,
+  describeLivekitInstanceChoice,
+  DEFAULT_LIVEKIT_INSTANCE,
   type InstanceTypeInfo,
 } from './catalog/instance-types.js';
 import { mailHostname, validateDomain } from './domain.js';
@@ -37,7 +42,11 @@ import {
   runSesSending,
 } from './ses/commands.js';
 import { sesParamName } from './ses/naming.js';
-import { livekitSecretParamName, validateExternalLivekitWsUrl } from './meet/livekit-external.js';
+import {
+  generateLivekitCredentials,
+  livekitSecretParamName,
+  validateExternalLivekitWsUrl,
+} from './meet/livekit-external.js';
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 const slug = (s: string): string => s.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
@@ -52,17 +61,31 @@ function argFlagValue(flag: string): string | undefined {
   return undefined;
 }
 
-function printDns(domain: string, ip: string, enableMeet = false): void {
+function printDns(
+  domain: string,
+  opts: { appIp: string; mediaIp?: string; meetMode: 'off' | 'bundled' | 'external' | 'twobox' }
+): void {
   const host = mailHostname(domain);
+  const meetIp =
+    opts.meetMode === 'twobox'
+      ? opts.mediaIp
+      : opts.meetMode === 'bundled'
+        ? opts.appIp
+        : undefined;
   console.log('\nCargá estos registros DNS (en tu zona del dominio):');
-  console.log(`  A     ${host}        → ${ip}`);
-  console.log(`  A     webmail.${domain} → ${ip}  (la UI web / TLS)`);
+  console.log(`  A     ${host}        → ${opts.appIp}`);
+  console.log(`  A     webmail.${domain} → ${opts.appIp}  (la UI web / TLS)`);
   console.log(`  MX    ${domain}      → ${host} (prioridad 10)`);
   console.log(`  TXT   ${domain}      → "v=spf1 mx ~all"`);
   console.log(`  TXT   _dmarc.${domain} → "v=DMARC1; p=quarantine"`);
-  if (enableMeet) {
-    console.log(`  A     meet.${domain}    → ${ip}  (Bifrost Meet / LiveKit)`);
-    console.log(`  A     turn.meet.${domain} → ${ip}  (TURN/STUN de Meet)`);
+  if (meetIp) {
+    console.log(`  A     meet.${domain}    → ${meetIp}  (Bifrost Meet / LiveKit)`);
+    console.log(`  A     turn.meet.${domain} → ${meetIp}  (TURN/STUN de Meet)`);
+  }
+  if (opts.meetMode === 'external') {
+    console.log(
+      '  (Meet EXTERNO: apuntá meet.<dom> y turn.meet.<dom> a la IP de tu LiveKit externo.)'
+    );
   }
   console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
 }
@@ -104,13 +127,19 @@ async function main(): Promise<void> {
   } else {
     mailboxes = (await number({ message: '¿Cuántos buzones/empleados?', default: 50 })) ?? 50;
   }
-  // Bifrost Meet (videollamadas LiveKit): 3 modos. OFF (default) | BUNDLED (LiveKit en ESTE EC2: 2º SG,
-  // ≥8 GiB RAM, ~+$25/mes) | EXTERNAL (apuntar a un LiveKit que ya tenés, p.ej. Cleverty: sin infra de
-  // media local, sólo firma tokens). No-interactivo: --meet-mode off|bundled|external, o los alias
-  // --enable-meet (=bundled) y --meet-external-url ... (=external). Default OFF.
+  // Bifrost Meet (videollamadas LiveKit): 4 modos. OFF (default) | BUNDLED (LiveKit en ESTE EC2:
+  // ≥8 GiB RAM, compite con el correo) | EXTERNAL (LiveKit ajeno, secret en SSM, sin infra local) |
+  // TWOBOX (2º EC2 dedicado a LiveKit: escala sin afectar el correo, ~doble de infra).
+  // No-interactivo: --meet-mode off|bundled|external|twobox, o los alias --enable-meet (=bundled) y
+  // --meet-external-url ... (=external). Default OFF.
   const meetModeFlag = argFlagValue('--meet-mode');
-  let meetMode: 'off' | 'bundled' | 'external';
-  if (meetModeFlag === 'off' || meetModeFlag === 'bundled' || meetModeFlag === 'external') {
+  let meetMode: 'off' | 'bundled' | 'external' | 'twobox';
+  if (
+    meetModeFlag === 'off' ||
+    meetModeFlag === 'bundled' ||
+    meetModeFlag === 'external' ||
+    meetModeFlag === 'twobox'
+  ) {
     meetMode = meetModeFlag;
   } else if (process.argv.includes('--enable-meet')) {
     meetMode = 'bundled';
@@ -126,6 +155,10 @@ async function main(): Promise<void> {
           value: 'bundled' as const,
         },
         {
+          name: 'Sí — LiveKit en un 2º EC2 DEDICADO (escala Meet sin afectar el correo, ~doble de infra)',
+          value: 'twobox' as const,
+        },
+        {
           name: 'Sí — apuntar a un LiveKit EXTERNO que ya tengo (URL WSS + key + secret; sin infra local)',
           value: 'external' as const,
         },
@@ -133,10 +166,15 @@ async function main(): Promise<void> {
       default: 'off',
     });
   }
-  const enableMeet = meetMode === 'bundled';
-  if (enableMeet) {
+  const enableMeetBundled = meetMode === 'bundled';
+  if (enableMeetBundled) {
     console.log(
-      '⚠ Meet self-hosted corre LiveKit en ESTE EC2: exige ≥8 GiB de RAM y sube el costo (instancia más grande + puertos media). Si vas a tener muchas llamadas, considerá el modo EXTERNAL.'
+      '⚠ Meet self-hosted corre LiveKit en ESTE EC2: exige ≥8 GiB de RAM y compite CPU/RAM con el correo. Si vas a tener muchas llamadas, considerá el modo TWOBOX o EXTERNAL.'
+    );
+  }
+  if (meetMode === 'twobox') {
+    console.log(
+      '⚠ Modo TWOBOX: levanta un 2º EC2 dedicado a LiveKit. Costo ~doble (2 EC2 + 2 EIP) pero el correo y las llamadas no compiten recursos.'
     );
   }
 
@@ -146,6 +184,12 @@ async function main(): Promise<void> {
   let meetExternal:
     | { wsUrl: string; apiUrl: string; apiKey: string; apiSecret: string; secretParamName: string }
     | undefined;
+  // Modo TWOBOX: el CLI genera key+secret y levanta un 2º EC2 dedicado a LiveKit.
+  let meetTwobox:
+    | { wsUrl: string; apiUrl: string; apiKey: string; apiSecret: string; secretParamName: string }
+    | undefined;
+  let livekitInstanceType: string | undefined;
+  let livekitInstanceInfo: InstanceTypeInfo | undefined;
   if (meetMode === 'external') {
     const wsUrlRaw =
       argFlagValue('--meet-external-url') ??
@@ -191,17 +235,69 @@ async function main(): Promise<void> {
     );
   }
 
+  // Modo TWOBOX: seleccionar tipo del media-box y generar credenciales compartidas.
+  if (meetMode === 'twobox') {
+    const lkCreds = generateLivekitCredentials();
+    const lkSecretParamName = livekitSecretParamName(domain);
+    const lkRec = recommendLivekitInstanceFor(8); // default guía: ~8 participantes
+    const lkInstanceFlag = argFlagValue('--livekit-instance-type');
+    const OTHER_LK_INSTANCE = '__other__';
+    if (lkInstanceFlag !== undefined && lkInstanceFlag.trim() !== '') {
+      livekitInstanceType = lkInstanceFlag.trim();
+      livekitInstanceInfo = LIVEKIT_CATALOG.find((i) => i.type === livekitInstanceType);
+    } else {
+      const picked = await select({
+        message: `Tipo de EC2 para el media-box LiveKit (recomendado: ${lkRec.instance.type})`,
+        choices: [
+          ...LIVEKIT_CATALOG.map((i) => ({
+            name: describeLivekitInstanceChoice(i),
+            value: i.type,
+          })),
+          {
+            name: 'Otro (escribir el tipo a mano — p.ej. c6g.2xlarge para muchas llamadas)',
+            value: OTHER_LK_INSTANCE,
+          },
+        ],
+        default: lkRec.instance.type,
+      });
+      if (picked === OTHER_LK_INSTANCE) {
+        livekitInstanceType = (
+          await input({
+            message:
+              'Tipo EC2 exacto para el media-box (arm64/Graviton lleva "g": c6g/c7g; x86: c6i…)',
+            default: lkRec.instance.type,
+          })
+        ).trim();
+      } else {
+        livekitInstanceType = picked;
+      }
+      livekitInstanceInfo = LIVEKIT_CATALOG.find((i) => i.type === livekitInstanceType);
+    }
+    meetTwobox = {
+      wsUrl: `wss://meet.${domain}`,
+      apiUrl: `https://meet.${domain}`,
+      apiKey: lkCreds.apiKey,
+      apiSecret: lkCreds.apiSecret,
+      secretParamName: lkSecretParamName,
+    };
+    const lkType = livekitInstanceType || DEFAULT_LIVEKIT_INSTANCE;
+    const lkConcurrent = livekitInstanceInfo?.meetConcurrent ?? '?';
+    console.log(
+      `✓ Modo TWOBOX: media-box ${lkType} con ~${String(lkConcurrent)} participantes. El secret irá a SSM cifrado.`
+    );
+  }
+
   // Selección de instancia: menú CURADO con costo + capacidad (buzones, y participantes de Meet si es
   // bundled), recomendando la MÁS CHICA que cubre los buzones elegidos. Con Meet bundled sólo se ofrecen
   // las aptas (≥8 GiB). "Otro" permite un tipo a mano (se respeta; si es bundled se aplica el piso de RAM).
   // No-interactivo: --instance-type <tipo>.
-  const recFor = recommendInstanceFor(mailboxes, enableMeet);
+  const recFor = recommendInstanceFor(mailboxes, enableMeetBundled);
   if (recFor.exceedsCatalog) {
     console.log(
-      `⚠ ${String(mailboxes)} buzones${enableMeet ? ' con Meet' : ''} superan el catálogo estándar; recomiendo la más grande (${recFor.instance.type}). Para más escala usá "Otro" (instancia mayor) o LiveKit externo.`
+      `⚠ ${String(mailboxes)} buzones${enableMeetBundled ? ' con Meet bundled' : ''} superan el catálogo estándar; recomiendo la más grande (${recFor.instance.type}). Para más escala usá "Otro" (instancia mayor), TWOBOX o EXTERNAL.`
     );
   }
-  const eligibleInstances = enableMeet
+  const eligibleInstances = enableMeetBundled
     ? ALLINONE_CATALOG.filter((i) => i.meetConcurrent > 0)
     : ALLINONE_CATALOG;
   const OTHER_INSTANCE = '__other__';
@@ -225,10 +321,10 @@ async function main(): Promise<void> {
     instanceInfo = ALLINONE_CATALOG.find((i) => i.type === instanceType);
   } else {
     const picked = await select({
-      message: `Tipo de EC2 (recomendado para ${String(mailboxes)} buzones${enableMeet ? ' + Meet' : ''}: ${recFor.instance.type})`,
+      message: `Tipo de EC2 (recomendado para ${String(mailboxes)} buzones${enableMeetBundled ? ' + Meet bundled' : ''}: ${recFor.instance.type})`,
       choices: [
         ...eligibleInstances.map((i) => ({
-          name: describeInstanceChoice(i, enableMeet),
+          name: describeInstanceChoice(i, enableMeetBundled),
           value: i.type,
         })),
         {
@@ -252,7 +348,7 @@ async function main(): Promise<void> {
   }
   // Piso de RAM para Meet bundled: sólo puede faltar por la vía "Otro"/flag fuera de catálogo (el menú ya
   // filtra a ≥8 GiB). Sube al piso si el tipo de catálogo es chico; avisa si es un tipo desconocido.
-  if (enableMeet) {
+  if (enableMeetBundled) {
     const floor = enforceMeetInstanceFloor(instanceType);
     if (floor.bumped) {
       console.log(`⚠ Meet self-hosted exige ≥8 GiB; subo ${instanceType} → ${floor.type}.`);
@@ -394,7 +490,7 @@ async function main(): Promise<void> {
     s3Bucket,
     adminMailbox,
     adminMailboxPassword,
-    enableMeet,
+    enableMeet: enableMeetBundled,
     // Meet externo → el box lee el apiSecret de SSM y cablea LIVEKIT_* al .env (sin container local).
     meetExternal: meetExternal
       ? {
@@ -404,9 +500,27 @@ async function main(): Promise<void> {
           secretParamName: meetExternal.secretParamName,
         }
       : undefined,
+    // Meet twobox → el app-box apunta al media-box y lee el apiSecret del mismo SSM.
+    meetTwobox: meetTwobox
+      ? {
+          wsUrl: meetTwobox.wsUrl,
+          apiUrl: meetTwobox.apiUrl,
+          apiKey: meetTwobox.apiKey,
+          secretParamName: meetTwobox.secretParamName,
+        }
+      : undefined,
     // SES on → el box instala el helper que lee la credencial SMTP de ESTE parámetro SSM.
     sesParamName: enableSes ? sesParamName(domain) : undefined,
   });
+  const livekitUserData = meetTwobox
+    ? buildLivekitUserData({
+        domain,
+        apiKey: meetTwobox.apiKey,
+        secretParamName: meetTwobox.secretParamName,
+        stackName,
+        region,
+      })
+    : undefined;
   const answers: WizardAnswers = {
     domain,
     instanceType,
@@ -417,13 +531,15 @@ async function main(): Promise<void> {
     existingSubnetId: orUndef(existingSubnetId),
     hostedZoneId: orUndef(hostedZoneId),
     sshCidr,
-    enableMeet,
-    meetExternal: meetExternal ? { secretParamName: meetExternal.secretParamName } : undefined,
+    meetMode,
+    livekitSecretParamName:
+      meetExternal?.secretParamName ?? meetTwobox?.secretParamName ?? undefined,
+    livekitInstanceType: meetTwobox ? livekitInstanceType : undefined,
     enableSes,
   };
   const params = assembleStackParams(answers);
   const file = `bifrost-stack-${slug(domain)}.yaml`;
-  writeFileSync(file, templateToYaml(buildStackTemplate(userData)));
+  writeFileSync(file, templateToYaml(buildStackTemplate(userData, livekitUserData)));
   console.log(`\n✓ CloudFormation escrito en ./${file}`);
   if (pem !== null) {
     const pemFile = `${keyName}.pem`;
@@ -431,8 +547,11 @@ async function main(): Promise<void> {
     console.log(`✓ Clave SSH privada en ./${pemFile} (0600) — guardala bien.`);
   }
 
+  const livekitInstanceMonthlyUsd = livekitInstanceInfo?.approxMonthlyUsd;
   const cost = estimateMonthlyCost({
     instanceMonthlyUsd,
+    secondInstanceMonthlyUsd: livekitInstanceMonthlyUsd,
+    secondPublicIpv4: meetMode === 'twobox',
     ebsGiB: useS3 ? 40 : 240,
     s3GiB: useS3 ? 200 : 0,
     dataTransferOutGiB: 50,
@@ -444,9 +563,19 @@ async function main(): Promise<void> {
     `\nCosto estimado ~$${String(cost.total)}/mes → ~$${String(cost.perMailbox)}/buzón ` +
       `(comercial a $7: ~$${String(mailboxes * 7)}/mes)`
   );
+  if (meetMode === 'twobox') {
+    console.log(
+      `  (TWOBOX: app-box ${instanceType} + media-box ${livekitInstanceType ?? DEFAULT_LIVEKIT_INSTANCE}; 2 EC2 + 2 EIP)`
+    );
+    if (livekitInstanceInfo === undefined) {
+      console.log(
+        `  ⚠ El media-box "${livekitInstanceType ?? ''}" está fuera del catálogo → su costo de EC2 NO está en el total de arriba (sí la EIP). Verificá el precio de ese tipo aparte.`
+      );
+    }
+  }
   if (instanceInfo === undefined) {
     console.log(
-      `  (Nota: "${instanceType}" está fuera del catálogo → el costo del EC2 es una REFERENCIA (${describeInstanceChoice(recFor.instance, enableMeet).split(' — ')[0]}); tu tipo puede costar distinto.)`
+      `  (Nota: "${instanceType}" está fuera del catálogo → el costo del EC2 app-box es una REFERENCIA (${describeInstanceChoice(recFor.instance, false).split(' — ')[0]}); tu tipo puede costar distinto.)`
     );
   }
 
@@ -456,29 +585,28 @@ async function main(): Promise<void> {
       default: false,
     });
     if (run) {
-      // Meet externo: publicar el apiSecret en SSM SecureString JUSTO antes del deploy (así existe cuando
-      // el user-data lo lea, y NO se toca SSM si el operador decide no correr — evita rotar un secret sin
-      // desplegar). [review B-MED] El SecureString cifra el valor con KMS; el rol del box lo descifra.
-      if (meetExternal) {
+      // Meet externo/twobox: publicar el apiSecret en SSM SecureString JUSTO antes del deploy (así existe
+      // cuando el user-data lo lea, y NO se toca SSM si el operador decide no correr).
+      const secretToUpload = meetExternal ?? meetTwobox;
+      if (secretToUpload) {
         await new SSMClient({ region }).send(
           new PutParameterCommand({
-            Name: meetExternal.secretParamName,
-            Value: meetExternal.apiSecret,
+            Name: secretToUpload.secretParamName,
+            Value: secretToUpload.apiSecret,
             Type: 'SecureString',
             Overwrite: true,
           })
         );
         console.log(
-          `✓ Secret del LiveKit externo guardado en SSM SecureString: ${meetExternal.secretParamName}`
+          `✓ Secret de LiveKit guardado en SSM SecureString: ${secretToUpload.secretParamName}`
         );
       }
       const cfn = new CloudFormationClient({ region });
       const action = await deployStack(cfn, {
         stackName,
-        // EMBEBER el userData (igual que el YAML entregable): sin él, el template conserva el parámetro
-        // requerido `UserData` que `params` ya no incluye → CFN falla; y con Meet el `Fn::Join`/EIP nunca
-        // se aplicaría (la inyección sólo ocurre al embeber). [B-HIGH F3.5]
-        templateBody: templateToJson(buildStackTemplate(userData)),
+        // EMBEBER ambos user-data (igual que el YAML entregable): sin ello, el template conserva el
+        // parámetro requerido `UserData` y el modo twobox no inyectaría la EIP del media-box. [B-HIGH]
+        templateBody: templateToJson(buildStackTemplate(userData, livekitUserData)),
         params,
       });
       console.log(`\nStack ${action}: ${stackName}. Esperando (puede tardar ~10–15 min)…`);
@@ -497,18 +625,30 @@ async function main(): Promise<void> {
       }
       if (status === 'CREATE_COMPLETE' || status === 'UPDATE_COMPLETE') {
         const out = await getStackOutputs(cfn, stackName);
-        console.log(`\n✓ Listo. IP pública: ${out.PublicIp ?? '(ver en la consola)'}`);
+        const appIp = out.PublicIp ?? '(ver en la consola)';
+        const mediaIp = out.MediaPublicIp;
+        console.log(`\n✓ Listo. IP pública app-box: ${appIp}`);
+        if (meetMode === 'twobox') {
+          console.log(`       IP pública media-box: ${mediaIp ?? '(ver en la consola)'}`);
+        }
         if (hostedZoneId !== '') {
+          const dnsExtras =
+            meetMode === 'bundled' || meetMode === 'twobox' ? '/meet/turn.meet' : '';
           console.log(
-            `  Los registros DNS (A/MX/webmail/SPF/DMARC${enableMeet ? '/meet/turn.meet' : ''}) se crearon en tu zona Route53.`
+            `  Los registros DNS (A/MX/webmail/SPF/DMARC${dnsExtras}) se crearon en tu zona Route53.`
           );
           console.log('  (El DKIM se genera en el servidor; lo agregás después.)');
         } else {
-          printDns(domain, out.PublicIp ?? 'TU_IP', enableMeet);
+          printDns(domain, { appIp, mediaIp, meetMode });
         }
-        if (enableMeet) {
+        if (meetMode === 'bundled') {
           console.log(
-            `\n📹 Bifrost Meet ACTIVO → ${out.MeetUrl ?? `https://meet.${domain}`} (apuntá meet. y turn.meet. a la IP).`
+            `\n📹 Bifrost Meet ACTIVO (bundled) → ${out.MeetUrl ?? `https://meet.${domain}`} (apuntá meet. y turn.meet. a la IP del app-box).`
+          );
+        }
+        if (meetMode === 'twobox') {
+          console.log(
+            `\n📹 Bifrost Meet ACTIVO (TWOBOX) → ${out.MeetUrl ?? `https://meet.${domain}`} (meet./turn.meet. apuntan al media-box; el app-box firma tokens).`
           );
         }
         if (meetExternal) {
@@ -557,14 +697,23 @@ async function main(): Promise<void> {
     }
   }
 
-  // No se corrió → instrucciones para que lo haga el usuario. Con LiveKit externo, el secret NO se subió a
-  // SSM (sólo se sube al desplegar) → el operador debe crearlo a mano antes de lanzar, o el box fail-closed.
-  if (meetExternal) {
+  // No se corrió → instrucciones para que lo haga el usuario. Con external/twobox, el secret NO se subió
+  // a SSM (sólo se sube al desplegar) → el operador debe crearlo a mano antes de lanzar, o fail-closed.
+  const livekitSecretSource = meetExternal ?? meetTwobox;
+  if (livekitSecretSource) {
+    const ssmName = livekitSecretSource.secretParamName;
     console.log(
-      '\n⚠ LiveKit externo: ANTES de lanzar el stack, guardá el apiSecret en SSM SecureString:'
+      '\n⚠ LiveKit: ANTES de lanzar el stack, guardá el apiSecret en SSM SecureString y seteá el parámetro'
     );
+    console.log(`   CFN LivekitSecretParamName='${ssmName}' al crear el stack. El secret:`);
     console.log(`   aws ssm put-parameter --type SecureString --overwrite --region ${region} \\`);
-    console.log(`     --name '${meetExternal.secretParamName}' --value '<TU_API_SECRET>'`);
+    if (meetTwobox) {
+      // En twobox el CLI GENERÓ el secret → hay que mostrar el valor REAL (única forma de recrear el param;
+      // es tu propio secret, en tu terminal, como el .pem). En external lo provee el operador (placeholder). [B-HIGH]
+      console.log(`     --name '${ssmName}' --value '${meetTwobox.apiSecret}'`);
+    } else {
+      console.log(`     --name '${ssmName}' --value '<TU_API_SECRET>'`);
+    }
     console.log('   (Si el parámetro no existe al boot, el box FALLA-CLOSED y Meet no arranca.)');
   }
   printInstructions(file, stackName, region);

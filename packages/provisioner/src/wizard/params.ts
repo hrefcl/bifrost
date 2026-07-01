@@ -17,7 +17,7 @@ export interface WizardAnswers {
   domain: string;
   instanceType: string;
   keyName: string;
-  /** Script cloud-init (lo arma buildUserData). */
+  /** Script cloud-init del app-box (lo arma buildUserData). */
   userData: string;
   useS3: boolean;
   s3BucketName?: string;
@@ -27,14 +27,15 @@ export interface WizardAnswers {
   sshCidr?: string;
   /** Zona Route53 para gestionar el DNS desde el stack (opt-in). Vacío = no tocar DNS. */
   hostedZoneId?: string;
-  /** Habilitar Bifrost Meet (LiveKit): 2º SG (puertos media), A meet./turn.meet., EIP→node_ip, piso. */
-  enableMeet?: boolean;
   /**
-   * Bifrost Meet con LiveKit EXTERNO (excluyente con enableMeet). NO monta infra de media local
-   * (MeetMode queda 'disabled'); sólo da al rol del box permiso de leer el apiSecret de ESTE param SSM
-   * (mismo nombre que escribe el orquestador y lee el user-data). Presencia = modo external.
+   * Modo Bifrost Meet: 'off' | 'bundled' (LiveKit en el mismo EC2) | 'external' (LiveKit ajeno, secret en
+   * SSM) | 'twobox' (2º EC2 dedicado a LiveKit). Default 'off'.
    */
-  meetExternal?: { secretParamName: string };
+  meetMode: 'off' | 'bundled' | 'external' | 'twobox';
+  /** Nombre del SSM SecureString con el apiSecret de LiveKit (modo external o twobox). */
+  livekitSecretParamName?: string;
+  /** Tipo de EC2 para el media-box (sólo modo twobox). */
+  livekitInstanceType?: string;
   /** Habilitar outbound SES: da al rol del box permiso de leer la credencial SMTP de SSM. */
   enableSes?: boolean;
 }
@@ -49,7 +50,10 @@ export function deriveBucketName(domain: string): string {
 }
 
 export function assembleStackParams(a: WizardAnswers): StackParameter[] {
-  return [
+  const meetModeCfn: string =
+    a.meetMode === 'off' ? 'disabled' : a.meetMode === 'bundled' ? 'enabled' : a.meetMode;
+  const needsLivekitSecret = a.meetMode === 'external' || a.meetMode === 'twobox';
+  const params: StackParameter[] = [
     { key: 'DomainName', value: a.domain },
     { key: 'InstanceType', value: a.instanceType },
     { key: 'ImageId', value: ubuntuAmiSsmPath(archForInstanceType(a.instanceType)) },
@@ -62,14 +66,22 @@ export function assembleStackParams(a: WizardAnswers): StackParameter[] {
     { key: 'S3Mode', value: a.useS3 ? 'create' : 'none' },
     { key: 'S3BucketName', value: a.useS3 ? (a.s3BucketName ?? deriveBucketName(a.domain)) : '' },
     { key: 'HostedZoneId', value: a.hostedZoneId ?? '' },
-    // 'enabled' activa el 2º SG (puertos media LiveKit), los A meet./turn.meet. y la inyección de la
-    // EIP en node_ip. Default 'disabled' → base byte-idéntica (instalación funciona igual con Meet OFF).
-    { key: 'MeetMode', value: a.enableMeet ? 'enabled' : 'disabled' },
+    // Modo Meet: disabled | enabled (bundled) | external | twobox.
+    { key: 'MeetMode', value: meetModeCfn },
     // SES on → el rol del box puede leer la credencial SMTP de ESTE parámetro (mismo nombre que escribe
     // el orquestador y lee el user-data). Vacío = outbound SES off.
     { key: 'SesParamName', value: a.enableSes ? sesParamName(a.domain) : '' },
-    // Meet con LiveKit EXTERNO → el rol del box puede leer el apiSecret de ESTE param SSM SecureString.
-    // Vacío = sin LiveKit externo (Meet off o bundled). Excluyente con MeetMode='enabled'.
-    { key: 'LivekitSecretParamName', value: a.meetExternal?.secretParamName ?? '' },
+    // LiveKit externo/twobox → el rol del box puede leer el apiSecret de ESTE param SSM SecureString.
+    {
+      key: 'LivekitSecretParamName',
+      value: needsLivekitSecret ? (a.livekitSecretParamName ?? '') : '',
+    },
   ];
+  if (a.meetMode === 'twobox' && a.livekitInstanceType) {
+    params.push(
+      { key: 'LivekitInstanceType', value: a.livekitInstanceType },
+      { key: 'LivekitImageId', value: ubuntuAmiSsmPath(archForInstanceType(a.livekitInstanceType)) }
+    );
+  }
+  return params;
 }

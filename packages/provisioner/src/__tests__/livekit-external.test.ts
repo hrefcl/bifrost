@@ -1,10 +1,29 @@
 import { describe, it, expect } from 'vitest';
-import { livekitSecretParamName, validateExternalLivekitWsUrl } from '../meet/livekit-external.js';
+import {
+  generateLivekitCredentials,
+  livekitSecretParamName,
+  validateExternalLivekitWsUrl,
+} from '../meet/livekit-external.js';
 
 describe('livekitSecretParamName', () => {
   it('deriva un nombre SSM determinístico y DNS-safe del dominio', () => {
     expect(livekitSecretParamName('acme.com')).toBe('/bifrost/acme-com/livekit-secret');
     expect(livekitSecretParamName('Sub.Empresa.CL')).toBe('/bifrost/sub-empresa-cl/livekit-secret');
+  });
+});
+
+describe('generateLivekitCredentials', () => {
+  it('genera apiKey con prefijo LK + 24 hex y apiSecret de 64 hex', () => {
+    const creds = generateLivekitCredentials();
+    expect(creds.apiKey).toMatch(/^LK[0-9a-f]{24}$/i);
+    expect(creds.apiSecret).toMatch(/^[0-9a-f]{64}$/i);
+  });
+
+  it('genera credenciales distintas en cada llamada', () => {
+    const a = generateLivekitCredentials();
+    const b = generateLivekitCredentials();
+    expect(a.apiKey).not.toBe(b.apiKey);
+    expect(a.apiSecret).not.toBe(b.apiSecret);
   });
 });
 
