@@ -138,6 +138,31 @@ de AMI por SDK (`aws/ssm.ts`) — todo superseded por CloudFormation (el stack E
 ES el teardown; el template resuelve el AMI por SSM). De `aws/compute.ts` queda SÓLO `ensureKeyPair`
 (lo único que CFN no hace: devolver el `.pem`). Se CONSERVAN user-data, preflight y cost-calc.
 
+## 3.quater — Bifrost Meet (opcional, LiveKit self-hosted)
+
+El wizard pregunta **"¿Habilitar Bifrost Meet?"** (o `--enable-meet`). Si se activa, el template gana un
+parámetro `MeetMode='enabled'` que, por **condición** (igual patrón que `CreateNetwork`/`CreateS3`):
+- crea un **2º Security Group** con SÓLO los puertos media de LiveKit (`7881/tcp`, `7882/udp`, `3478/udp`)
+  — el SG base queda **byte-idéntico**; se asocia al EC2 vía `Fn::If[EnableMeet, MeetSG, AWS::NoValue]`;
+- agrega los registros **A `meet.<dom>`** y **A `turn.meet.<dom>`** → la EIP (cond. a gestionar el DNS);
+- expone el output `MeetUrl`.
+
+El **piso de instancia** sube a `t4g.large` (≥8 GiB) para tipos del **catálogo** con <8 GiB; un tipo fuera
+del catálogo se respeta con un aviso (el wizard no puede verificar su RAM). LiveKit + mailserver no entran
+en 4 GiB (mismo EC2, ~+$25/mes). El **cloud-init** escribe `MEET_PROVISIONED=1` + `COMPOSE_PROFILES=meet`
++ `LIVEKIT_WS_URL` + `LIVEKIT_API_URL=http://livekit:7880` + claves LiveKit al `.env`, y fija `rtc.node_ip`
+= EIP en `livekit.yaml` (ICE determinista). El interruptor maestro en la app (`settings.enabled`) arranca
+en `false` → se enciende una vez con `PATCH /api/admin/meet/settings {"enabled":true}` (toggle visual: F3.7).
+
+> **Detalle clave — la EIP en `node_ip` NO sale de IMDS.** El `EIPAssociation` asocia DESPUÉS de que el
+> cloud-init señaliza (`CreationPolicy`), así que IMDS daría la IP **efímera** de launch. Se inyecta por
+> **CloudFormation** con `GetAtt ElasticIP.PublicIp`, concatenado al user-data vía **`Fn::Join`** (no
+> `Fn::Sub`: éste interpolaría todos los `${VAR}` del bash del cloud-init). El `GetAtt` crea la dependencia
+> implícita `Instance→ElasticIP`, así que CFN asigna la EIP primero y su IP ya se conoce al lanzar.
+
+Con `MeetMode='disabled'` (default) **nada de esto aplica**: el stack es idéntico al de sólo-correo.
+Guía de operación/troubleshooting: [`meet/INSTALL.md`](./meet/INSTALL.md).
+
 ## 4. Arquitectura del código
 
 Nuevo paquete **`packages/provisioner`** (TS, ESM, parte del monorepo pnpm):

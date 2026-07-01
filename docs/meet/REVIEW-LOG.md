@@ -147,9 +147,45 @@ Implementado siguiendo la CORRECCIÓN F3.4 del DESIGN (no las líneas viejas):
 **C confirmó** (cross-check): SG base byte-idéntico, MeetSG puertos exactos single-port, 7880 no expuesto, `AWS::NoValue` idiomático en SG-list y RecordSets, `embedUserData`/Fn::Join sin filtrar marcador, sed bien anclado (indent 2-space, delim `|`), `node_ip` válido v1.8.4 (`rtc.node_ip`→`RTCConfig.NodeIP`; cerrado por B en F3.4), `use_external_ip:false`+`node_ip` complementarios, floor + avisos CLI, Meet OFF stack efectivo = pre-Meet, DAG sin ciclo (ElasticIP→Instance→EIPAssociation). **`MEET_PROVISIONED=1` lo consume `app.ts:90`** como flag truthy (el "D-002" era nombre de sentinel de ejemplo, no valor) → sin mismatch, D-002 CERRADO.
 **Residual LOW (C, diferido)**: no se re-validó `node_ip` contra la imagen VIVA `livekit/livekit-server:v1.8.4` (fetch externo bloqueado en el gate); descansa en el HIGH F3.4 + DESIGN §8 + schema conocido — bajo riesgo. **Fix opcional (F3.6/CI)**: arrancar la imagen pinneada y validar el `livekit.yaml` resultante (`livekit-server --config` / validate).
 
+## F3.5 — COMMIT `29c7a5b` ✅ (B 10/10 · C 9/10 · D 9/10, 0 HIGH; 1 HIGH cerrado deploy path; D-002 cerrado)
+
+## F3.6 — docs de operación (en QA)
+- **`docs/meet/INSTALL.md`** (nuevo, doc del operador): 3 modos (bundled/externo/Cloud) · activar en el
+  provisioner (`--enable-meet`, piso t4g.large, +$25/mes) · tabla de puertos (7881/tcp+7882/udp+3478/udp,
+  7880 nunca público) · costos · **limitaciones/roadmap** (redes sólo-443 sin TURN/TLS:443, single-node,
+  grabación sólo Cloud/Egress) · apuntar a LiveKit externo/Cloud desde el admin · **checklist de prueba
+  manual** (DNS/TLS/join/screenshare/invitado externo/cierre) · **troubleshooting** · **rotación de claves**
+  (LIVEKIT_* + secret DB + ENCRYPTION_KEY→livekitSource:error) · registro de decisiones.
+- **`deploy/example-mailserver/README.md`**: sección "📹 (Opcional) Bifrost Meet" + fila troubleshooting.
+- **`docs/cli-provisioning-aws.md`**: §3.quater (MeetMode, 2º SG, DNS, piso, EIP-por-CFN-no-IMDS/Fn::Join).
+- **`README.md`** raíz: sección Bifrost Meet + link a INSTALL/DESIGN.
+- La Fase 0 funcional por pantalla ya existía en `docs/meet/functional/00-07`.
+
+### QA F3.6 (gate docs, ronda 1) — B cazó 6 errores factuales reales
+| Reviewer | Score | HIGH | Foco |
+|----------|-------|------|------|
+| B (Codex) | 5→re-QA | 6→0 | exactitud vs código (excelente) |
+| C (z/GLM) | re-QA | 1 | panel inexistente (deploy README) |
+| D (Kimi) | re-QA | 0 | panel inexistente (README/INSTALL §8-9) |
+
+**6 HIGH cerrados (docs reescritos con la verdad del código)**:
+- **B1 — interruptor maestro**: `meetEnabled()` (`token-service.ts:96`) exige `settings.enabled=true`, y el default es `false`; el provisioner setea env, NO el flag DB → tras `--enable-meet` Meet queda OFF. Documentado: encender con `PATCH /api/admin/meet/settings {enabled:true}` (toggle visual = F3.7-frontend). → **TD-MEET-PROVISION-ENABLED**.
+- **B2 — `wsUrl` vs `livekitApiUrl`**: el `wss://` va en `wsUrl`; `livekitApiUrl` se valida http/https (`isSafeS3Endpoint`) → un `wss://` ahí da 400. Payload §6 corregido + nota.
+- **B3 — revert incompleto**: borrar el secret limpia sólo key+secretEnc (cae a env), NO resetea `wsUrl`/`livekitApiUrl` → puede mezclar creds env con URL Cloud. §6 documenta resetear también las URLs.
+- **B4 — grabación NO implementada**: `recordingPolicy` siempre `disabled`, `buildGrants` nunca `roomRecord`, sin Egress; `autoRecord` es un flag sin efecto. §1/§5/§6/§10 corregidos (roadmap, no "Cloud graba").
+- **B5/C — deploy README**: prometía panel visual + "Configuración → Reuniones" inexistentes → hoy API admin, panel F3.7.
+- **B6/D — README raíz + INSTALL §8/§9**: idem panel → API del admin.
+- **B-MED piso**: matizado (catálogo<8 sube; fuera de catálogo se respeta con aviso). **B-LOW**: agregado `LIVEKIT_API_URL=http://livekit:7880` a la lista .env.
+
+**TD-MEET-PROVISION-ENABLED** (turnkey — PRÓXIMA MINI-FASE, no diferible; re-priorizado en auto-auditoría 2026-06-30): `--enable-meet` deja Meet **silenciosamente OFF** en la app (`settings.enabled=false` default) hasta un `PATCH enabled:true` manual — defecto turnkey (misión existencial), causa confusión 3AM. F3.5 (commiteado) aprobado por B/C/D sin cazarlo (miraron CFN/SG/EIP, no el gate app-level). **Fix (F3.5b, mini-fase con gate propio)**: `getStoredMeetSettings` defaultea `enabled=true` cuando `MEET_PROVISIONED` seteado + creds env presentes y NO hay override DB explícito (`v.enabled` en DB manda si existe → el admin puede apagar). Se ejecuta INMEDIATAMENTE tras commit F3.6.
+**TD-MEET-FLOOR-NONCATALOG** (LOW): `enforceMeetInstanceFloor` deja pasar tipos fuera de catálogo con <8 GiB (solo avisa; el DESIGN pedía "no bypasseable"). Endurecer con `DescribeInstanceTypes` (RAM real) en el wizard. Bajo riesgo (aviso + docs).
+
+**Ronda 2-3 (docs corregidos)**: **B** cazó 2 HIGH más (README "se activa" sin `PATCH enabled:true`; §6 revert `wsUrl:""` falso — `getStoredMeetSettings` usa `??`, un `""` persiste y deja `meetEnabled` false) → corregidos; ronda final **B 9/10 0 HIGH**, **D 9/10 APPROVE**, **C 0 HIGH** — todas las LOW aplicadas. *Nota infra*: los reviews de B (codex) se colgaban/mataban por un **codex HUÉRFANO de otra tarea** (`rediseno-admin-agenda`, review RBAC) comiendo memoria y serializando codex; matarlo lo resolvió.
+
+## F3.6 — COMMIT (docs) ✅ · B 9/10 · C 9/10 · D 9/10, 0 HIGH
+
 ## Próximos pasos
-1. **F3.5**: gate B/C/D ≥9/0 HIGH → commit.
-2. **F3.6** docs: instalación/puertos/costos/troubleshooting/limitaciones + checklist + README Meet.
-3. **F3.7-frontend**: panel admin LiveKit (requiere PR #30 mergeado + rebase Meet).
+1. **F3.5b — TD-MEET-PROVISION-ENABLED**: auto-enable al provisionar (código + gate B/C/D) — INMEDIATO.
+2. **F3.7-frontend**: panel admin LiveKit (requiere PR #30 mergeado + rebase Meet) — última fase.
 
 > Observación al PM (otro repo, fuera de scope): `cv_cloud_formation/LiveKit/` tiene `id_rsa.pem` commiteado y la API secret de LiveKit en claro en `livekit.sh` — conviene rotarlas.
