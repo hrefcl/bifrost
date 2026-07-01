@@ -45,6 +45,11 @@ export interface User {
   primaryEmail: string;
   displayName: string;
   role: 'user' | 'admin';
+  /**
+   * Permisos admin EFECTIVOS (RBAC F8): admin → catálogo completo; rol custom → sus permisos; si no,
+   * vacío. La UI usa esto para admitir al panel /admin y filtrar secciones. El backend re-valida igual.
+   */
+  adminPermissions: string[];
   avatarUrl?: string;
   /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
   username?: string;

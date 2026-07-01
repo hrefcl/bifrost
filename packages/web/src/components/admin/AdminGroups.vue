@@ -24,16 +24,20 @@ async function load() {
   loading.value = true;
   error.value = '';
   try {
-    const [g, a] = await Promise.all([
-      api.get<{ groups: Group[] }>('/admin/groups'),
-      api.get<{ accounts: AccountLite[] }>('/admin/accounts'),
-    ]);
+    const g = await api.get<{ groups: Group[] }>('/admin/groups');
     groups.value = g.data.groups;
-    // de-duplicar por userId (un user puede tener varias cuentas; el grupo es por usuario)
-    const seen = new Set<string>();
-    accounts.value = a.data.accounts.filter((acc) =>
-      seen.has(acc.userId) ? false : (seen.add(acc.userId), true)
-    );
+    // La lista de cuentas (para nombres de miembros y el selector) es BEST-EFFORT: requiere
+    // `accounts.manage`, que un delegado con sólo `groups.manage` NO tiene (RBAC F8). Si falla (403),
+    // los grupos igual se muestran; los miembros caen a sus iniciales/ID. No rompe la sección.
+    try {
+      const a = await api.get<{ accounts: AccountLite[] }>('/admin/accounts');
+      const seen = new Set<string>();
+      accounts.value = a.data.accounts.filter((acc) =>
+        seen.has(acc.userId) ? false : (seen.add(acc.userId), true)
+      );
+    } catch {
+      accounts.value = [];
+    }
   } catch {
     error.value = t('admin.groups.errLoad');
   } finally {

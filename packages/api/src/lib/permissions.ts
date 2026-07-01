@@ -25,7 +25,9 @@ export const PERMISSIONS = [
     label: 'Gestionar preferencias de calendario',
   },
   { key: 'scheduling.manage', category: 'Agenda', label: 'Gestionar la Agenda' },
-  { key: 'audit.view', category: 'Seguridad', label: 'Ver auditoría' },
+  // NOTA: cada permiso del catálogo DEBE mapear a una sección/ruta real; si no, un rol con sólo ese
+  // permiso entra a /admin y queda en blanco. Compliance es admin-only (sus rutas usan requireAdmin, no
+  // RBAC); para delegar auditoría/compliance habría que sumar el permiso Y gatear esas rutas + su sección.
 ] as const satisfies readonly PermissionDef[];
 
 export type PermissionKey = (typeof PERMISSIONS)[number]['key'];

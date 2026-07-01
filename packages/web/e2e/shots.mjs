@@ -13,6 +13,23 @@ const USER = {
   displayName: 'Admin Demo',
   primaryEmail: 'admin@aulion.app',
   role: 'admin',
+  adminPermissions: [
+    'accounts.manage',
+    'groups.manage',
+    'roles.manage',
+    'branding.manage',
+    'storage.manage',
+    'calendar.manage',
+    'scheduling.manage',
+  ],
+};
+// Delegado (rol custom): sólo gestiona grupos + roles → el sidebar debe mostrar sólo esas secciones.
+const DELEGATE = {
+  id: 'u2',
+  displayName: 'María Soto',
+  primaryEmail: 'maria.soto@aulion.app',
+  role: 'user',
+  adminPermissions: ['groups.manage', 'roles.manage'],
 };
 const BRANDING = {
   companyName: 'Aulion',
@@ -75,7 +92,7 @@ const ACCOUNTS = [
     displayName: 'Carla Díaz',
     role: 'user',
     customRoleId: 'r2',
-    customRoleName: 'Oficial de cumplimiento',
+    customRoleName: 'Gestor de agenda',
     isPrimary: true,
     status: 'active',
     quotaBytes: 25 * GB,
@@ -125,9 +142,9 @@ const ROLES = [
   },
   {
     id: 'r2',
-    name: 'Oficial de cumplimiento',
-    description: 'Acceso a compliance y auditoría.',
-    permissions: ['audit.view'],
+    name: 'Gestor de agenda',
+    description: 'Gestiona la Agenda de reuniones.',
+    permissions: ['scheduling.manage'],
     isSystem: false,
     createdAt: '',
     updatedAt: '',
@@ -154,7 +171,6 @@ const PERMISSIONS = [
     label: 'Gestionar preferencias de calendario',
   },
   { key: 'scheduling.manage', category: 'Agenda', label: 'Gestionar la Agenda' },
-  { key: 'audit.view', category: 'Seguridad', label: 'Ver auditoría' },
 ];
 const SCHED = [
   {
@@ -316,7 +332,7 @@ function json(route, body, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function mockApi(page, { publicSlug = 'ana' } = {}) {
+async function mockApi(page, { publicSlug = 'ana', user = USER } = {}) {
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname.replace(/^\/api/, '');
@@ -324,7 +340,7 @@ async function mockApi(page, { publicSlug = 'ana' } = {}) {
     if (p === '/setup/status') return json(route, { setupRequired: false });
     if (p === '/branding') return json(route, BRANDING);
     if (p === '/auth/refresh') return json(route, { accessToken: 'tok' });
-    if (p === '/auth/me') return json(route, USER);
+    if (p === '/auth/me') return json(route, user);
     if (p.startsWith('/compliance/pending')) return json(route, { pending: [] });
     // admin
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
@@ -514,6 +530,18 @@ const run = async () => {
   await shot(page, 'pub-404');
 
   await ctx.close();
+
+  // Delegado (rol custom con sólo groups.manage + roles.manage): el sidebar debe mostrar SÓLO Grupos
+  // y Roles y permisos (RBAC F8 — filtrado por permiso). Prueba que el router lo admite y filtra.
+  const dctx = await browser.newContext({
+    viewport: { width: 1280, height: 900 },
+    timezoneId: 'America/Santiago',
+  });
+  const dpage = await dctx.newPage();
+  await mockApi(dpage, { user: DELEGATE });
+  await dpage.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
+  await shot(dpage, 'admin-delegate');
+  await dctx.close();
 
   // Mobile (drawer admin)
   const m = await browser.newContext({

@@ -221,6 +221,31 @@ describe('admin RBAC (F8)', () => {
     await app.close();
   });
 
+  it('/auth/me expone adminPermissions (admite/filtra el panel en el cliente)', async () => {
+    const app = await buildTestApp();
+    const { headers: adminHeaders } = await seedAdmin(app);
+    const meAdmin = await app.inject({ method: 'GET', url: '/api/auth/me', headers: adminHeaders });
+    expect(meAdmin.statusCode).toBe(200);
+    expect(JSON.parse(meAdmin.body).adminPermissions).toContain('roles.manage');
+
+    const { headers: holderHeaders } = await seedRoleHolder(app, ['groups.manage']);
+    const meHolder = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: holderHeaders,
+    });
+    expect(JSON.parse(meHolder.body).adminPermissions).toEqual(['groups.manage']);
+
+    const { user } = await seedUserWithAccount({ email: 'plain@test.com' });
+    const mePlain = await app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(JSON.parse(mePlain.body).adminPermissions).toEqual([]);
+    await app.close();
+  });
+
   it('rol inexistente (customRoleId colgante) → permisos vacíos, sin crash', async () => {
     const app = await buildTestApp();
     const { user } = await seedUserWithAccount({ email: 'dangling@test.com' });

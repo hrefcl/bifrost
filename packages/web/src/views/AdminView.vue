@@ -13,6 +13,7 @@ import AdminRoles from '@/components/admin/AdminRoles.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
+import { useAuthStore } from '@/stores/auth';
 
 /**
  * Panel de administración (Roundcube administrable) con cuatro secciones:
@@ -119,6 +120,36 @@ const NAV_GROUPS: NavGroup[] = [
 function sectionOf(key: Tab): AdminSection {
   return SECTIONS.find((s) => s.key === key) ?? SECTIONS[0];
 }
+
+// ── Visibilidad por permiso (RBAC F8) ──
+// El admin real ve TODO. Un delegado ve sólo las secciones cuyo permiso posee (mismo criterio que el
+// default-deny del backend). `compliance` no tiene permiso en el catálogo → sólo admin (sus endpoints
+// /compliance/admin son admin-only).
+const auth = useAuthStore();
+const isAdmin = computed(() => auth.user?.role === 'admin');
+const myPerms = computed(() => new Set(auth.user?.adminPermissions ?? []));
+const SECTION_PERMISSION: Record<Tab, string | null> = {
+  accounts: 'accounts.manage',
+  groups: 'groups.manage',
+  roles: 'roles.manage',
+  branding: 'branding.manage',
+  storage: 'storage.manage',
+  preferences: 'calendar.manage',
+  scheduling: 'scheduling.manage',
+  compliance: null, // admin-only (sin permiso delegable)
+};
+function canSee(key: Tab): boolean {
+  if (isAdmin.value) return true;
+  const perm = SECTION_PERMISSION[key];
+  return perm != null && myPerms.value.has(perm);
+}
+const canManageRoles = computed(() => isAdmin.value || myPerms.value.has('roles.manage'));
+// Grupos del nav ya filtrados a lo que el usuario puede ver (grupo vacío se oculta).
+const visibleNavGroups = computed(() =>
+  NAV_GROUPS.map((g) => ({ label: g.label, keys: g.keys.filter(canSee) })).filter(
+    (g) => g.keys.length > 0
+  )
+);
 // Contador por sección (badge del nav). Sólo donde el dato ya está cargado; undefined = sin badge.
 const navCounts = computed<Partial<Record<Tab, number>>>(() => ({
   accounts: accounts.value.length || undefined,
@@ -680,19 +711,27 @@ function usagePct(a: AdminAccount): number {
 }
 
 onMounted(async () => {
+  // Si la sección inicial no es visible para este usuario (delegado sin accounts.manage), saltar a la
+  // primera sección que sí puede ver.
+  if (!canSee(tab.value)) {
+    const first = SECTIONS.find((s) => canSee(s.key));
+    if (first) tab.value = first.key;
+  }
   window.addEventListener('keydown', onKeydown);
   mq = window.matchMedia('(max-width: 900px)');
   isNarrow.value = mq.matches;
   mq.addEventListener('change', onMq);
+  // Cargas por permiso: un delegado sólo pide lo que puede ver (evita 403 ruidosos). El admin ve todo.
   await Promise.all([
-    loadAccounts(),
-    loadRoles(),
-    loadGroupCount(),
-    loadBranding(),
-    loadStorage(),
-    loadStorageDefaults(),
-    loadApiBuild(),
-    loadUpdate(),
+    canSee('accounts') ? loadAccounts() : Promise.resolve(),
+    canManageRoles.value ? loadRoles() : Promise.resolve(),
+    canSee('groups') ? loadGroupCount() : Promise.resolve(),
+    canSee('branding') ? loadBranding() : Promise.resolve(),
+    canSee('storage') ? loadStorage() : Promise.resolve(),
+    canSee('storage') ? loadStorageDefaults() : Promise.resolve(),
+    // /admin/version y /admin/update/check son admin-only.
+    isAdmin.value ? loadApiBuild() : Promise.resolve(),
+    isAdmin.value ? loadUpdate() : Promise.resolve(),
   ]);
 });
 onBeforeUnmount(() => {
@@ -792,7 +831,7 @@ async function save() {
           <span>{{ t('admin.title') }}</span>
         </div>
         <div class="admin-navscroll">
-          <div v-for="g in NAV_GROUPS" :key="g.label" class="admin-navgroup">
+          <div v-for="g in visibleNavGroups" :key="g.label" class="admin-navgroup">
             <p class="admin-navgroup-label">{{ t(g.label) }}</p>
             <ul class="admin-navlist">
               <li v-for="key in g.keys" :key="key">
@@ -996,7 +1035,7 @@ async function save() {
                     <p v-if="accError" class="err-text">{{ accError }}</p>
                   </section>
 
-                  <section class="card user-panel">
+                  <section v-if="canManageRoles" class="card user-panel">
                     <h3>{{ t('admin.users.roleSection') }}</h3>
                     <p v-if="selectedUser.role === 'admin'" class="muted">
                       {{ t('admin.users.adminRoleNote') }}

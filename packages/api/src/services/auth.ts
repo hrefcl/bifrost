@@ -1,5 +1,6 @@
 import { createImapClient } from './mail-transport.js';
 import { User, type IUser } from '../models/User.js';
+import { resolveAdminAccess } from '../lib/authz.js';
 import { Account, type IAccount } from '../models/Account.js';
 import { redis } from '../config/redis.js';
 import { jwtAccessTtlSeconds } from '../config/env.js';
@@ -252,11 +253,13 @@ async function revokeTokenFamily(familyId: string): Promise<void> {
   await redis.del(fkey);
 }
 
-export function toLoginResponse(
+export async function toLoginResponse(
   user: IUser,
   account: IAccount,
   accessToken: string
-): LoginResponse {
+): Promise<LoginResponse> {
+  // Permisos admin efectivos (RBAC F8): así el cliente ya sabe, al loguear, si puede entrar a /admin.
+  const { permissions } = await resolveAdminAccess(user._id.toString());
   return {
     accessToken,
     expiresIn: jwtAccessTtlSeconds,
@@ -265,6 +268,7 @@ export function toLoginResponse(
       primaryEmail: user.primaryEmail,
       displayName: user.displayName,
       role: user.role,
+      adminPermissions: [...permissions],
       avatarUrl: user.avatarUrl,
       username: user.username,
       preferences: user.preferences,
