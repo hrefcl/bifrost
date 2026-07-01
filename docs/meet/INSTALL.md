@@ -54,16 +54,18 @@ Qué hace al activarlo:
   `MEET_PUBLIC_BASE_URL=https://webmail.<dom>`. Fija `rtc.node_ip` = Elastic IP (ICE determinista) en `livekit.yaml`.
 - **Sin Meet**: nada de lo anterior aplica; el stack es byte-idéntico al de sólo-correo.
 
-**Encendé el interruptor maestro (una vez).** El provisioner deja LiveKit corriendo y las credenciales por
-env, pero el flag de Meet en la app (`settings.enabled`) arranca en `false`. Activalo con:
+**Interruptor maestro — ya viene encendido.** Un deploy **provisionado** (`MEET_PROVISIONED=1`, que setea
+el provisioner con `--enable-meet`) arranca con Meet **ON** por default: no hace falta ningún paso extra.
+Si querés **apagarlo** (o volver a encenderlo), o si hiciste un deploy manual sin `MEET_PROVISIONED`, usá:
 
 ```http
-PATCH /api/admin/meet/settings   { "enabled": true }
+PATCH /api/admin/meet/settings   { "enabled": true }   # o false para apagar
 ```
 
-(autenticado como admin). El **toggle visual** para esto llega con F3.7-frontend. Recién con `enabled:true`
-el webmail ofrece Meet. Luego activás la videollamada **por tipo de evento / reserva** en la agenda (toggle
-"Reunión con video" en Scheduling) → el link se hornea en la reserva, el email y el ICS. Probá una reunión (§7).
+(autenticado como admin; el **toggle visual** llega con F3.7-frontend). Un `enabled` explícito en la DB
+manda sobre el default provisionado. Luego activás la videollamada **por tipo de evento / reserva** en la
+agenda (toggle "Reunión con video" en Scheduling) → el link se hornea en la reserva, el email y el ICS.
+Probá una reunión (§7).
 
 ---
 

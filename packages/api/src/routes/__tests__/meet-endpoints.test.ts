@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 // Mock del SDK LiveKit (hoisted): el token es un string fijo; createRoom/deleteRoom resuelven.
@@ -34,7 +34,7 @@ import {
 } from '../../../test/integration-helper.js';
 import { MeetRoom } from '../../models/MeetRoom.js';
 import { Booking } from '../../models/Booking.js';
-import { setMeetSettings } from '../../services/meet/settings.js';
+import { setMeetSettings, getStoredMeetSettings } from '../../services/meet/settings.js';
 import { User } from '../../models/User.js';
 import mongoose from 'mongoose';
 
@@ -602,5 +602,28 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
     expect(newSlug).not.toBe('rotateme123');
     const old = await app.inject({ method: 'GET', url: '/api/meet/public/rotateme123' });
     expect(old.statusCode).toBe(404);
+  });
+
+  // ---- F3.5b / TD-MEET-PROVISION-ENABLED: default de `enabled` en un deploy provisionado ----
+  describe('getStoredMeetSettings — default enabled turnkey', () => {
+    afterEach(() => {
+      delete process.env.MEET_PROVISIONED;
+    });
+
+    it('sin doc DB + MEET_PROVISIONED seteado → enabled=true (provisionado arranca ON, sin PATCH)', async () => {
+      process.env.MEET_PROVISIONED = '1';
+      expect((await getStoredMeetSettings()).enabled).toBe(true);
+    });
+
+    it('sin doc DB + MEET_PROVISIONED ausente → enabled=false (no provisionado, Meet OFF)', async () => {
+      delete process.env.MEET_PROVISIONED;
+      expect((await getStoredMeetSettings()).enabled).toBe(false);
+    });
+
+    it('enabled:false EXPLÍCITO en DB manda sobre el default provisionado (el admin puede apagar Meet)', async () => {
+      process.env.MEET_PROVISIONED = '1';
+      await setMeetSettings({ enabled: false });
+      expect((await getStoredMeetSettings()).enabled).toBe(false);
+    });
   });
 });

@@ -118,9 +118,9 @@ bifrost-provision --enable-meet
 Eso sube la instancia a `t4g.large` (≥8 GiB, ~+$25/mes en el mismo EC2) si elegiste un tipo del catálogo
 más chico — un tipo fuera del catálogo se respeta con un aviso (asegurate ≥8 GiB). Abre 3 puertos media
 (`7881/tcp`, `7882/udp`, `3478/udp`) y agrega los DNS `A meet.<dominio>` y `A turn.meet.<dominio>` → tu IP.
-Después encendé el interruptor maestro una vez (`PATCH /api/admin/meet/settings {"enabled":true}` como
-admin — el toggle visual llega con F3.7-frontend) y activás la videollamada por tipo de evento/reserva en
-la agenda (toggle "Reunión con video").
+Un deploy provisionado arranca con Meet **ON** (no hace falta encenderlo a mano; se apaga con `PATCH
+/api/admin/meet/settings {"enabled":false}` si querés). Después activás la videollamada por tipo de
+evento/reserva en la agenda (toggle "Reunión con video").
 
 ¿Ya tenés un LiveKit propio o querés LiveKit **Cloud**? Apuntalo por la **API del admin** (`wsUrl` +
 API key/secret + `POST /api/admin/meet/test`) — el panel visual es F3.7-frontend. Guía completa:

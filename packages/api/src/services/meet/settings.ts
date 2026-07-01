@@ -41,6 +41,23 @@ export const DEFAULT_STORED_MEET_SETTINGS: StoredMeetSettings = {
 };
 
 /**
+ * Default del interruptor maestro `enabled` cuando el admin NUNCA lo fijó en la DB (TD-MEET-PROVISION-ENABLED).
+ * Turnkey: si el deploy fue **provisionado** para Meet (`MEET_PROVISIONED` seteado por el provisioner al
+ * elegir `--enable-meet`), Meet arranca ENCENDIDO — el operador no tiene que hacer un PATCH extra. Sin
+ * provisionar, arranca apagado. Un `enabled` EXPLÍCITO en la DB (true o false) SIEMPRE manda sobre esto
+ * (el admin puede apagar Meet en un box provisionado). `meetEnabled` igual gatea por creds+wsUrl, así que
+ * esto solo afecta el default del flag, no la seguridad.
+ *
+ * Nota (review C-F3.5b): el primer PATCH que OMITA `enabled` materializa este default a `enabled:true`
+ * en la DB (el merge `{...current}` lee el default provisionado) → a partir de ahí queda explícito.
+ * No es bug: es el mismo patrón turnkey ya existente para `wsUrl`/env; el admin retiene control con
+ * `PATCH enabled:false`.
+ */
+function provisionedEnabledDefault(): boolean {
+  return (process.env.MEET_PROVISIONED ?? '').trim().length > 0;
+}
+
+/**
  * Lee la config persistida (interna, con el secret cifrado). `wsUrl`/`publicBaseUrl` defaultean al env
  * (deploy-time) si el admin no los fijó. Devuelve SIEMPRE un objeto válido (defaults si no hay doc).
  */
@@ -50,7 +67,8 @@ export async function getStoredMeetSettings(): Promise<StoredMeetSettings> {
   } | null>();
   const v = doc?.value ?? {};
   const out: StoredMeetSettings = {
-    enabled: v.enabled ?? DEFAULT_STORED_MEET_SETTINGS.enabled,
+    // Sin valor explícito en DB: ON si el deploy fue provisionado para Meet (turnkey), OFF si no.
+    enabled: v.enabled ?? provisionedEnabledDefault(),
     wsUrl: v.wsUrl ?? process.env.LIVEKIT_WS_URL ?? DEFAULT_STORED_MEET_SETTINGS.wsUrl,
     publicBaseUrl:
       v.publicBaseUrl ?? process.env.MEET_PUBLIC_BASE_URL ?? DEFAULT_STORED_MEET_SETTINGS.publicBaseUrl,

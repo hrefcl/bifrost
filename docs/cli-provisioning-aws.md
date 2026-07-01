@@ -151,8 +151,9 @@ El **piso de instancia** sube a `t4g.large` (≥8 GiB) para tipos del **catálog
 del catálogo se respeta con un aviso (el wizard no puede verificar su RAM). LiveKit + mailserver no entran
 en 4 GiB (mismo EC2, ~+$25/mes). El **cloud-init** escribe `MEET_PROVISIONED=1` + `COMPOSE_PROFILES=meet`
 + `LIVEKIT_WS_URL` + `LIVEKIT_API_URL=http://livekit:7880` + claves LiveKit al `.env`, y fija `rtc.node_ip`
-= EIP en `livekit.yaml` (ICE determinista). El interruptor maestro en la app (`settings.enabled`) arranca
-en `false` → se enciende una vez con `PATCH /api/admin/meet/settings {"enabled":true}` (toggle visual: F3.7).
+= EIP en `livekit.yaml` (ICE determinista). Como `MEET_PROVISIONED` queda seteado, el interruptor maestro
+en la app (`settings.enabled`) arranca en `true` por default (turnkey) — se puede apagar con `PATCH
+/api/admin/meet/settings {"enabled":false}` (toggle visual: F3.7).
 
 > **Detalle clave — la EIP en `node_ip` NO sale de IMDS.** El `EIPAssociation` asocia DESPUÉS de que el
 > cloud-init señaliza (`CreationPolicy`), así que IMDS daría la IP **efímera** de launch. Se inyecta por

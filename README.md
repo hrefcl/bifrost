@@ -61,10 +61,10 @@ admin y cuenta de correo. (En un deploy ya provisionado, el primer usuario que s
 
 Videollamadas self-hosted con **LiveKit**, integradas a la agenda y el correo, en el **mismo** servidor
 (sin SaaS, sin 2º EC2). **Opcional y modular**: la instalación funciona igual con Meet apagado. El
-provisioner (`bifrost-provision --enable-meet`) levanta la infra (LiveKit, puertos, DNS) y luego se
-enciende el interruptor maestro una vez (`PATCH /api/admin/meet/settings {"enabled":true}`; toggle visual
-= F3.7-frontend). También podés apuntar a un LiveKit externo / **Cloud** por la API del admin. UI estilo
-Google Meet, compartir pantalla, links en las reservas. Guía completa:
+provisioner (`bifrost-provision --enable-meet`) levanta la infra (LiveKit, puertos, DNS) y deja Meet
+**encendido** (un deploy provisionado arranca ON; se puede apagar por la API del admin). También podés
+apuntar a un LiveKit externo / **Cloud** por la API del admin. UI estilo Google Meet, compartir pantalla,
+links en las reservas. Guía completa:
 [`docs/meet/INSTALL.md`](docs/meet/INSTALL.md).
 
 ## Despliegue
