@@ -558,6 +558,14 @@ const run = async () => {
     .catch(() => undefined);
   await mp.waitForTimeout(350);
   await shot(mp, 'admin-mobile-drawer');
+  // Responsive: ficha en móvil. Reset con goto fresco (en móvil el drawer arranca cerrado).
+  await mp.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
+  await mp
+    .locator('[data-testid="user-row-a2"]')
+    .click()
+    .catch(() => undefined);
+  await mp.waitForTimeout(250);
+  await shot(mp, 'admin-mobile-detail');
   await mp.goto(`${BASE}/u/ana`, { waitUntil: 'networkidle' });
   await shot(mp, 'pub-profile-mobile');
   await m.close();

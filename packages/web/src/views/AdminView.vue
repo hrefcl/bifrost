@@ -1041,7 +1041,11 @@ async function save() {
                       {{ t('admin.users.adminRoleNote') }}
                     </p>
                     <div v-else class="role-assign">
-                      <select v-model="assignRoleId" class="adminput">
+                      <select
+                        v-model="assignRoleId"
+                        class="adminput"
+                        :aria-label="t('admin.users.roleSection')"
+                      >
                         <option value="">{{ t('admin.users.noRole') }}</option>
                         <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
                       </select>
