@@ -156,12 +156,24 @@ export function archForInstanceType(type: string): CpuArch {
 }
 
 /**
- * Catálogo CURADO para el media-box de Bifrost Meet (modo twobox). LiveKit SFU es CPU-bound durante las
- * llamadas, así que convienen familias NO burstable (c6g/c7g) para carga sostenida. El default `t4g.large`
- * es económico y suficiente para llamadas chicas; para muchas llamadas simultáneas se recomienda escalar
- * a c6g/c7g. Los precios son aproximados (on-demand Linux, us-east-1).
+ * Catálogo CURADO para el media-box de Bifrost Meet (modo twobox). FILOSOFÍA: "separar, NO duplicar" — si
+ * bundled corría mail + LiveKit juntos en 1× t4g.large (8 GiB), al SEPARAR cada mitad es más liviana → el
+ * media-box (SÓLO LiveKit, ~1-2 GiB) entra cómodo en `t4g.medium` (4 GiB, ~$24). Así el 2-box mínimo =
+ * 2× t4g.medium (~$48) ≈ el costo de 1× t4g.large bundled, pero con la media separada del correo. Default
+ * `t4g.medium` (MÍNIMO). LiveKit SFU es CPU-bound: para MUCHAS llamadas sostenidas se escala a t4g.large o
+ * c6g/c7g (no burstable). Precios aproximados (on-demand Linux, us-east-1).
  */
 export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
+  {
+    type: 't4g.medium',
+    vcpu: 2,
+    memGiB: 4,
+    arch: 'arm64',
+    approxMonthlyUsd: 24,
+    maxMailboxes: 0, // no aplica al media-box
+    meetConcurrent: 8,
+    note: 'MÍNIMO — 2-box económico, llamadas chicas/ocasionales (LiveKit solo pide ~1 GiB; 4 GiB alcanzan).',
+  },
   {
     type: 't4g.large',
     vcpu: 2,
@@ -170,7 +182,7 @@ export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
     approxMonthlyUsd: 49,
     maxMailboxes: 0, // no aplica al media-box
     meetConcurrent: 12,
-    note: 'Económico — PYME con llamadas chicas (burstable; para carga sostenida usá c6g).',
+    note: 'Holgado — más margen de RAM (burstable; para carga sostenida usá c6g/c7g).',
   },
   {
     type: 'c6g.large',
@@ -204,7 +216,7 @@ export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
   },
 ];
 
-export const DEFAULT_LIVEKIT_INSTANCE = 't4g.large';
+export const DEFAULT_LIVEKIT_INSTANCE = 't4g.medium';
 
 /** Etiqueta humana para el menú del media-box. */
 export function describeLivekitInstanceChoice(i: InstanceTypeInfo): string {
