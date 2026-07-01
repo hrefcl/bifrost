@@ -241,19 +241,24 @@ describe('buildStackTemplate — Bifrost Meet (F3.5)', () => {
       ToPort: number;
       CidrIp: string;
     }[];
-    // Exactamente 3 reglas: 7881/tcp, 7882/udp, 3478/udp. NUNCA un rango 1-65535.
-    expect(ingress).toHaveLength(3);
+    // 4 reglas media: 7881/tcp, 7882/udp, 3478/udp (single) + 30000-40000/udp (rango relay TURN).
+    // NUNCA un rango 1-65535 abierto.
+    expect(ingress).toHaveLength(4);
     expect(ingress).toEqual(
       expect.arrayContaining([
         { IpProtocol: 'tcp', FromPort: 7881, ToPort: 7881, CidrIp: '0.0.0.0/0' },
         { IpProtocol: 'udp', FromPort: 7882, ToPort: 7882, CidrIp: '0.0.0.0/0' },
         { IpProtocol: 'udp', FromPort: 3478, ToPort: 3478, CidrIp: '0.0.0.0/0' },
+        { IpProtocol: 'udp', FromPort: 30000, ToPort: 40000, CidrIp: '0.0.0.0/0' },
       ])
     );
-    // Cada regla es un solo puerto (FromPort===ToPort) — sin rangos amplios.
-    for (const r of ingress) expect(r.FromPort).toBe(r.ToPort);
+    // Los puertos fijos son single (FromPort===ToPort); el único rango es el relay de TURN (acotado, no 1-65535).
+    for (const r of ingress) {
+      if (r.FromPort === 30000) expect(r.ToPort).toBe(40000);
+      else expect(r.FromPort).toBe(r.ToPort);
+    }
     // El export coincide con lo que arma el SG.
-    expect(MEET_INGRESS_PORTS.map((p) => p.FromPort)).toEqual([7881, 7882, 3478]);
+    expect(MEET_INGRESS_PORTS.map((p) => p.FromPort)).toEqual([7881, 7882, 3478, 30000]);
   });
 
   it('el SG BASE queda BYTE-IDÉNTICO con Meet (sin puertos media ni UDP); 7880 jamás expuesto', () => {
