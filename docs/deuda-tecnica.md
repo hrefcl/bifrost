@@ -456,3 +456,26 @@ un restart → postfix intentó puerto 25 → AWS lo bloquea → todo `deferred`
   la cadena de altura flex (`.cal` → `.cal-body` → `.cal-grid` → FullCalendar height:100%) y el pulido fino
   vs la referencia Google. Additivo/no-crítico (no toca CRUD de eventos ni modales). Pendiente: review visual
   del usuario en Aulion + iteración (left-nav consistente tipo Workspace, pulido contra la referencia).
+
+## Bifrost Meet — cierre from-zero (2026-07-01)
+
+Llamada 2-partes VERIFICADA end-to-end contra el box deployado (2 browsers, media real bidireccional,
+ambos renderizan 2 tiles). Bugs reales del deploy no-probado, ya arreglados: LiveKit v1.8.4→v1.13.2 (#43,
+path /rtc/v1: sin esto ningún token validaba), rango relay TURN 30000-40000/udp en el SG (#43), user-data
+>16KB (#42), y MeetCallView bloqueaba 'connected' en el publish (#43) + races del desacople (#44, HIGH
+hallado por B+D). Verificado que el REPO SOLO basta (userland-proxy:false fue red herring del debug, NO
+necesario). TDs residuales:
+
+- **TD-MEET-CALL-E2E (MED)**: NO hay test automatizado de regresión del flujo de llamada LiveKit
+  (MeetCallView lifecycle, token→connect→publish→subscribe). El e2e estándar corre local sin LiveKit, y la
+  llamada se validó con un script Playwright standalone contra el box vivo (media fake, 2 browsers). Cualquier
+  cambio futuro en MeetCallView puede romper la llamada SIN que la CI lo detecte (mismo class que
+  [[TD-WEB-COMPONENT-TESTS]]). Fix: un job e2e opcional que levante livekit-server efímero (docker) + testee la
+  conexión, o mockear el engine de livekit-client para testear la máquina de estados de MeetCallView.
+- **TD-MEET-BOOTSTRAP-UX (LOW, review B)**: durante el bootstrap del publish, los controles mic/cam se ven
+  'off' hasta que el track se publica, aunque el usuario haya entrado con props.mic/cam=true. Cosmético.
+- **TD-MEET-TRANSIENT-DEVICE (LOW, review B)**: si un permiso completa TARDE tras un unmount, puede haber un
+  encendido transitorio de cámara/mic antes de que el disconnect (onBeforeUnmount) pare los tracks. Acotado
+  por el disconnect con stopTracks=true; el guard staleGen antes de cada setXEnabled minimiza la ventana.
+- **TD-MEET-TURN-TLS (roadmap, ya documentado)**: TURN/TLS:443 diferido; redes que sólo abren 443/TCP pueden
+  no conectar media (fast-follow del diseño).
