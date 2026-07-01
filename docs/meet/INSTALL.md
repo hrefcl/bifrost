@@ -80,15 +80,18 @@ bifrost-provision
 # Modo de Meet  → 2-box (LiveKit en EC2 dedicado)
 ```
 
-o sin preguntar: `bifrost-provision --meet-mode twobox [--livekit-instance-type t4g.large]`.
+o sin preguntar: `bifrost-provision --meet-mode twobox [--livekit-instance-type t4g.medium]`.
 
 Qué hace al activarlo:
 
 - **Dos instancias EC2**: el app-box habitual (correo/web/agenda) sin LiveKit, más un **media-box**
-  dedicado con su propia EIP, Security Group y user-data.
-- **Piso del media-box**: `t4g.large` (8 GiB) por default; se puede elegir `c6g.large`, `c6g.xlarge`,
-  `c7g.large` desde el catálogo curado, o cualquier tipo con `--livekit-instance-type` (fuera del catálogo
-  con advertencia). El app-box no sufre piso de RAM por Meet.
+  dedicado con su propia EIP, Security Group, **rol IAM propio mínimo** (sólo SSM+cfn-signal, sin S3/SES) y
+  user-data.
+- **Tipo del media-box**: default `t4g.medium` (~$24, 4 GiB — LiveKit pide ~1-2 GiB). Opciones: `t4g.small`
+  (~$12, ultra-mínimo opt-in), `t4g.large`, o `c6g.large`/`c6g.xlarge`/`c7g.large` (no-burstable, para muchas
+  llamadas sostenidas), o cualquier tipo con `--livekit-instance-type` (fuera del catálogo con advertencia).
+  El app-box no sufre piso de RAM por Meet (LiveKit vive aparte). **"Separar, no duplicar":** 2× t4g.medium
+  (~$48) ≈ 1× t4g.large bundled, pero con la media separada del correo.
 - **Credenciales**: el CLI genera un par `apiKey`/`apiSecret`, los guarda en **SSM SecureString**
   (`/bifrost/<dom>/livekit-secret`) y ambas instancias los leen con el rol IAM. Nunca viajan en el template.
 - **Cloud-init del app-box**: `MEET_PROVISIONED=1`, **sin** `COMPOSE_PROFILES=meet`, apunta a
@@ -134,7 +137,8 @@ Meet abre **sólo 3 puertos** de media sobre los del correo/web. **Nunca** un ra
 |---|---|---|
 | Sólo correo (mínimo) | `t4g.medium` (4 GiB) | ~$24 |
 | Correo + Meet **bundled** | `t4g.large` (8 GiB) | ~$49 |
-| Correo + Meet **twobox** | app-box `t4g.medium` + media-box `t4g.large` + 2ª EIP | ~$75 |
+| Correo + Meet **twobox** MÍNIMO | app-box `t4g.medium` + media-box `t4g.medium` + 2ª EIP | ~$48 |
+| Correo + Meet **twobox** (50 buzones) | app-box `t4g.large` + media-box `t4g.medium` + 2ª EIP | ~$73 |
 | Meet **external** | la que ya tengas para correo | $0 infra local |
 
 - **Bundled**: **~+$25/mes** por el piso de RAM (medium→large). Si ya estabas en `t4g.large`, Meet agrega
