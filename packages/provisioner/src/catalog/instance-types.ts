@@ -226,7 +226,9 @@ export const LIVEKIT_CATALOG: readonly InstanceTypeInfo[] = [
   },
 ];
 
-export const DEFAULT_LIVEKIT_INSTANCE = 't4g.medium';
+// t4g.small (2 GiB, ~$12) VALIDADO en AWS real (2026-07-01): LiveKit + Caddy usan ~330 MB, 1.3 GiB libres,
+// token validado por el media-box, sin swap. LiveKit es CPU-bound (~1 GiB RAM) → 2 GiB alcanzan de sobra.
+export const DEFAULT_LIVEKIT_INSTANCE = 't4g.small';
 
 /** Etiqueta humana para el menú del media-box. */
 export function describeLivekitInstanceChoice(i: InstanceTypeInfo): string {
