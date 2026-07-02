@@ -548,7 +548,12 @@ necesario). TDs residuales:
   3AM". El build de la imagen web ahora **depende de un registry pago externo** (`npm.fontawesome.com`) con
   un token. Riesgos: (a) si el token expira/se revoca o FA está caído, TODO build de `web` falla → no se
   puede shippear un hotfix; (b) PRs desde **forks** (proyecto OSS) no reciben el secret → su build de imagen
-  web falla. Mitigación robusta: **vendorizar** los 59 SVG duotone usados (extraer el path-data al repo) y
-  soltar la dependencia de runtime/registry — para un producto turnkey/OSS es lo más resiliente, a costa de
-  perder el alta fácil de iconos nuevos. Alternativa mínima: documentar que los forks omiten el job de imagen.
-  Por ahora aceptable (repo interno, token vigente), pero registrado para decisión consciente.
+  web falla. **⚠ CORRECCIÓN (review externo D/kimi, jul 2026):** la mitigación de "vendorizar los SVG Pro"
+  que registré antes **puede violar la licencia de FontAwesome Pro** ("you may not redistribute the Pro icons
+  as part of an open source project") — y Bifrost es OSS. Peor aún, hoy el bundle/imagen pública (ghcr) ya
+  contiene los 59 iconos Pro compilados; para un producto OSS esto es un riesgo legal a revisar, no sólo de
+  build. **Alternativa correcta (D):** migrar a un set duotone **open-source** — `@phosphor-icons/vue`
+  (Phosphor tiene duotone, licencia MIT, gratis) — que elimina de una a) el registry pago, b) el token/secret,
+  c) el fallo de forks y d) el riesgo de licencia. Decisión de producto pendiente (A no la toma solo): seguir
+  con FA Pro (aceptable si el uso/redistribución está cubierto por la licencia del titular) vs migrar a
+  Phosphor duotone. Mientras: repo NO contiene los SVG (se bajan al build vía token), token vigente.

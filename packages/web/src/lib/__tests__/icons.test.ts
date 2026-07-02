@@ -15,12 +15,17 @@ describe('icons FA duotone', () => {
     expect(new Set(names).size).toBe(names.length); // sin duplicados
   });
 
-  it.each(names)('renderiza "%s" como SVG duotone de dos capas', (name) => {
+  it.each(names)('renderiza "%s" con forma y estructura duotone', (name) => {
     const html = renderIconHtml(name);
     expect(html.startsWith('<svg')).toBe(true);
-    // duotone = capa primaria + secundaria; si faltara una, el efecto se pierde.
+    // Estructura duotone: svg-core emite ambas capas. OJO: en glifos simples (plus, x, chevron,
+    // check, star…) FA deja UNA capa vacía a propósito (no hay descomposición two-tone que tenga
+    // sentido) → renderizan como relleno sólido. Eso es diseño de FA, no un defecto.
     expect(html).toContain('fa-primary');
     expect(html).toContain('fa-secondary');
+    // Lo que SÍ debe cumplirse siempre: el icono no está en blanco → al menos una capa con path real.
+    const dLens = [...html.matchAll(/\bd="([^"]*)"/g)].map((m) => m[1].length);
+    expect(dLens.some((n) => n > 0)).toBe(true);
     // CSP: svg-core NO debe emitir un <style> inline (autoAddCss=false).
     expect(html).not.toContain('<style');
   });

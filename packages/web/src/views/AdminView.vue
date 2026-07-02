@@ -1552,7 +1552,10 @@ async function save() {
 .admin-navitem :deep(svg) {
   flex-shrink: 0;
 }
-.admin-navitem > span:not(.admin-navcount) {
+/* Sólo el <span> de la etiqueta debe crecer. Excluir `.app-icon` (el root de AppIcon ahora es un
+   <span>, no un <svg>): sin esto el icono recibía flex:1 y ocupaba media fila (gap enorme antes del
+   texto). Regresión hallada por review externo B tras la migración a FA duotone. */
+.admin-navitem > span:not(.admin-navcount):not(.app-icon) {
   flex: 1;
   min-width: 0;
   overflow: hidden;
