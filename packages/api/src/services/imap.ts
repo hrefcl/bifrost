@@ -483,8 +483,12 @@ export async function moveEmailToTrash(
 /**
  * Hace APPEND del mensaje enviado (raw) a la carpeta Sent de la cuenta (por
  * specialUse; fallback 'Sent'). Best-effort: el caller no debe fallar el envío si esto falla.
+ *
+ * Devuelve el id del folder Sent LOCAL (o null si no se conoce, p.ej. sólo existe el fallback
+ * 'Sent' sin registro en Mongo). El caller lo usa para sincronizar Enviados y que el mensaje
+ * APENDIDO aparezca en la vista web (Mongo) de inmediato — sin esto el APPEND queda sólo en IMAP.
  */
-export async function appendToSent(account: IAccount, raw: Buffer): Promise<void> {
+export async function appendToSent(account: IAccount, raw: Buffer): Promise<string | null> {
   const sent = await Folder.findOne({
     accountId: account._id.toString(),
     specialUse: 'sent',
@@ -493,6 +497,7 @@ export async function appendToSent(account: IAccount, raw: Buffer): Promise<void
   await withClient(account, async (client) => {
     await client.append(path, raw, ['\\Seen']);
   });
+  return sent ? sent._id.toString() : null;
 }
 
 async function upsertMessage(

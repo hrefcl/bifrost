@@ -6,7 +6,7 @@ import { User } from '../models/User.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
 import { sendDraft } from '../services/smtp.js';
 import { checkOutboundLimit, maxRecipientsPerMessage } from '../services/outbound-limit.js';
-import { appendToSent } from '../services/imap.js';
+import { appendToSent, syncFolderHeaders } from '../services/imap.js';
 import { autoSaveContacts } from '../services/contacts.js';
 import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
@@ -406,9 +406,19 @@ export default function draftRoutes(fastify: FastifyInstance) {
           $unset: { sendingSince: 1 },
         }
       );
-      // Copia a Sent: best-effort, no debe fallar el envío.
+      // Copia a Sent: best-effort, no debe fallar el envío. El APPEND deja el mensaje en IMAP,
+      // pero la vista Enviados lee de Mongo → hay que SINCRONIZAR el folder Sent para que el
+      // mensaje recién enviado aparezca de inmediato (sin esto quedaba sólo en IMAP hasta el
+      // próximo sync periódico: el usuario "no veía" su correo en Enviados).
       try {
-        await appendToSent(account, result.raw);
+        const sentFolderId = await appendToSent(account, result.raw);
+        if (sentFolderId) {
+          try {
+            await syncFolderHeaders(account, sentFolderId);
+          } catch (syncErr) {
+            request.log.warn({ err: syncErr }, 'sync Sent after append failed');
+          }
+        }
       } catch (appendErr) {
         request.log.warn({ err: appendErr }, 'append to Sent failed');
       }
