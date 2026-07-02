@@ -10,8 +10,9 @@ describe('icons FA duotone', () => {
   const names = Object.keys(ICONS) as IconName[];
 
   it('conserva el set completo (ninguno se perdió en la migración)', () => {
-    // El set portado desde lucide tenía 59 nombres; no debe encogerse silenciosamente.
-    expect(names.length).toBe(59);
+    // 59 del set base (lucide→FA) + 4 de los controles de Meet (mic/micOff/videoOff/screenShare).
+    // No debe encogerse silenciosamente; si agregás iconos, subí este número a conciencia.
+    expect(names.length).toBe(63);
     expect(new Set(names).size).toBe(names.length); // sin duplicados
   });
 
