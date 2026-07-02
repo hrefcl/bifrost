@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, watch, onBeforeUnmount } from 'vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 /**
  * Tile de un participante: adjunta su track de video (cámara o pantalla) a un <video> y, si es remoto,
@@ -85,12 +86,13 @@ onBeforeUnmount(() => {
     </div>
     <!-- Audio remoto (oculto) -->
     <audio v-if="!isLocal && audioTrack" ref="audioEl" autoplay></audio>
-    <!-- Etiqueta -->
+    <!-- Etiqueta estilo Google Meet: chip sutil con nombre + iconos duotone (mic muteado / pantalla). -->
     <div
-      class="absolute bottom-1 left-1 px-2 py-0.5 rounded bg-black/60 text-xs text-neutral-100 flex items-center gap-1 max-w-[90%] truncate"
+      class="absolute bottom-1.5 left-1.5 px-2 py-1 rounded-md bg-black/55 text-xs text-neutral-100 flex items-center gap-1.5 max-w-[90%]"
     >
-      <span v-if="micMuted" aria-hidden="true">🔇</span>
-      <span class="truncate">{{ name }}{{ isScreen ? ' · 🖥️' : '' }}</span>
+      <AppIcon v-if="micMuted" name="micOff" :size="13" class="text-red-400" />
+      <AppIcon v-if="isScreen" name="screenShare" :size="13" />
+      <span class="truncate">{{ name }}</span>
     </div>
   </div>
 </template>
