@@ -261,6 +261,7 @@ export default {
       accounts: 'Usuarios',
       branding: 'Marca',
       storage: 'Almacenamiento',
+      provisioning: 'Provisioning',
       compliance: 'Compliance',
       scheduling: 'Agenda',
       preferences: 'Calendario',
@@ -288,6 +289,10 @@ export default {
       colRole: 'Rol',
       colStatus: 'Estado',
       colStorage: 'Almacenamiento',
+    },
+    provisioning: {
+      title: 'Provisioning',
+      desc: 'API-keys para crear y borrar buzones por API (sin claves AWS ni SSH), y cómo usarlas.',
     },
     roles: {
       title: 'Roles y permisos',

@@ -261,6 +261,7 @@ export default {
       accounts: 'Users',
       branding: 'Branding',
       storage: 'Storage',
+      provisioning: 'Provisioning',
       compliance: 'Compliance',
       scheduling: 'Scheduling',
       preferences: 'Calendar',
@@ -288,6 +289,10 @@ export default {
       colRole: 'Role',
       colStatus: 'Status',
       colStorage: 'Storage',
+    },
+    provisioning: {
+      title: 'Provisioning',
+      desc: 'API keys to create and delete mailboxes over the API (no AWS keys or SSH), and how to use them.',
     },
     roles: {
       title: 'Roles & permissions',

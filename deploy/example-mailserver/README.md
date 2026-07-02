@@ -104,8 +104,6 @@ Ver `../../docs/admin-config-y-providers.md`.
 
 ---
 
-<<<<<<< HEAD
-
 ## 📹 (Opcional) Bifrost Meet — videollamadas
 
 Videollamadas self-hosted (LiveKit) en el **mismo** servidor. **Opcional**: si no lo activás, todo lo de
@@ -127,7 +125,8 @@ evento/reserva en la agenda (toggle "Reunión con video").
 ¿Ya tenés un LiveKit propio o querés LiveKit **Cloud**? Apuntalo por la **API del admin** (`wsUrl` +
 API key/secret + `POST /api/admin/meet/test`) — el panel visual es F3.7-frontend. Guía completa:
 **[`../../docs/meet/INSTALL.md`](../../docs/meet/INSTALL.md)**.
-=======
+
+---
 
 ## 📤 Envío saliente — relay SES (PERSISTENTE)
 
@@ -148,27 +147,45 @@ password SMTP de SES NO es el SecretAccessKey: se deriva (ver la CLI `bifrost-pr
 automatiza identidad/DKIM/MAIL FROM y puebla esto solo). Recordá: una cuenta SES nueva arranca en
 **sandbox** (sólo destinos verificados) → pedí _production access_ en la consola de SES.
 
-> > > > > > > origin/main
+---
+
+## 👤 Crear buzones (turnkey — Bifrost es la autoridad de cuentas)
+
+Ya **no** hace falta `docker compose exec mailserver setup email add`: Bifrost **crea el buzón real** por
+vos. Dos formas:
+
+- **Desde el panel** `/admin` → _Cuentas_ → _Nuevo usuario_: tipeás sólo el email (la contraseña la podés
+  dejar en blanco y Bifrost genera una fuerte y te la muestra **una vez**). Eliminar la cuenta ahí también
+  **revoca el buzón** (corta el acceso IMAP/SMTP), no sólo lo oculta.
+- **Por API** (`/api/provision/*`), para integrar altas automáticas sin claves AWS ni SSH al servidor.
+  Generá/gestioná las keys desde `/admin` → **Provisioning**, o usá la key bootstrap del asistente en
+  `./secrets/provision_api_key.txt`. **Guía completa: [`../../docs/provisioning-api.md`](../../docs/provisioning-api.md)**.
+
+```bash
+KEY=$(cat secrets/provision_api_key.txt)
+# Alta (password opcional → si la omitís, la respuesta trae la generada):
+curl -sX POST https://webmail.tudominio.com/api/provision/mailboxes \
+  -H "X-Provision-Key: $KEY" -H 'Content-Type: application/json' \
+  -d '{"email":"nuevo@tudominio.com","displayName":"Nuevo"}'
+# Baja (revoca el buzón + borra la cuenta):
+curl -sX DELETE https://webmail.tudominio.com/api/provision/mailboxes/nuevo%40tudominio.com \
+  -H "X-Provision-Key: $KEY"
+```
+
+> El buzón tarda unos segundos en quedar activo (docker-mailserver reaplica la config); el alta espera esa
+> activación antes de responder `201`. El DKIM (Paso 5) seguís generándolo una vez por dominio.
 
 ---
 
 ## ❓ Problemas comunes
 
-<<<<<<< HEAD
-| Síntoma | Solución |
-| ------------------- | -------------------------------------------------------------------------------------------------------- |
-| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos. |
-| No puedo enviar | Puerto 25 saliente bloqueado por tu proveedor (común en clouds) → pedí que lo abran o usá un relay SMTP. |
-| Login falla | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`. |
-| Meet: media no conecta | Abrí UDP `7882`/`3478` y TCP `7881`; probá desde otra red. Detalle: `docs/meet/INSTALL.md` §5/§8. |
-=======
-| Síntoma | Solución |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos. |
-| No puedo enviar | Puerto 25 saliente bloqueado (común en clouds). Configurá el relay SES en `mailserver.env` (ver §Envío saliente). Verificá: `docker compose exec mailserver postconf -h relayhost` debe mostrar el host SES, NO vacío. |
-| Login falla | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`. |
-
-> > > > > > > origin/main
+| Síntoma                 | Solución                                                                                                                                                                                                               |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| El cert TLS no sale     | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos.                                                                                                                                    |
+| No puedo enviar         | Puerto 25 saliente bloqueado (común en clouds). Configurá el relay SES en `mailserver.env` (ver §Envío saliente). Verificá: `docker compose exec mailserver postconf -h relayhost` debe mostrar el host SES, NO vacío. |
+| Login falla             | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`.                                                                                                                                        |
+| El alta de cuenta falla | ¿La API ve el accounts.cf? Debe estar el volumen `./config:/dms-config` y `DMS_ACCOUNTS_FILE` en la api. `/api/provision/*` da 404 si falta `secrets/provision_api_key.txt`.                                           |
+| Meet: media no conecta  | Abrí UDP `7882`/`3478` y TCP `7881`; probá desde otra red. Detalle: `docs/meet/INSTALL.md` §5/§8.                                                                                                                      |
 
 > Antes de producción real: desactivá `--api.insecure` de Traefik, configurá backups de
 > Mongo/Redis y revisá el hardening de `docs/deuda-tecnica.md` (F4).

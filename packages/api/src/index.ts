@@ -46,6 +46,11 @@ async function main() {
   const { seedStorageConfigFromEnv } = await import('./services/storage/config.js');
   await seedStorageConfigFromEnv().catch(() => undefined);
 
+  // Turnkey: idem para el provisioning de buzones. Si el provisioner seteó DMS_ACCOUNTS_FILE, materializa
+  // el provider docker-mailserver → el alta de cuentas desde /admin crea el buzón REAL. Idempotente.
+  const { seedMailboxConfigFromEnv } = await import('./services/mailbox/index.js');
+  await seedMailboxConfigFromEnv().catch(() => undefined);
+
   const app = await buildApp();
   serverApp = app;
 

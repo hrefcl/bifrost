@@ -17,6 +17,12 @@ describe('buildUserData (cloud-init)', () => {
     expect(s).not.toContain('S3_BUCKET');
   });
 
+  it('turnkey: genera el secret del provisioning de buzones (/api/provision/*)', () => {
+    const s = buildUserData(base);
+    // El compose referencia ./secrets/provision_api_key.txt → debe generarse o `docker compose up` falla.
+    expect(s).toContain('secrets/provision_api_key.txt');
+  });
+
   it('con s3Bucket → storage S3 con el ROL del EC2 (IMDS), SIN claves estáticas en el .env', () => {
     const s = buildUserData({ ...base, s3Bucket: 'bifrost-acme-com-data' });
     expect(s).toContain('STORAGE_PROVIDER=s3');

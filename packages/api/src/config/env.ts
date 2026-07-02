@@ -17,7 +17,7 @@ const FILE_BACKED_VARS = [...CRITICAL_VARS, 'COMPLIANCE_HMAC_SECRET'] as const;
  * LIVEKIT_* cuando la feature está activa; con Meet OFF estos no existen y el boot debe seguir OK
  * (review D-H5). Se resuelven con el MISMO mecanismo de docker-secrets que los críticos.
  */
-const OPTIONAL_FILE_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET'] as const;
+const OPTIONAL_FILE_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'PROVISION_API_KEY'] as const;
 
 /**
  * Soporte de docker-secrets (`<VAR>_FILE`): si está seteado `<VAR>_FILE` y `<VAR>` está vacío, lee
@@ -89,6 +89,15 @@ const envSchema = z.object({
   LIVEKIT_API_URL: z.string().optional(),
   // Base pública de los links de unión (`https://webmail.<dom>`).
   MEET_PUBLIC_BASE_URL: z.string().optional(),
+  // --- Provisioning de buzones (Bifrost como autoridad de cuentas de correo) ---
+  // Ruta al postfix-accounts.cf de docker-mailserver, montado en el contenedor api (volumen compartido).
+  // Ausente = provisioning deshabilitado (el alta desde admin sólo verifica buzones existentes).
+  DMS_ACCOUNTS_FILE: z.string().optional(),
+  // Raíz del maildata de DMS (para borrar el Maildir al eliminar un buzón). Opcional.
+  DMS_MAILDATA_DIR: z.string().optional(),
+  // API-key del endpoint máquina-a-máquina `/api/provision/*` (Vanir/externos crean buzones por API,
+  // sin claves AWS). Ausente = ese endpoint 404. También vía `PROVISION_API_KEY_FILE` (docker-secret).
+  PROVISION_API_KEY: z.string().optional(),
 });
 
 const partialSchema = z.object({

@@ -122,6 +122,14 @@ services:
       # El box trae su mailserver → el login del webmail defaultea a él y oculta la config manual
       # (webmail NATIVO del dominio). El sed del provisioner lo convierte a mail.<tu-dominio>.
       MAIL_SERVER_HOST: mail.example.com
+      # Provisioning turnkey (Bifrost como AUTORIDAD de cuentas): la API escribe el postfix-accounts.cf de
+      # docker-mailserver (montado abajo, volumen compartido) → el alta desde /admin y la API máquina crean
+      # el buzón REAL, sin docker socket ni SSH. En el primer boot el API materializa el provider
+      # docker-mailserver desde esta ruta (services/mailbox/config.ts).
+      DMS_ACCOUNTS_FILE: /dms-config/postfix-accounts.cf
+      # API-key del endpoint máquina-a-máquina /api/provision/* (sistemas externos crean buzones por API,
+      # sin claves AWS). El provisioner la genera en ./secrets/provision_api_key.txt. Ausente → 404.
+      PROVISION_API_KEY_FILE: /run/secrets/provision_api_key
       # Storage de adjuntos: por defecto LOCAL (disco). Si el provisioner habilitó S3, el .env del box
       # trae STORAGE_PROVIDER=s3 + bucket/region + S3_USE_INSTANCE_ROLE=1 (sin claves: usa el rol del
       # EC2 vía IMDS). En el primer boot el API siembra la config a S3 (services/storage/config.ts).
@@ -143,10 +151,15 @@ services:
       # Dir donde el API deja el MARKER de "actualizar" (Fase 2). El host-updater (fuera del contenedor)
       # lo lee y hace el pull+up. El API NUNCA toca el socket de Docker.
       UPDATE_TRIGGER_DIR: /app/update-trigger
-    secrets: [jwt_secret, encryption_key, compliance_hmac_secret]
+    secrets: [jwt_secret, encryption_key, compliance_hmac_secret, provision_api_key]
     volumes:
       # Marker de update (host↔API). El API SÓLO escribe el tag pedido acá; el host-updater lo valida.
       - ./update-trigger:/app/update-trigger
+      # Config de docker-mailserver (contiene postfix-accounts.cf) COMPARTIDA con el mailserver. Se monta
+      # el DIRECTORIO (no el archivo): la API reescribe accounts.cf con temp+rename atómico DENTRO del dir
+      # (un bind de archivo único rompería con el rename). RW: la API es autoridad de cuentas. El
+      # changedetector de DMS ve el cambio y lo aplica. NO se monta ./maildata (la API no toca el correo).
+      - ./config:/dms-config
     networks: [mailnet]
 
   # --- Bifrost Web (UI — reemplaza a Roundcube) -------------------------------
@@ -218,6 +231,8 @@ secrets:
     file: ./secrets/encryption_key.txt
   compliance_hmac_secret:
     file: ./secrets/compliance_hmac_secret.txt
+  provision_api_key:
+    file: ./secrets/provision_api_key.txt
 
 volumes:
   mongo-data:

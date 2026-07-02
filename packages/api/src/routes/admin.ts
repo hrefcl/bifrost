@@ -7,17 +7,25 @@ import { getStorageConfigPublic, setStorageConfig } from '../services/storage/in
 import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js';
 import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
 import { loginOrRegister } from '../services/auth.js';
+import {
+  provisioningEnabled,
+  MailboxExistsError,
+  getMailboxConfig,
+  setMailboxConfig,
+} from '../services/mailbox/index.js';
+import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
+import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
+import {
+  createProvisionKey,
+  listProvisionKeys,
+  revokeProvisionKey,
+} from '../services/provision-keys.js';
 import { checkForUpdate } from '../services/update-check.js';
 import { requestUpdate, getUpdateState, isUpdateInProgress } from '../services/update-apply.js';
 import { BUILD_INFO } from '../lib/buildInfo.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
-import { Email } from '../models/Email.js';
-import { Folder } from '../models/Folder.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
-import { Draft } from '../models/Draft.js';
-import { Contact } from '../models/Contact.js';
-import { CalendarEvent } from '../models/CalendarEvent.js';
 import { Booking, serializeBooking } from '../models/Booking.js';
 import { EventType } from '../models/EventType.js';
 import { getSchedulingSettings, setSchedulingSettings } from '../services/scheduling/settings.js';
@@ -55,17 +63,22 @@ const brandingSchema = z
 
 // Alta de cuenta por el admin (mismo contrato que el login + cuota/nombre). El backend verifica
 // las credenciales IMAP reales antes de crear (createAccount reusa loginOrRegister).
+// Dos modos de alta:
+//  - TURNKEY (provisioning activo): el admin tipea sólo email (+ password opcional; si falta se genera).
+//    Bifrost CREA el buzón real y usa el mailserver propio → imap/smtp NO se piden.
+//  - BRING-YOUR-OWN (sin provisioning): se verifica un buzón ya existente → imap/smtp/password requeridos.
+// Por eso todo salvo `email` es opcional acá; el handler exige lo que corresponda según el modo.
 const createAccountSchema = z
   .object({
     email: z.string().email(),
-    password: z.string().min(1),
+    password: z.string().min(1).optional(),
     displayName: z.string().trim().max(120).optional(),
-    imapHost: z.string().min(1),
-    imapPort: z.number().int().min(1).max(65535),
-    imapSecure: z.boolean(),
-    smtpHost: z.string().min(1),
-    smtpPort: z.number().int().min(1).max(65535),
-    smtpSecure: z.boolean(),
+    imapHost: z.string().min(1).optional(),
+    imapPort: z.number().int().min(1).max(65535).optional(),
+    imapSecure: z.boolean().optional(),
+    smtpHost: z.string().min(1).optional(),
+    smtpPort: z.number().int().min(1).max(65535).optional(),
+    smtpSecure: z.boolean().optional(),
     quotaBytes: z.number().int().min(0).optional(),
   })
   .strict();
@@ -78,6 +91,22 @@ const updateAccountSchema = z
     status: z.enum(['active', 'disabled']).optional(),
   })
   .strict();
+
+// Config del provisioning de buzones (union discriminada por providerType).
+const mailboxProvisioningSchema = z.discriminatedUnion('providerType', [
+  z.object({ providerType: z.literal('none') }).strict(),
+  z
+    .object({
+      providerType: z.literal('docker-mailserver'),
+      dockerMailserver: z
+        .object({
+          accountsFile: z.string().min(1),
+          maildataDir: z.string().min(1).optional(),
+        })
+        .strict(),
+    })
+    .strict(),
+]);
 
 // `local` (sin config) o `s3` (endpoint opcional + bucket/region/keys; el secret se cifra al
 // persistir). Union discriminada → `.strict()` rechaza campos extra y mezclas inválidas.
@@ -202,6 +231,63 @@ export default function adminRoutes(fastify: FastifyInstance) {
   fastify.get('/config/storage', { config: { permission: 'storage.manage' } }, async () => {
     return getStorageConfigPublic();
   });
+
+  // ---- Provisioning de buzones (Bifrost como autoridad de cuentas) ----
+  // El admin elige/parametriza el backend que CREA los buzones. `docker-mailserver` = el turnkey de
+  // Bifrost (escribe el postfix-accounts.cf montado). `none` = el server no crea buzones (bring-your-own
+  // IMAP). Es la 2da vía de config además del env-seed del provisioner. Gated `accounts.manage`.
+  fastify.get(
+    '/config/mailbox-provisioning',
+    { config: { permission: 'accounts.manage' } },
+    async () => {
+      return getMailboxConfig();
+    }
+  );
+
+  fastify.put(
+    '/config/mailbox-provisioning',
+    { config: { permission: 'accounts.manage' } },
+    async (request) => {
+      const body = mailboxProvisioningSchema.parse(request.body);
+      return setMailboxConfig(body, request.user.userId);
+    }
+  );
+
+  // ---- API-keys del provisioning máquina-a-máquina (/api/provision/*) ----
+  // El admin genera/lista/revoca keys sin SSH al server. El token en claro se muestra UNA vez al crearlo
+  // (se guarda sólo el hash). `bootstrapConfigured` indica si además hay una key del entorno (turnkey).
+  fastify.get('/provision-keys', { config: { permission: 'accounts.manage' } }, async () => {
+    return {
+      keys: await listProvisionKeys(),
+      bootstrapConfigured: Boolean(process.env.PROVISION_API_KEY?.trim()),
+    };
+  });
+
+  fastify.post(
+    '/provision-keys',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const { label } = z.object({ label: z.string().trim().min(1).max(120) }).parse(request.body);
+      const { token, key } = await createProvisionKey(label, request.user.userId);
+      // `token` va SÓLO en esta respuesta (no se persiste en claro ni se puede volver a ver).
+      return reply.code(201).send({ ...key, token });
+    }
+  );
+
+  fastify.delete(
+    '/provision-keys/:id',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const { id } = z.object({ id: objectId }).parse(request.params);
+      const ok = await revokeProvisionKey(id);
+      if (!ok) {
+        return reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Key no encontrada' });
+      }
+      return { ok: true };
+    }
+  );
 
   fastify.patch(
     '/config/storage',
@@ -669,9 +755,68 @@ export default function adminRoutes(fastify: FastifyInstance) {
       // `allowAdminBootstrap:false`: un alta desde el panel NUNCA crea un admin, aunque la instancia no
       // tenga admin (evita escalada de un delegado con accounts.manage — review D). El admin se otorga
       // sólo por el CLI `admin:grant` o el primer login de setup.
-      const { user, account, isNew } = await loginOrRegister(body, { allowAdminBootstrap: false });
+      const provisioning = await provisioningEnabled();
+
+      let user, account, isNew: boolean;
+      let generatedPassword: string | undefined;
+      try {
+        if (provisioning) {
+          // TURNKEY: Bifrost es la autoridad de cuentas → CREA el buzón real en el mailserver y registra.
+          // El admin no configura IMAP/SMTP (usa el mailserver propio). Password opcional: si falta, se
+          // genera y se devuelve UNA vez para que el admin la entregue.
+          const res = await provisionMailboxAccount({
+            email: body.email,
+            password: body.password,
+            displayName: body.displayName,
+          });
+          ({ user, account, isNew } = res);
+          if (res.passwordGenerated) generatedPassword = res.password;
+        } else {
+          // BRING-YOUR-OWN: se verifica un buzón EXISTENTE → imap/smtp/password son obligatorios.
+          if (
+            !body.password ||
+            !body.imapHost ||
+            body.imapPort === undefined ||
+            body.imapSecure === undefined ||
+            !body.smtpHost ||
+            body.smtpPort === undefined ||
+            body.smtpSecure === undefined
+          ) {
+            return await reply.code(400).send({
+              statusCode: 400,
+              error: 'Bad Request',
+              message:
+                'Este servidor no crea buzones: indicá password y la configuración IMAP/SMTP del buzón existente.',
+            });
+          }
+          const res = await loginOrRegister(
+            {
+              email: body.email,
+              password: body.password,
+              displayName: body.displayName,
+              imapHost: body.imapHost,
+              imapPort: body.imapPort,
+              imapSecure: body.imapSecure,
+              smtpHost: body.smtpHost,
+              smtpPort: body.smtpPort,
+              smtpSecure: body.smtpSecure,
+            },
+            { allowAdminBootstrap: false }
+          );
+          ({ user, account, isNew } = res);
+        }
+      } catch (err) {
+        if (err instanceof MailboxExistsError) {
+          return reply.code(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'Ya existe un buzón con ese email en el servidor de correo.',
+          });
+        }
+        throw err;
+      }
       if (!isNew) {
-        // El email ya existía: no es un alta. Avisar en vez de fingir creación.
+        // El email ya existía en Bifrost: no es un alta. Avisar en vez de fingir creación.
         return reply.code(409).send({
           statusCode: 409,
           error: 'Conflict',
@@ -691,6 +836,8 @@ export default function adminRoutes(fastify: FastifyInstance) {
         email: account.email,
         status: account.status,
         quotaBytes,
+        // Sólo cuando Bifrost generó la contraseña: el admin la ve UNA vez (no se persiste en claro).
+        ...(generatedPassword ? { generatedPassword } : {}),
       });
     }
   );
@@ -748,7 +895,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
     { config: { permission: 'accounts.manage' } },
     async (request, reply) => {
       const { id } = z.object({ id: objectId }).parse(request.params);
-      const account = await Account.findById(id).select('userId').lean();
+      const account = await Account.findById(id).select('userId email').lean();
       if (!account) {
         return reply
           .code(404)
@@ -773,24 +920,20 @@ export default function adminRoutes(fastify: FastifyInstance) {
           });
         }
       }
-      await Account.deleteOne({ _id: id });
-      // Datos ACOTADOS A LA CUENTA (accountId-bound): se borran SIEMPRE, sea o no la última cuenta.
-      // Incluye Drafts: así sus AttachmentBlob quedan SIN referencia y el GC mark-and-sweep los
-      // reclama (docs + bytes en el storage provider) — si no, fuga de storage por blobs inmortales.
-      await Promise.all([
-        Email.deleteMany({ accountId: id }),
-        Folder.deleteMany({ accountId: id }),
-        Draft.deleteMany({ accountId: id }),
-        CalendarEvent.deleteMany({ accountId: id }),
-      ]);
-      // Si era la ÚLTIMA cuenta del usuario, borrar también el usuario y sus datos por-usuario
-      // (Contacts). Los AttachmentBlob (userId-bound) los recicla el GC al quedar sin drafts.
-      const remaining = await Account.countDocuments({ userId: account.userId });
-      if (remaining === 0) {
-        await Promise.all([
-          User.deleteOne({ _id: account.userId }),
-          Contact.deleteMany({ userId: account.userId }),
-        ]);
+      // Cascade compartido con la API máquina (revoca el buzón real + borra Account y datos acotados +
+      // User si era la última). Cierra TD-PROVISION-MAILBOX-LIFECYCLE: sin la revocación, el "eliminado"
+      // conservaría acceso IMAP/SMTP. Si el mailserver falla, no se toca la DB → admin reintenta.
+      try {
+        await deleteAccountCascade({ _id: id, userId: account.userId, email: account.email });
+      } catch (err) {
+        if (err instanceof MailboxRevokeError) {
+          return reply.code(502).send({
+            statusCode: 502,
+            error: 'Bad Gateway',
+            message: 'No se pudo eliminar el buzón en el servidor de correo. Reintentá.',
+          });
+        }
+        throw err;
       }
       return { ok: true };
     }
