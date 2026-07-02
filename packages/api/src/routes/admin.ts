@@ -27,6 +27,12 @@ import {
   CalendarSettingsError,
 } from '../services/calendar-settings.js';
 import { getStorageDefaults, setStorageDefaults } from '../services/storage-defaults.js';
+import {
+  getSignaturePolicy,
+  setSignaturePolicy,
+  SignaturePolicyError,
+} from '../services/signature-policy.js';
+import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
 import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
@@ -584,6 +590,46 @@ export default function adminRoutes(fastify: FastifyInstance) {
         return await setCalendarSettings(patch);
       } catch (e) {
         if (e instanceof CalendarSettingsError) {
+          return reply
+            .code(400)
+            .send({ statusCode: 400, error: 'Bad Request', message: e.message });
+        }
+        throw e;
+      }
+    }
+  );
+
+  // ---- Política de firmas (firmas F6) — gate branding.manage (firmas = asunto de marca) ----
+  const signaturePolicySchema = z
+    .object({
+      allowedTemplateIds: z.array(z.string().max(60)).max(50).optional(),
+      lockTemplate: z.boolean().optional(),
+      enforceSignature: z.boolean().optional(),
+      allowCustomHtml: z.boolean().optional(),
+    })
+    .strict();
+
+  fastify.get(
+    '/config/signature-policy',
+    { config: { permission: 'branding.manage' } },
+    async () => {
+      // Incluye el catálogo (id + clave i18n) para que el panel liste los templates habilitables.
+      return {
+        policy: await getSignaturePolicy(),
+        templates: SIGNATURE_TEMPLATES.map((t) => ({ id: t.id, nameKey: t.nameKey })),
+      };
+    }
+  );
+
+  fastify.put(
+    '/config/signature-policy',
+    { config: { permission: 'branding.manage' } },
+    async (request, reply) => {
+      const patch = signaturePolicySchema.parse(request.body);
+      try {
+        return await setSignaturePolicy(patch);
+      } catch (e) {
+        if (e instanceof SignaturePolicyError) {
           return reply
             .code(400)
             .send({ statusCode: 400, error: 'Bad Request', message: e.message });

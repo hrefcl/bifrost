@@ -14,6 +14,9 @@ import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
 import { externalizeDataImages, storeDataImage } from '../services/signature-images.js';
+import { getSignaturePolicy } from '../services/signature-policy.js';
+import { SIGNATURE_TEMPLATES, isValidTemplateId } from '../lib/signature-templates.js';
+import { renderPreview } from '../services/user-signature.js';
 import { randomToken } from '../config/crypto.js';
 import type { LoginRequest, LoginResponse, RefreshResponse } from '@webmail6/shared';
 
@@ -45,6 +48,15 @@ const profilePatchSchema = z
     phone: z.string().trim().max(40).optional(),
     photoDataUrl: z.string().max(3_000_000).optional(),
     clearPhoto: z.boolean().optional(),
+  })
+  .strict();
+
+// Elección de firma white-label del usuario (firmas F4). `.strict()` anti mass-assign.
+const signaturePrefSchema = z
+  .object({
+    source: z.enum(['template', 'custom']).optional(),
+    templateId: z.string().max(60).optional(),
+    includePhoto: z.boolean().optional(),
   })
   .strict();
 
@@ -280,5 +292,69 @@ export default function authRoutes(fastify: FastifyInstance) {
       phone: user.phone,
       photoUrl: user.photoUrl,
     };
+  });
+
+  // Opciones de firma para la UI de Ajustes (firmas F4): templates permitidos por la política,
+  // flags de la política, la elección actual y si el usuario tiene foto.
+  fastify.get('/me/signature/options', async (request) => {
+    const [user, policy] = await Promise.all([
+      User.findById(request.user.userId).lean(),
+      getSignaturePolicy(),
+    ]);
+    const allowed = policy.allowedTemplateIds.length
+      ? policy.allowedTemplateIds
+      : SIGNATURE_TEMPLATES.map((t) => t.id);
+    return {
+      templates: SIGNATURE_TEMPLATES.filter((t) => allowed.includes(t.id)).map((t) => ({
+        id: t.id,
+        nameKey: t.nameKey,
+      })),
+      policy: {
+        lockTemplate: policy.lockTemplate,
+        allowCustomHtml: policy.allowCustomHtml,
+        enforceSignature: policy.enforceSignature,
+      },
+      current: user?.preferences.signature ?? null,
+      hasPhoto: Boolean(user?.photoUrl),
+    };
+  });
+
+  // Preview en vivo (firmas F4): rendiza server-side el MISMO pipeline que el envío (fuente única).
+  fastify.get('/me/signature/preview', async (request) => {
+    const q = z
+      .object({ templateId: z.string(), includePhoto: z.coerce.boolean().optional() })
+      .parse(request.query);
+    const user = await User.findById(request.user.userId).lean();
+    if (!user) return { html: '' };
+    const html = await renderPreview(user, q.templateId, env.FRONTEND_URL, q.includePhoto ?? true);
+    return { html };
+  });
+
+  // Guarda la elección de firma del usuario (firmas F4). $set dirigido de paths anidados.
+  fastify.patch('/me/signature', async (request, reply) => {
+    const body = signaturePrefSchema.parse(request.body);
+    const set: Record<string, unknown> = {};
+    if (body.source !== undefined) set['preferences.signature.source'] = body.source;
+    if (body.templateId !== undefined) {
+      if (!isValidTemplateId(body.templateId)) {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: 'Template inválido' });
+      }
+      set['preferences.signature.templateId'] = body.templateId;
+    }
+    if (body.includePhoto !== undefined)
+      set['preferences.signature.includePhoto'] = body.includePhoto;
+    const user = await User.findByIdAndUpdate(
+      request.user.userId,
+      { $set: set },
+      { new: true }
+    ).lean();
+    if (!user) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
+    }
+    return user.preferences.signature ?? null;
   });
 }

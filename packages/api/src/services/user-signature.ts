@@ -1,4 +1,4 @@
-import { getBranding } from './branding.js';
+import { getBranding, type BrandingConfig } from './branding.js';
 import { getSignaturePolicy, resolveTemplateId } from './signature-policy.js';
 import { externalizeDataImages } from './signature-images.js';
 import {
@@ -41,23 +41,7 @@ export async function buildUserSignature(
   if (!include) return { html: '', include: false };
 
   const userId = String(user._id);
-  const ctx: SignatureContext = {
-    displayName: user.displayName,
-    jobTitle: user.jobTitle,
-    department: user.department,
-    personalPhone: user.phone,
-    photoUrl: (pref?.includePhoto ?? true) ? user.photoUrl : undefined,
-    email: user.primaryEmail,
-    companyName: branding.companyName,
-    tagline: branding.tagline,
-    logoUrl: branding.logoDataUrl,
-    logoWidthPx: branding.logoWidthPx,
-    domainUrl: branding.domainUrl,
-    companyPhone: branding.phone,
-    address: branding.address,
-    accentColor: branding.accentColor,
-    socialLinks: branding.socialLinks,
-  };
+  const ctx = signatureContext(user, branding, pref?.includePhoto ?? true);
 
   // source ausente = legado 'custom' (respeta usuarios con defaultSignature ya guardada).
   const source = pref?.source ?? 'custom';
@@ -83,5 +67,58 @@ export async function buildUserSignature(
       return { html: sanitizeEmailHtml(minimalPlainSignature(ctx)), include: true };
     }
     return { html: '', include: false };
+  }
+}
+
+/** Arma el contexto de render (branding + datos del User). `includePhoto` decide si va la foto. */
+function signatureContext(
+  user: SignatureUser,
+  branding: BrandingConfig,
+  includePhoto: boolean
+): SignatureContext {
+  return {
+    displayName: user.displayName,
+    jobTitle: user.jobTitle,
+    department: user.department,
+    personalPhone: user.phone,
+    photoUrl: includePhoto ? user.photoUrl : undefined,
+    email: user.primaryEmail,
+    companyName: branding.companyName,
+    tagline: branding.tagline,
+    logoUrl: branding.logoDataUrl,
+    logoWidthPx: branding.logoWidthPx,
+    domainUrl: branding.domainUrl,
+    companyPhone: branding.phone,
+    address: branding.address,
+    accentColor: branding.accentColor,
+    socialLinks: branding.socialLinks,
+  };
+}
+
+/**
+ * Renderiza un template ESPECÍFICO (para el preview en vivo de Ajustes), con los datos reales del
+ * usuario + branding. El template pedido se acota a los permitidos por la política (mismo pipeline
+ * render+externalize+sanitize que el envío → lo que se ve es lo que se manda). Fail-open a ''.
+ */
+export async function renderPreview(
+  user: SignatureUser,
+  templateId: string,
+  baseUrl: string,
+  includePhoto = true
+): Promise<string> {
+  const [branding, policy] = await Promise.all([getBranding(), getSignaturePolicy()]);
+  const effectiveId = resolveTemplateId(
+    policy,
+    policy.allowedTemplateIds.length && !policy.allowedTemplateIds.includes(templateId)
+      ? undefined
+      : templateId
+  );
+  try {
+    const ctx = signatureContext(user, branding, includePhoto);
+    let html = renderSignature(effectiveId, ctx);
+    html = await externalizeDataImages(String(user._id), html, baseUrl);
+    return sanitizeEmailHtml(html);
+  } catch {
+    return '';
   }
 }
