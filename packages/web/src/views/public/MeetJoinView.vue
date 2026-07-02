@@ -5,6 +5,7 @@ import { useI18n } from 'vue-i18n';
 import { api } from '@/lib/http';
 import { useMeetConfig } from '@/composables/useMeetConfig';
 import MeetCallView from './MeetCallView.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const route = useRoute();
 const { t } = useI18n();
@@ -148,31 +149,38 @@ function join() {
         >
           {{ previewError }}
         </div>
+        <!-- Toggles mic/cam superpuestos sobre el preview, estilo Google Meet (circulares, duotone). -->
+        <div class="absolute bottom-3 left-1/2 -translate-x-1/2 flex gap-3">
+          <button
+            type="button"
+            class="w-11 h-11 rounded-full text-white flex items-center justify-center backdrop-blur transition-colors"
+            :class="
+              micOn ? 'bg-neutral-800/85 hover:bg-neutral-700' : 'bg-red-600 hover:bg-red-500'
+            "
+            :aria-pressed="micOn"
+            :title="micOn ? t('meet.call.mic') : t('meet.call.micOff')"
+            @click="toggleMic"
+          >
+            <AppIcon :name="micOn ? 'mic' : 'micOff'" :size="20" />
+          </button>
+          <button
+            type="button"
+            class="w-11 h-11 rounded-full text-white flex items-center justify-center backdrop-blur transition-colors"
+            :class="
+              camOn ? 'bg-neutral-800/85 hover:bg-neutral-700' : 'bg-red-600 hover:bg-red-500'
+            "
+            :aria-pressed="camOn"
+            :title="camOn ? t('meet.call.cam') : t('meet.call.camOff')"
+            @click="toggleCam"
+          >
+            <AppIcon :name="camOn ? 'video' : 'videoOff'" :size="20" />
+          </button>
+        </div>
       </div>
 
       <!-- Controles de unión -->
       <div class="space-y-4">
         <h1 class="text-2xl font-semibold">{{ roomName }}</h1>
-        <div class="flex gap-2">
-          <button
-            type="button"
-            class="px-3 py-2 rounded-lg border border-neutral-600 hover:bg-neutral-800"
-            :class="micOn ? '' : 'bg-red-600/80 border-red-600'"
-            :aria-pressed="micOn"
-            @click="toggleMic"
-          >
-            {{ micOn ? t('meet.call.mic') : t('meet.call.micOff') }}
-          </button>
-          <button
-            type="button"
-            class="px-3 py-2 rounded-lg border border-neutral-600 hover:bg-neutral-800"
-            :class="camOn ? '' : 'bg-red-600/80 border-red-600'"
-            :aria-pressed="camOn"
-            @click="toggleCam"
-          >
-            {{ camOn ? t('meet.call.cam') : t('meet.call.camOff') }}
-          </button>
-        </div>
         <label v-if="requiresName" class="block">
           <span class="text-sm text-neutral-400">{{ t('meet.join.yourName') }}</span>
           <input
