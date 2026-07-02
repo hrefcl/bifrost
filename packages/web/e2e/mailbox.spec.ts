@@ -329,9 +329,10 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Signature' }).click();
   await expect(page.getByRole('heading', { name: 'Signature' })).toBeVisible({ timeout: 15_000 });
-  // El editor de firma es un contenteditable CRUDO (.sig-editor), no TipTap: preserva el HTML pegado
-  // de un generador (Cleverty) tal cual, igual que Gmail. La firma se añade SERVER-SIDE al enviar
-  // (POST /drafts/:id/send) con el separador "-- ", no se inyecta en el editor del composer.
+  // Firmas white-label (F4): la sección arranca en modo PLANTILLA. El editor de HTML pegado
+  // (.sig-editor, contenteditable crudo tipo Gmail para pegar de Cleverty) vive detrás del modo
+  // "Custom HTML". La firma se añade SERVER-SIDE al enviar con el separador "-- ".
+  await page.getByRole('button', { name: 'Custom HTML' }).click();
   await page.locator('.sig-editor').click();
   await page.locator('.sig-editor').fill('Saludos, Equipo A E2E');
   const patch = page.waitForResponse(
@@ -344,7 +345,7 @@ test('firma: guardar en Settings y auto-incluir al componer un correo nuevo', as
   await patch;
   await expect(page.getByText('Saved')).toBeVisible();
 
-  // Round-trip: recargar Ajustes → la firma persiste en el editor (se guardó de verdad).
+  // Round-trip: recargar Ajustes → la firma persiste (source='custom' guardado + editor poblado).
   await page.reload();
   await page.getByRole('button', { name: 'Settings' }).click();
   await page.getByRole('button', { name: 'Signature' }).click();

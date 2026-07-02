@@ -39,6 +39,7 @@ gen() { # gen <archivo> <comando-de-generación>
 gen jwt_secret.txt "openssl rand -hex 32"
 gen encryption_key.txt "openssl rand -hex 32" # 64 hex = 32 bytes (AES-256)
 gen compliance_hmac_secret.txt "openssl rand -hex 32" # evidencia HMAC de compliance (lo exige el API en prod)
+gen provision_api_key.txt "openssl rand -hex 32" # API-key del provisioning máquina-a-máquina (/api/provision/*)
 echo "✅ Secretos listos en ./secrets/ (NO los subas a git)"
 
 # 3.b) fail2ban: el API es un PROXY IMAP confiable — TODOS los logins de TODOS los usuarios salen de la IP del

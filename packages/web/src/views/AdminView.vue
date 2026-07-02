@@ -11,6 +11,7 @@ import AdminCalendarPrefs from '@/components/admin/AdminCalendarPrefs.vue';
 import AdminGroups from '@/components/admin/AdminGroups.vue';
 import AdminRoles from '@/components/admin/AdminRoles.vue';
 import AdminSignaturePolicy from '@/components/admin/AdminSignaturePolicy.vue';
+import AdminProvisioning from '@/components/admin/AdminProvisioning.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
@@ -32,6 +33,7 @@ type Tab =
   | 'branding'
   | 'signatures'
   | 'storage'
+  | 'provisioning'
   | 'compliance'
   | 'scheduling'
   | 'preferences';
@@ -93,6 +95,13 @@ const SECTIONS: AdminSection[] = [
     desc: 'admin.questionDesc',
   },
   {
+    key: 'provisioning',
+    icon: 'lock',
+    label: 'admin.tabs.provisioning',
+    title: 'admin.provisioning.title',
+    desc: 'admin.provisioning.desc',
+  },
+  {
     key: 'preferences',
     icon: 'calendar',
     label: 'admin.tabs.preferences',
@@ -124,7 +133,10 @@ interface NavGroup {
 }
 const NAV_GROUPS: NavGroup[] = [
   { label: 'admin.navGroups.directory', keys: ['accounts', 'groups', 'roles'] },
-  { label: 'admin.navGroups.config', keys: ['branding', 'signatures', 'storage', 'preferences'] },
+  {
+    label: 'admin.navGroups.config',
+    keys: ['branding', 'signatures', 'storage', 'provisioning', 'preferences'],
+  },
   { label: 'admin.navGroups.compliance', keys: ['compliance', 'scheduling'] },
 ];
 function sectionOf(key: Tab): AdminSection {
@@ -145,6 +157,7 @@ const SECTION_PERMISSION: Record<Tab, string | null> = {
   branding: 'branding.manage',
   signatures: 'branding.manage',
   storage: 'storage.manage',
+  provisioning: 'accounts.manage',
   preferences: 'calendar.manage',
   scheduling: 'scheduling.manage',
   compliance: null, // admin-only (sin permiso delegable)
@@ -1001,6 +1014,9 @@ async function save() {
 
           <!-- ===================== ROLES Y PERMISOS (RBAC, F8) ===================== -->
           <AdminRoles v-else-if="tab === 'roles'" @changed="loadRoles" />
+
+          <!-- ===================== PROVISIONING (API-keys de buzones) ===================== -->
+          <AdminProvisioning v-else-if="tab === 'provisioning'" />
 
           <!-- ===================== USUARIOS ===================== -->
           <template v-if="tab === 'accounts'">

@@ -127,7 +127,8 @@ async function loadSigOptions() {
       phone: auth.user?.phone ?? '',
     };
     photoUrl.value = auth.user?.photoUrl ?? null;
-    loadPreview();
+    if (sigMode.value === 'custom') void nextTick(fillSigEl);
+    else loadPreview();
   } catch {
     /* la sección muestra su estado igual */
   }

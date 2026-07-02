@@ -212,6 +212,9 @@ openssl rand -hex 32 > secrets/encryption_key.txt   # 32 bytes = 64 chars hex (l
 # Secreto DEDICADO de la evidencia de compliance (HMAC). NO se deriva de JWT_SECRET (que rota →
 # invalidaría evidencia histórica). 64 chars hex ≥ 32 (lo que exige la API en producción).
 openssl rand -hex 32 > secrets/compliance_hmac_secret.txt
+# API-key del provisioning máquina-a-máquina (/api/provision/*). El compose la monta como docker-secret
+# (PROVISION_API_KEY_FILE). El operador la lee de este archivo para dársela al sistema externo (Vanir).
+openssl rand -hex 32 > secrets/provision_api_key.txt
 ${
   input.s3Bucket
     ? `# Storage de adjuntos: S3 cifrado, autenticado con el ROL del EC2 (IMDS) — cero claves estáticas.

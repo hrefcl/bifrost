@@ -279,10 +279,11 @@ ningún merge con HIGH abierto o score <9):
 - **TD-PROVISION-ADMIN-PASS-DELIVERY (MED)** — la clave del buzón admin viaja en el user-data del EC2
   (visible vía ec2:DescribeInstanceAttribute a quien tenga la cuenta). Aceptable single-operator, pero
   endurecer: entregarla por SSH post-deploy o que el box la genere y la muestre, en vez del user-data.
-- **TD-PROVISION (PR-E)** — provisioning de buzones desde el admin (feature-gated). Es la única
-  feature pendiente. RCE-remoto (SSH/API a docker-mailserver), no integration-testeable local.
-  Diseño en `admin-config-y-providers.md §5/E`. Slice segura inicial: interfaz `ProvisioningProvider`
-  + feature-gate + default "none".
+- **TD-PROVISION (PR-E) — ✅ HECHO (jul 2026)** — provisioning de buzones como provider PLUGGABLE
+  (`services/mailbox/`, interfaz `MailboxProvider`, default `none`, provider `docker-mailserver`
+  escribiendo el `postfix-accounts.cf` compartido — no SSH/no-socket, integration-testeable local con un
+  archivo temporal). Alta/baja desde `/admin` + API máquina `/api/provision/*`. Ver
+  TD-PROVISION-MAILBOX-LIFECYCLE (cerrado) para el detalle.
 - **TD-CI-PIN** — pin de GitHub Actions por SHA (requiere Dependabot); alinear `docker.yml`
   (`ubuntu-latest`→pin + `timeout-minutes`).
 - **TD-MAIL-STARTTLS-REQUIRED (LOW)** — el `secure=false` del login es STARTTLS *oportunista*, no
@@ -571,3 +572,41 @@ necesario). TDs residuales:
   `appendToSent` queda real (usa el ImapFlow mockeado → cuenta el APPEND) y `syncFolderHeaders` se
   espía. El test seedea un folder Sent y asserta que el send lo sincroniza
   (`toHaveBeenCalledWith(account, sentFolderId)`). Si alguien quita el sync, el test falla. 496 tests API.
+
+## Migración brownfield Cleverty (jul 2026) — review externo B(codex)/C(z.ai)/D(kimi)
+
+Migración real cleverty.info Roundcube→Bifrost (ambos docker-mailserver). Correo + Meet
+verificados funcionando. El review adversarial confirmó gaps REALES del provisioner turnkey
+(brownfield / "empresa a medias") — la mayoría abiertos en el repo:
+
+- **TD-CERT-CRASHLOOP-PROVISION (HIGH)**: docker-mailserver `SSL_TYPE=letsencrypt` crashea si el DNS
+  no apunta al box al primer boot (ACME imposible) → cfn-signal falla. Fix turnkey: **self-signed
+  fallback + upgrade automático a LE** cuando el DNS resuelva. (Lo puenteé a mano en Cleverty.)
+- **TD-OPENDKIM-SES-EXCLUSION (HIGH/MED entregabilidad)**: el compose deja `ENABLE_OPENDKIM=1` siempre;
+  con relay SES (que firma) = **doble firma DKIM = SPAM**. El helper SES no apaga OpenDKIM. Fix: cuando
+  SesParamName está seteado → `ENABLE_OPENDKIM=0`. (Lo apagué a mano.)
+- **TD-ACME-PRE-DNS (HIGH)**: Traefik intenta ACME producción antes del cutover DNS → quema el
+  rate-limit de failed-auth (5/h). Fix: gate ACME hasta que el DNS resuelva al box, o DNS-01.
+- **TD-IMAP-SELFSIGNED-LOGIN (HIGH)**: el login de Bifrost falla si el mailserver tiene cert self-signed
+  (imapflow rejectUnauthorized) → chicken-egg con el cert. Fix: aceptar el cert del propio box en la
+  conexión interna, o esperar LE antes de habilitar login.
+- **TD-PROVISION-MAILBOX-LIFECYCLE (HIGH seguridad) — ✅ CERRADO (jul 2026)**: Bifrost es ahora la
+  AUTORIDAD de cuentas. Provider PLUGGABLE (`services/mailbox/`, patrón `storage/`): `docker-mailserver`
+  escribe el `postfix-accounts.cf` montado (`./config:/dms-config`, bcrypt `{BLF-CRYPT}`, write-lock +
+  temp/rename atómico) → **sin docker socket ni SSH**. `POST /admin/accounts` en modo turnkey CREA el
+  buzón real (password opcional autogenerada), y **DELETE revoca el buzón** (quita la línea → sin acceso
+  IMAP/SMTP) vía cascade compartido (`services/account-lifecycle.ts`) — cierra el agujero del ex-empleado.
+  Config por env-seed (provisioner) O `/admin` (configurador). API máquina `/api/provision/*`
+  (`X-Provision-Key`, timing-safe, 404 si no hay key) reemplaza el anti-patrón Vanir+claves-AWS+SSH.
+  Compose + secret turnkey en el provisioner. 25 tests. Falta (no bloqueante): frontend del alta
+  simplificada (hoy el form manda IMAP/SMTP igual, la API los ignora en turnkey) + cutover del box vivo.
+- **TD-LIVEKIT-EXTERNAL-PREFLIGHT (MED)**: el modo external sólo valida forma de URL/key/secret, NO
+  prueba el endpoint de signaling. Un LiveKit viejo (v1.8.4 sirve `/rtc`, no `/rtc/v1`) pasa la
+  validación y Meet NO funciona (el incidente ratatoskr). Fix: preflight de `/rtc/v1` + versión.
+- **TD-S3-KMS-RETAIN (HIGH pérdida de datos)**: `S3Bucket`+`KmsKey` sin `DeletionPolicy: Retain` → un
+  delete de stack destruye adjuntos + llave. (Mitigado en Cleverty con termination protection + S3
+  versioning; el template debe llevar Retain.)
+- **TD-SEED-ACCOUNTS-ANTIPATTERN**: sembrar User+Account en Mongo sin la password real deja las cuentas
+  en `status:'error'` (el sync no desencripta creds vacías) y arriesga bootstrap-admin/ownership. NO
+  hacerlo; las cuentas se pueblan bien al primer login. La CLI debería poder importar cuentas
+  existentes de forma consistente (marcarlas "pendiente-de-login", no sincronizarlas hasta el 1er login).
