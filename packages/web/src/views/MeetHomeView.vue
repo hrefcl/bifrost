@@ -106,15 +106,7 @@ onBeforeUnmount(() => {
   <AppLayout>
     <div class="meet-home">
       <div class="wrap">
-        <header class="head">
-          <div class="head-icon"><AppIcon name="video" :size="28" /></div>
-          <div>
-            <h1>{{ t('meet.title') }}</h1>
-            <p class="sub">{{ t('meet.subtitle') }}</p>
-          </div>
-        </header>
-
-        <p v-if="!ready" class="muted">…</p>
+        <p v-if="!ready" class="loading">…</p>
 
         <div v-else-if="!meetAvailable" class="notice">
           <AppIcon name="video" :size="20" />
@@ -122,39 +114,40 @@ onBeforeUnmount(() => {
         </div>
 
         <template v-else>
-          <!-- Crear / resultado -->
-          <section class="card">
-            <template v-if="!created">
-              <div class="card-main">
-                <h2>{{ t('meet.newTitle') }}</h2>
-                <p class="muted">{{ t('meet.newDesc') }}</p>
-              </div>
-              <button class="btn btn-primary" :disabled="creating" @click="newMeeting">
-                <AppIcon name="plus" :size="18" />
+          <!-- HERO: acción principal (crear reunión) o resultado (link listo) -->
+          <section class="hero">
+            <div class="hero-icon"><AppIcon name="video" :size="34" /></div>
+            <h1>{{ t('meet.title') }}</h1>
+            <p class="hero-sub">{{ t('meet.subtitle') }}</p>
+
+            <div v-if="!created" class="hero-body">
+              <button class="btn btn-primary btn-lg" :disabled="creating" @click="newMeeting">
+                <AppIcon name="plus" :size="20" />
                 <span>{{ creating ? t('meet.creating') : t('meet.newBtn') }}</span>
               </button>
-            </template>
+              <p class="hero-hint">{{ t('meet.newDesc') }}</p>
+            </div>
 
-            <template v-else>
-              <div class="card-main">
-                <h2>{{ t('meet.readyTitle') }}</h2>
-                <p class="muted">{{ t('meet.readyDesc') }}</p>
-                <div class="link-row">
-                  <AppIcon name="link" :size="16" class="link-ico" />
-                  <input
-                    class="link-input"
-                    :value="created.meetUrl"
-                    readonly
-                    @focus="($event.target as HTMLInputElement).select()"
-                  />
-                  <button class="btn btn-ghost sm" :title="t('meet.copy')" @click="copyLink">
-                    <AppIcon name="copy" :size="16" />
-                    <span>{{ copied ? t('meet.copied') : t('meet.copy') }}</span>
-                  </button>
-                </div>
+            <div v-else class="hero-body ready">
+              <div class="ready-badge">
+                <span class="dot" />
+                {{ t('meet.readyTitle') }}
+              </div>
+              <div class="link-row">
+                <AppIcon name="link" :size="16" class="link-ico" />
+                <input
+                  class="link-input"
+                  :value="created.meetUrl"
+                  readonly
+                  @focus="($event.target as HTMLInputElement).select()"
+                />
+                <button class="btn btn-ghost sm" :title="t('meet.copy')" @click="copyLink">
+                  <AppIcon name="copy" :size="16" />
+                  <span>{{ copied ? t('meet.copied') : t('meet.copy') }}</span>
+                </button>
               </div>
               <div class="actions">
-                <button class="btn btn-primary" @click="enterCreated">
+                <button class="btn btn-primary btn-lg" @click="enterCreated">
                   <AppIcon name="video" :size="18" />
                   <span>{{ t('meet.enter') }}</span>
                 </button>
@@ -162,25 +155,25 @@ onBeforeUnmount(() => {
                   {{ t('meet.newAnother') }}
                 </button>
               </div>
-            </template>
+            </div>
           </section>
 
-          <!-- Unirse -->
-          <section class="card">
-            <div class="card-main">
+          <!-- Unirse a una reunión existente -->
+          <section class="join-card">
+            <div class="join-text">
               <h2>{{ t('meet.joinTitle') }}</h2>
               <p class="muted">{{ t('meet.joinDesc') }}</p>
-              <div class="join-row">
-                <input
-                  v-model="joinInput"
-                  class="join-input"
-                  :placeholder="t('meet.joinPlaceholder')"
-                  @keyup.enter="joinExisting"
-                />
-                <button class="btn btn-ghost" :disabled="!joinInput.trim()" @click="joinExisting">
-                  {{ t('meet.joinBtn') }}
-                </button>
-              </div>
+            </div>
+            <div class="join-row">
+              <input
+                v-model="joinInput"
+                class="join-input"
+                :placeholder="t('meet.joinPlaceholder')"
+                @keyup.enter="joinExisting"
+              />
+              <button class="btn btn-ghost" :disabled="!joinInput.trim()" @click="joinExisting">
+                {{ t('meet.joinBtn') }}
+              </button>
             </div>
           </section>
 
@@ -195,71 +188,119 @@ onBeforeUnmount(() => {
 .meet-home {
   height: 100%;
   overflow: auto;
-  padding: 32px 20px;
+  padding: 40px 20px;
 }
 .wrap {
-  max-width: 640px;
+  max-width: 560px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
-.head {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 4px;
+.loading {
+  text-align: center;
+  color: var(--text-3);
+  padding: 40px 0;
 }
-.head-icon {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
+
+/* ---- HERO: acción principal, estilo Google Meet ---- */
+.hero {
+  text-align: center;
+  padding: 40px 28px 32px;
+  border-radius: 20px;
+  border: 1px solid var(--border);
+  background:
+    radial-gradient(
+      120% 90% at 50% -10%,
+      color-mix(in srgb, var(--accent) 12%, transparent),
+      transparent 60%
+    ),
+    var(--surface);
+  box-shadow: var(--shadow-sm, 0 1px 2px rgba(0, 0, 0, 0.04));
+}
+.hero-icon {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 16px;
+  border-radius: 18px;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-  flex-shrink: 0;
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 6px 20px -6px color-mix(in srgb, var(--accent) 55%, transparent);
 }
-.head h1 {
+.hero h1 {
   margin: 0;
-  font-size: 22px;
+  font-size: 26px;
+  letter-spacing: -0.01em;
   color: var(--text-1);
 }
-.sub {
-  margin: 2px 0 0;
+.hero-sub {
+  margin: 6px auto 0;
+  max-width: 400px;
   color: var(--text-2);
-  font-size: 14px;
+  font-size: 14.5px;
+  line-height: 1.5;
 }
-.card {
+.hero-body {
+  margin-top: 24px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  padding: 20px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  gap: 10px;
 }
-.card-main {
-  flex: 1;
-  min-width: 240px;
-}
-.card-main h2 {
-  margin: 0 0 4px;
-  font-size: 16px;
-  color: var(--text-1);
-}
-.muted {
-  color: var(--text-2);
-  font-size: 13.5px;
+.hero-hint {
   margin: 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.ready {
+  width: 100%;
+}
+.ready-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
+  color: var(--success, #16a34a);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.ready-badge .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
 }
 .actions {
   display: flex;
   gap: 8px;
+  justify-content: center;
   flex-wrap: wrap;
+  margin-top: 14px;
 }
+
+/* ---- JOIN ---- */
+.join-card {
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+.join-text h2 {
+  margin: 0 0 2px;
+  font-size: 15px;
+  color: var(--text-1);
+}
+.muted {
+  color: var(--text-2);
+  font-size: 13px;
+  margin: 0;
+}
+
+/* ---- shared ---- */
 .btn {
   display: inline-flex;
   align-items: center;
@@ -272,6 +313,14 @@ onBeforeUnmount(() => {
   font-size: 14px;
   font-weight: 600;
   white-space: nowrap;
+  transition:
+    filter 0.12s,
+    background 0.12s;
+}
+.btn-lg {
+  padding: 13px 26px;
+  font-size: 15px;
+  border-radius: 12px;
 }
 .btn:disabled {
   opacity: 0.55;
@@ -311,7 +360,7 @@ onBeforeUnmount(() => {
 .join-input {
   flex: 1;
   min-width: 0;
-  height: 40px;
+  height: 42px;
   padding: 0 12px;
   border-radius: 10px;
   border: 1px solid var(--border);
@@ -335,5 +384,6 @@ onBeforeUnmount(() => {
   color: var(--danger);
   font-size: 13.5px;
   margin: 0;
+  text-align: center;
 }
 </style>
