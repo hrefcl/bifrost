@@ -13,6 +13,23 @@ const USER = {
   displayName: 'Admin Demo',
   primaryEmail: 'admin@aulion.app',
   role: 'admin',
+  adminPermissions: [
+    'accounts.manage',
+    'groups.manage',
+    'roles.manage',
+    'branding.manage',
+    'storage.manage',
+    'calendar.manage',
+    'scheduling.manage',
+  ],
+};
+// Delegado (rol custom): sólo gestiona grupos + roles → el sidebar debe mostrar sólo esas secciones.
+const DELEGATE = {
+  id: 'u2',
+  displayName: 'María Soto',
+  primaryEmail: 'maria.soto@aulion.app',
+  role: 'user',
+  adminPermissions: ['groups.manage', 'roles.manage'],
 };
 const BRANDING = {
   companyName: 'Aulion',
@@ -20,46 +37,140 @@ const BRANDING = {
   accentColor: '#1b66ff',
   logoDataUrl: null,
 };
+const GB = 1073741824;
 const ACCOUNTS = [
   {
     id: 'a1',
     userId: 'u1',
-    email: 'ana@aulion.app',
-    name: 'Ana',
-    displayName: 'Ana Pérez',
+    email: 'admin@aulion.app',
+    name: 'Admin',
+    displayName: 'Admin',
     role: 'admin',
+    customRoleId: null,
+    customRoleName: null,
     isPrimary: true,
     status: 'active',
-    quotaBytes: 5368709120,
-    usedBytes: 1503238553,
-    lastSyncedAt: null,
+    quotaBytes: 0,
+    usedBytes: 0,
+    lastSyncedAt: '2026-06-30T12:30:00.000Z',
   },
   {
     id: 'a2',
     userId: 'u2',
-    email: 'diego@aulion.app',
-    name: 'Diego',
-    displayName: 'Diego Soto',
+    email: 'maria.soto@aulion.app',
+    name: 'Maria',
+    displayName: 'María Soto',
     role: 'user',
+    customRoleId: 'r1',
+    customRoleName: 'Admin de cuentas',
     isPrimary: true,
     status: 'active',
-    quotaBytes: 2147483648,
-    usedBytes: 805306368,
-    lastSyncedAt: null,
+    quotaBytes: 25 * GB,
+    usedBytes: 12.1 * GB,
+    lastSyncedAt: '2026-06-30T09:10:00.000Z',
   },
   {
     id: 'a3',
     userId: 'u3',
-    email: 'lucia@aulion.app',
-    name: 'Lucia',
-    displayName: 'Lucía Mora',
+    email: 'juan.perez@aulion.app',
+    name: 'Juan',
+    displayName: 'Juan Pérez',
     role: 'user',
+    customRoleId: null,
+    customRoleName: null,
     isPrimary: true,
-    status: 'disabled',
-    quotaBytes: 0,
-    usedBytes: 134217728,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 8.0 * GB,
     lastSyncedAt: null,
   },
+  {
+    id: 'a4',
+    userId: 'u4',
+    email: 'carla.diaz@aulion.app',
+    name: 'Carla',
+    displayName: 'Carla Díaz',
+    role: 'user',
+    customRoleId: 'r2',
+    customRoleName: 'Gestor de agenda',
+    isPrimary: true,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 4.0 * GB,
+    lastSyncedAt: null,
+  },
+  {
+    id: 'a5',
+    userId: 'u5',
+    email: 'diego.rojas@aulion.app',
+    name: 'Diego',
+    displayName: 'Diego Rojas',
+    role: 'user',
+    customRoleId: null,
+    customRoleName: null,
+    isPrimary: true,
+    status: 'disabled',
+    quotaBytes: 25 * GB,
+    usedBytes: 19.3 * GB,
+    lastSyncedAt: null,
+  },
+  {
+    id: 'a6',
+    userId: 'u6',
+    email: 'sofia.luna@aulion.app',
+    name: 'Sofia',
+    displayName: 'Sofía Luna',
+    role: 'user',
+    customRoleId: 'r3',
+    customRoleName: 'Admin de marca',
+    isPrimary: true,
+    status: 'active',
+    quotaBytes: 25 * GB,
+    usedBytes: 6.5 * GB,
+    lastSyncedAt: null,
+  },
+];
+const ROLES = [
+  {
+    id: 'r1',
+    name: 'Admin de cuentas',
+    description: 'Gestiona cuentas y grupos.',
+    permissions: ['accounts.manage', 'groups.manage'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+  {
+    id: 'r2',
+    name: 'Gestor de agenda',
+    description: 'Gestiona la Agenda de reuniones.',
+    permissions: ['scheduling.manage'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+  {
+    id: 'r3',
+    name: 'Admin de marca',
+    description: 'Personaliza la marca de la empresa.',
+    permissions: ['branding.manage'],
+    isSystem: false,
+    createdAt: '',
+    updatedAt: '',
+  },
+];
+const PERMISSIONS = [
+  { key: 'accounts.manage', category: 'Cuentas', label: 'Gestionar cuentas' },
+  { key: 'groups.manage', category: 'Cuentas', label: 'Gestionar grupos' },
+  { key: 'roles.manage', category: 'Seguridad', label: 'Gestionar roles y permisos' },
+  { key: 'branding.manage', category: 'Configuración', label: 'Gestionar marca' },
+  { key: 'storage.manage', category: 'Configuración', label: 'Gestionar almacenamiento' },
+  {
+    key: 'calendar.manage',
+    category: 'Configuración',
+    label: 'Gestionar preferencias de calendario',
+  },
+  { key: 'scheduling.manage', category: 'Agenda', label: 'Gestionar la Agenda' },
 ];
 const SCHED = [
   {
@@ -221,7 +332,7 @@ function json(route, body, status = 200) {
   return route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
 }
 
-async function mockApi(page, { publicSlug = 'ana' } = {}) {
+async function mockApi(page, { publicSlug = 'ana', user = USER } = {}) {
   await page.route('**/api/**', (route) => {
     const url = new URL(route.request().url());
     const p = url.pathname.replace(/^\/api/, '');
@@ -229,12 +340,53 @@ async function mockApi(page, { publicSlug = 'ana' } = {}) {
     if (p === '/setup/status') return json(route, { setupRequired: false });
     if (p === '/branding') return json(route, BRANDING);
     if (p === '/auth/refresh') return json(route, { accessToken: 'tok' });
-    if (p === '/auth/me') return json(route, USER);
+    if (p === '/auth/me') return json(route, user);
     if (p.startsWith('/compliance/pending')) return json(route, { pending: [] });
     // admin
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
+    if (p === '/admin/roles') return json(route, { roles: ROLES });
+    if (p === '/admin/permissions') return json(route, { permissions: PERMISSIONS });
     if (p === '/admin/config/branding') return json(route, BRANDING);
     if (p === '/admin/config/storage') return json(route, { providerType: 'local' });
+    if (p === '/admin/groups')
+      return json(route, {
+        groups: [
+          {
+            id: 'g1',
+            name: 'Ventas',
+            description: 'Equipo comercial',
+            color: '#1b66ff',
+            email: 'ventas@aulion.app',
+            memberUserIds: ['u1', 'u2'],
+            memberCount: 2,
+            createdAt: '',
+            updatedAt: '',
+          },
+          {
+            id: 'g2',
+            name: 'Soporte técnico',
+            color: '#9333ea',
+            memberUserIds: ['u3'],
+            memberCount: 1,
+            createdAt: '',
+            updatedAt: '',
+          },
+        ],
+      });
+    if (p === '/admin/config/storage-defaults')
+      return json(route, { defaultQuotaBytes: 2147483648 });
+    if (p === '/admin/config/calendar')
+      return json(route, {
+        timezone: 'America/Santiago',
+        weekStart: 1,
+        dayStart: '08:00',
+        dayEnd: '20:00',
+        defaultDurationMin: 30,
+        defaultView: 'week',
+        showWeekends: true,
+        autoInvite: true,
+        syncAgenda: true,
+      });
     if (p === '/admin/version') return json(route, { build: '113', sha: 'abc1234' });
     if (p === '/admin/update/check')
       return json(route, {
@@ -296,6 +448,26 @@ const run = async () => {
   // Admin
   await page.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
   await shot(page, 'admin-accounts');
+  // Ficha de usuario (click en una fila)
+  await page
+    .locator('[data-testid="user-row-a2"]')
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-user-detail');
+  await page
+    .getByRole('button', { name: /Volver a usuarios/ })
+    .click()
+    .catch(() => undefined);
+  await page
+    .getByRole('button', { name: 'Grupos' })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-groups');
+  await page
+    .getByRole('button', { name: /Roles y permisos/ })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-roles');
   await page
     .getByRole('button', { name: 'Marca' })
     .click()
@@ -311,6 +483,15 @@ const run = async () => {
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-storage');
+  await page
+    .getByRole('button', { name: 'Calendario' })
+    .click()
+    .catch(() => undefined);
+  await shot(page, 'admin-preferences');
+  await page
+    .getByRole('button', { name: 'Usuarios' })
+    .click()
+    .catch(() => undefined);
   await shot(page, 'admin-accounts-dark', 'dark');
 
   // Scheduling host
@@ -350,6 +531,18 @@ const run = async () => {
 
   await ctx.close();
 
+  // Delegado (rol custom con sólo groups.manage + roles.manage): el sidebar debe mostrar SÓLO Grupos
+  // y Roles y permisos (RBAC F8 — filtrado por permiso). Prueba que el router lo admite y filtra.
+  const dctx = await browser.newContext({
+    viewport: { width: 1280, height: 900 },
+    timezoneId: 'America/Santiago',
+  });
+  const dpage = await dctx.newPage();
+  await mockApi(dpage, { user: DELEGATE });
+  await dpage.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
+  await shot(dpage, 'admin-delegate');
+  await dctx.close();
+
   // Mobile (drawer admin)
   const m = await browser.newContext({
     viewport: { width: 414, height: 850 },
@@ -365,6 +558,14 @@ const run = async () => {
     .catch(() => undefined);
   await mp.waitForTimeout(350);
   await shot(mp, 'admin-mobile-drawer');
+  // Responsive: ficha en móvil. Reset con goto fresco (en móvil el drawer arranca cerrado).
+  await mp.goto(`${BASE}/admin`, { waitUntil: 'networkidle' });
+  await mp
+    .locator('[data-testid="user-row-a2"]')
+    .click()
+    .catch(() => undefined);
+  await mp.waitForTimeout(250);
+  await shot(mp, 'admin-mobile-detail');
   await mp.goto(`${BASE}/u/ana`, { waitUntil: 'networkidle' });
   await shot(mp, 'pub-profile-mobile');
   await m.close();

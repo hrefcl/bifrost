@@ -9,6 +9,7 @@ import {
 } from '../services/auth.js';
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
+import { resolveAdminAccess } from '../lib/authz.js';
 import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
@@ -101,7 +102,7 @@ export default function authRoutes(fastify: FastifyInstance) {
       );
 
       void reply.setCookie('refresh_token', refreshToken, cookieOptions());
-      return toLoginResponse(user, account, accessToken);
+      return await toLoginResponse(user, account, accessToken);
     }
   );
 
@@ -156,12 +157,15 @@ export default function authRoutes(fastify: FastifyInstance) {
     const accounts = await Account.find({ userId: user._id })
       .select('email name isPrimary status')
       .lean();
+    // Permisos admin efectivos (RBAC F8): la UI admite/filtra el panel /admin con esto (backend re-valida).
+    const { permissions } = await resolveAdminAccess(user._id.toString());
 
     return {
       id: user._id.toString(),
       primaryEmail: user.primaryEmail,
       displayName: user.displayName,
       role: user.role,
+      adminPermissions: [...permissions],
       avatarUrl: user.avatarUrl,
       username: user.username,
       preferences: user.preferences,

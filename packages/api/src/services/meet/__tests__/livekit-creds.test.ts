@@ -61,11 +61,20 @@ describe('resolveLivekitCreds — DB-XOR-env atómico (F3.7)', () => {
       livekitApiUrl: 'https://x.livekit.cloud',
     };
     const r = resolveLivekitCreds(s);
-    expect(r).toEqual({ source: 'db', key: 'DBKEY', secret: 'dbsecret', apiUrl: 'https://x.livekit.cloud' });
+    expect(r).toEqual({
+      source: 'db',
+      key: 'DBKEY',
+      secret: 'dbsecret',
+      apiUrl: 'https://x.livekit.cloud',
+    });
   });
 
   it('par DB completo SIN apiUrl → deriva de wsUrl (wss→https)', () => {
-    const r = resolveLivekitCreds({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: encrypt('s') });
+    const r = resolveLivekitCreds({
+      ...BASE,
+      livekitApiKey: 'K',
+      livekitApiSecretEnc: encrypt('s'),
+    });
     expect(r).toMatchObject({ source: 'db', apiUrl: 'https://meet.test' });
   });
 
@@ -74,7 +83,12 @@ describe('resolveLivekitCreds — DB-XOR-env atómico (F3.7)', () => {
     process.env.LIVEKIT_API_SECRET = 'envsecret';
     process.env.LIVEKIT_API_URL = 'http://livekit:7880';
     const r = resolveLivekitCreds(BASE);
-    expect(r).toEqual({ source: 'env', key: 'ENVKEY', secret: 'envsecret', apiUrl: 'http://livekit:7880' });
+    expect(r).toEqual({
+      source: 'env',
+      key: 'ENVKEY',
+      secret: 'envsecret',
+      apiUrl: 'http://livekit:7880',
+    });
   });
 
   it('par DB PARCIAL (solo key) → se trata como ausente → env (review C-R1)', () => {
@@ -89,7 +103,11 @@ describe('resolveLivekitCreds — DB-XOR-env atómico (F3.7)', () => {
     process.env.LIVEKIT_API_SECRET = 'envsecret';
     // EncryptedPayload con tag/ciphertext basura → decrypt() lanza (GCM no verifica).
     const corrupt = { ...encrypt('x'), tag: '00000000000000000000000000000000' };
-    const r = resolveLivekitCreds({ ...BASE, livekitApiKey: 'DBKEY', livekitApiSecretEnc: corrupt });
+    const r = resolveLivekitCreds({
+      ...BASE,
+      livekitApiKey: 'DBKEY',
+      livekitApiSecretEnc: corrupt,
+    });
     expect(r).toEqual({ source: 'error' });
   });
 
@@ -128,7 +146,9 @@ describe('meetEnabled — presencia, total, nunca lanza (F3.7 C-M2)', () => {
 
   it('NO lanza con secret indesencriptable (presencia true; el fail-closed es al emitir token)', () => {
     const corrupt = { ...encrypt('x'), tag: '00000000000000000000000000000000' };
-    expect(() => meetEnabled({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: corrupt })).not.toThrow();
+    expect(() =>
+      meetEnabled({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: corrupt })
+    ).not.toThrow();
     expect(meetEnabled({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: corrupt })).toBe(true);
   });
 });
@@ -145,13 +165,19 @@ describe('livekitSourceOf + issueAccessToken fail-closed', () => {
 
   it('livekitSourceOf refleja la fuente efectiva', () => {
     expect(livekitSourceOf(BASE)).toBe('none');
-    expect(livekitSourceOf({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: encrypt('s') })).toBe('db');
+    expect(
+      livekitSourceOf({ ...BASE, livekitApiKey: 'K', livekitApiSecretEnc: encrypt('s') })
+    ).toBe('db');
   });
 
   it('issueAccessToken usa las creds DB (no env) cuando ambas existen', async () => {
     process.env.LIVEKIT_API_KEY = 'ENVKEY';
     process.env.LIVEKIT_API_SECRET = 'envsecret';
-    const s: StoredMeetSettings = { ...BASE, livekitApiKey: 'DBKEY', livekitApiSecretEnc: encrypt('dbsecret') };
+    const s: StoredMeetSettings = {
+      ...BASE,
+      livekitApiKey: 'DBKEY',
+      livekitApiSecretEnc: encrypt('dbsecret'),
+    };
     const tok = await issueAccessToken({
       settings: s,
       role: 'external',

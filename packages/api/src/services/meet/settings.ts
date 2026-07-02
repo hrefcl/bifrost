@@ -71,7 +71,9 @@ export async function getStoredMeetSettings(): Promise<StoredMeetSettings> {
     enabled: v.enabled ?? provisionedEnabledDefault(),
     wsUrl: v.wsUrl ?? process.env.LIVEKIT_WS_URL ?? DEFAULT_STORED_MEET_SETTINGS.wsUrl,
     publicBaseUrl:
-      v.publicBaseUrl ?? process.env.MEET_PUBLIC_BASE_URL ?? DEFAULT_STORED_MEET_SETTINGS.publicBaseUrl,
+      v.publicBaseUrl ??
+      process.env.MEET_PUBLIC_BASE_URL ??
+      DEFAULT_STORED_MEET_SETTINGS.publicBaseUrl,
     maxParticipants: v.maxParticipants ?? DEFAULT_STORED_MEET_SETTINGS.maxParticipants,
     maxDurationMinutes: v.maxDurationMinutes ?? DEFAULT_STORED_MEET_SETTINGS.maxDurationMinutes,
     allowExternal: v.allowExternal ?? DEFAULT_STORED_MEET_SETTINGS.allowExternal,

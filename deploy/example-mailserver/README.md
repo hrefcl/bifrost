@@ -105,6 +105,7 @@ Ver `../../docs/admin-config-y-providers.md`.
 ---
 
 <<<<<<< HEAD
+
 ## 📹 (Opcional) Bifrost Meet — videollamadas
 
 Videollamadas self-hosted (LiveKit) en el **mismo** servidor. **Opcional**: si no lo activás, todo lo de
@@ -127,6 +128,7 @@ evento/reserva en la agenda (toggle "Reunión con video").
 API key/secret + `POST /api/admin/meet/test`) — el panel visual es F3.7-frontend. Guía completa:
 **[`../../docs/meet/INSTALL.md`](../../docs/meet/INSTALL.md)**.
 =======
+
 ## 📤 Envío saliente — relay SES (PERSISTENTE)
 
 AWS (y casi todo cloud) **bloquea el puerto 25 saliente** → sin un relay, el box RECIBE pero no ENVÍA a
@@ -145,26 +147,28 @@ Luego `docker compose up -d mailserver`. Al vivir en el volumen, **sobrevive res
 password SMTP de SES NO es el SecretAccessKey: se deriva (ver la CLI `bifrost-provision`, que además
 automatiza identidad/DKIM/MAIL FROM y puebla esto solo). Recordá: una cuenta SES nueva arranca en
 **sandbox** (sólo destinos verificados) → pedí _production access_ en la consola de SES.
->>>>>>> origin/main
+
+> > > > > > > origin/main
 
 ---
 
 ## ❓ Problemas comunes
 
 <<<<<<< HEAD
-| Síntoma             | Solución                                                                                                 |
+| Síntoma | Solución |
 | ------------------- | -------------------------------------------------------------------------------------------------------- |
-| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos.                      |
-| No puedo enviar     | Puerto 25 saliente bloqueado por tu proveedor (común en clouds) → pedí que lo abran o usá un relay SMTP. |
-| Login falla         | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`.                          |
-| Meet: media no conecta | Abrí UDP `7882`/`3478` y TCP `7881`; probá desde otra red. Detalle: `docs/meet/INSTALL.md` §5/§8.      |
+| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos. |
+| No puedo enviar | Puerto 25 saliente bloqueado por tu proveedor (común en clouds) → pedí que lo abran o usá un relay SMTP. |
+| Login falla | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`. |
+| Meet: media no conecta | Abrí UDP `7882`/`3478` y TCP `7881`; probá desde otra red. Detalle: `docs/meet/INSTALL.md` §5/§8. |
 =======
-| Síntoma             | Solución                                                                                                                                                                                                               |
+| Síntoma | Solución |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos.                                                                                                                                    |
-| No puedo enviar     | Puerto 25 saliente bloqueado (común en clouds). Configurá el relay SES en `mailserver.env` (ver §Envío saliente). Verificá: `docker compose exec mailserver postconf -h relayhost` debe mostrar el host SES, NO vacío. |
-| Login falla         | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`.                                                                                                                                        |
->>>>>>> origin/main
+| El cert TLS no sale | Revisá que el `A` de `webmail.` apunte a tu IP y los puertos 80/443 estén abiertos. |
+| No puedo enviar | Puerto 25 saliente bloqueado (común en clouds). Configurá el relay SES en `mailserver.env` (ver §Envío saliente). Verificá: `docker compose exec mailserver postconf -h relayhost` debe mostrar el host SES, NO vacío. |
+| Login falla | El buzón existe? (`setup email list`). Revisá `docker compose logs mailserver`. |
+
+> > > > > > > origin/main
 
 > Antes de producción real: desactivá `--api.insecure` de Traefik, configurá backups de
 > Mongo/Redis y revisá el hardening de `docs/deuda-tecnica.md` (F4).

@@ -2,6 +2,8 @@ import { Account, type IAccount } from '../models/Account.js';
 import { Email, type IEmail } from '../models/Email.js';
 import { Folder, type IFolder } from '../models/Folder.js';
 import { User } from '../models/User.js';
+import { Role } from '../models/Role.js';
+import { ALL_PERMISSION_KEYS, sanitizePermissions } from './permissions.js';
 
 /** Error de autorización admin → 403 (a diferencia de OwnershipError que es 404). */
 export class ForbiddenError extends Error {
@@ -19,6 +21,28 @@ export class ForbiddenError extends Error {
 export async function requireAdmin(userId: string): Promise<void> {
   const user = await User.findById(userId).select('role').lean();
   if (user?.role !== 'admin') throw new ForbiddenError();
+}
+
+/** Acceso admin efectivo (RBAC, F8): rol base + permisos efectivos resueltos LIVE. */
+export interface AdminAccess {
+  role: 'user' | 'admin';
+  /** Permisos efectivos: admin = TODO el catálogo; rol custom = sus permisos válidos; si no, vacío. */
+  permissions: Set<string>;
+}
+
+/**
+ * Resuelve el acceso admin de un usuario consultando la DB (no el JWT):
+ *  - `role==='admin'` → superusuario (TODOS los permisos del catálogo). `customRoleId` se IGNORA.
+ *  - rol custom → sus permisos ∩ catálogo (claves stale se ignoran — review C/D).
+ *  - rol custom inexistente (borrado) → permisos vacíos (anti-lockout: nunca crashea, el admin sigue).
+ */
+export async function resolveAdminAccess(userId: string): Promise<AdminAccess> {
+  const user = await User.findById(userId).select('role customRoleId').lean();
+  if (!user) return { role: 'user', permissions: new Set() };
+  if (user.role === 'admin') return { role: 'admin', permissions: new Set(ALL_PERMISSION_KEYS) };
+  if (!user.customRoleId) return { role: 'user', permissions: new Set() };
+  const role = await Role.findById(user.customRoleId).select('permissions').lean();
+  return { role: 'user', permissions: new Set(role ? sanitizePermissions(role.permissions) : []) };
 }
 
 /**

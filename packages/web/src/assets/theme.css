@@ -34,6 +34,9 @@
 
   /* semánticos */
   --danger: #dc2626;
+  --red: #dc2626;
+  --green: #16a34a;
+  --amber: #d97706;
   --star: #f4b400;
 
   /* toast */
@@ -69,6 +72,9 @@
   --accent-ink: color-mix(in srgb, var(--accent) 62%, #fff);
 
   --danger: #f87171;
+  --red: #f87171;
+  --green: #34d27e;
+  --amber: #fbbf24;
   --star: #f5c451;
 
   --toast-bg: #e7eaf1;

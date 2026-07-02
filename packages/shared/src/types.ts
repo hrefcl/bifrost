@@ -47,6 +47,11 @@ export interface User {
   primaryEmail: string;
   displayName: string;
   role: 'user' | 'admin';
+  /**
+   * Permisos admin EFECTIVOS (RBAC F8): admin → catálogo completo; rol custom → sus permisos; si no,
+   * vacío. La UI usa esto para admitir al panel /admin y filtrar secciones. El backend re-valida igual.
+   */
+  adminPermissions: string[];
   avatarUrl?: string;
   /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
   username?: string;
@@ -463,6 +468,19 @@ export interface SchedulingSettings {
   defaults: { timezone: string; durationMinutes: number; dateRangeDays: number };
   maxEventTypesPerUser?: number;
   auditEnabled: boolean;
+}
+
+/** Grupo de cuentas/usuarios (admin, F7). `memberUserIds` referencia usuarios; sin duplicados. */
+export interface Group {
+  id: string;
+  name: string;
+  description?: string;
+  color?: string;
+  email?: string;
+  memberUserIds: string[];
+  memberCount: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 /** Defaults de calendario a nivel instancia (admin). Singleton en SystemConfig key='calendarDefaults'. */

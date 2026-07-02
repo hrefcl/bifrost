@@ -19,6 +19,7 @@ import {
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
 import { User } from '../../models/User.js';
+import { Role } from '../../models/Role.js';
 import { Account } from '../../models/Account.js';
 import { Draft } from '../../models/Draft.js';
 import { Contact } from '../../models/Contact.js';
@@ -54,6 +55,28 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     await resetState();
   });
 
+  it('anti-escalada (RBAC F8): el alta desde el panel NUNCA crea un admin, aunque no haya admin', async () => {
+    const app = await buildTestApp();
+    // Delegado con accounts.manage y NINGÚN admin en la instancia (p. ej. borrado fuera de banda).
+    const { user } = await seedUserWithAccount({ email: 'delegate@test.com' });
+    const role = await Role.create({ name: 'altas', permissions: ['accounts.manage'] });
+    await User.updateOne({ _id: user._id }, { $set: { customRoleId: role._id } });
+    expect(await User.exists({ role: 'admin' })).toBeNull();
+
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers: authHeaders(app, user._id.toString()),
+      payload: newAccountBody('nuevo@empresa.com'),
+    });
+    expect(create.statusCode).toBe(201);
+    // Sin el fix, el bootstrap habría hecho admin a la cuenta creada. Debe ser 'user'.
+    const created = await User.findOne({ primaryEmail: 'nuevo@empresa.com' }).select('role').lean();
+    expect(created?.role).toBe('user');
+    expect(await User.exists({ role: 'admin' })).toBeNull();
+    await app.close();
+  });
+
   it('POST /accounts crea una cuenta (verifica IMAP) y GET /accounts la lista con su cuota', async () => {
     const app = await buildTestApp();
     const { headers } = await seedAdmin(app);
@@ -74,6 +97,58 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     expect(created).toBeTruthy();
     expect(created?.quotaBytes).toBe(50 * 1024 * 1024);
     expect(created?.status).toBe('active');
+    await app.close();
+  });
+
+  it('F6: cuota por defecto se aplica al crear sin quotaBytes; explícita la respeta; no migra existentes', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const DEFAULT = 2 * 1024 * 1024 * 1024; // 2 GB
+
+    // cuenta PRE-existente con cuota explícita (antes de tocar el default)
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('pre@empresa.com'),
+    });
+
+    // fijar la cuota por defecto
+    const setDef = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/storage-defaults',
+      headers,
+      payload: { defaultQuotaBytes: DEFAULT },
+    });
+    expect(setDef.statusCode).toBe(200);
+    expect(JSON.parse(setDef.body).defaultQuotaBytes).toBe(DEFAULT);
+
+    // la cuenta PRE-existente NO se migra: conserva su cuota original (review B-LOW)
+    const afterDefault = await app.inject({ method: 'GET', url: '/api/admin/accounts', headers });
+    const pre = (
+      JSON.parse(afterDefault.body) as { accounts: { email: string; quotaBytes: number }[] }
+    ).accounts.find((a) => a.email === 'pre@empresa.com');
+    expect(pre?.quotaBytes).toBe(50 * 1024 * 1024);
+
+    // crear SIN quotaBytes → toma el default
+    const { quotaBytes: _omit, ...noQuota } = newAccountBody('sinquota@empresa.com');
+    const created = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: noQuota,
+    });
+    expect(created.statusCode).toBe(201);
+    expect(JSON.parse(created.body).quotaBytes).toBe(DEFAULT);
+
+    // crear CON quotaBytes explícita → respeta el valor enviado (no el default)
+    const explicit = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: newAccountBody('conquota@empresa.com'),
+    });
+    expect(JSON.parse(explicit.body).quotaBytes).toBe(50 * 1024 * 1024);
     await app.close();
   });
 

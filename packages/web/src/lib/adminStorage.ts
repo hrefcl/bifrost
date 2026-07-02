@@ -52,9 +52,6 @@ export function s3Incomplete(
 ): boolean {
   if (form.useInstanceRole) return false;
   return (
-    !form.bucket.trim() ||
-    !form.region.trim() ||
-    !form.accessKeyId.trim() ||
-    !form.secretAccessKey
+    !form.bucket.trim() || !form.region.trim() || !form.accessKeyId.trim() || !form.secretAccessKey
   );
 }

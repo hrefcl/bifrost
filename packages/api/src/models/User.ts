@@ -11,6 +11,8 @@ export interface IUser extends Document {
   username?: string;
   /** Horario de agenda por defecto (puntero atómico — review B; evita el patrón boolean+índice). */
   defaultScheduleId?: mongoose.Types.ObjectId;
+  /** Rol custom (RBAC, F8). OPCIONAL. Se IGNORA si `role==='admin'` (admin = superusuario). */
+  customRoleId?: mongoose.Types.ObjectId;
   preferences: UserPreferences;
   createdAt: Date;
   updatedAt: Date;
@@ -30,6 +32,8 @@ const UserSchema = new Schema<IUser>(
     username: { type: String },
     // Puntero al horario de agenda por defecto (set atómico de un solo doc — review B).
     defaultScheduleId: { type: Schema.Types.ObjectId },
+    // Rol custom (RBAC). Ref a Role; se limpia en cascada si el rol se borra (anti-lockout, review C/D).
+    customRoleId: { type: Schema.Types.ObjectId, ref: 'Role' },
     preferences: {
       language: { type: String, default: 'es' },
       timezone: { type: String, default: 'America/Mexico_City' },

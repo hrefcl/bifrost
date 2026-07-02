@@ -304,7 +304,10 @@ export async function closeLiveKitRoom(settings: StoredMeetSettings, slug: strin
 }
 
 /** Clampa el cap por-sala al techo global de MeetSettings (review D-caveat). */
-export function clampMaxParticipants(roomMax: number, settings: Pick<StoredMeetSettings, 'maxParticipants'>): number {
+export function clampMaxParticipants(
+  roomMax: number,
+  settings: Pick<StoredMeetSettings, 'maxParticipants'>
+): number {
   return Math.max(2, Math.min(roomMax, settings.maxParticipants));
 }
 

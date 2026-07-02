@@ -8,9 +8,12 @@ import { vFocusTrap } from '@/lib/focusTrap';
 import ComplianceAdmin from '@/components/admin/ComplianceAdmin.vue';
 import AdminSchedulingPanel from '@/components/admin/AdminSchedulingPanel.vue';
 import AdminCalendarPrefs from '@/components/admin/AdminCalendarPrefs.vue';
+import AdminGroups from '@/components/admin/AdminGroups.vue';
+import AdminRoles from '@/components/admin/AdminRoles.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
+import { useAuthStore } from '@/stores/auth';
 import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adminStorage';
 
 /**
@@ -21,7 +24,15 @@ import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adm
  *  - Compliance: gestión de documentos legales, versiones, enforcement y auditoría de aceptaciones.
  * Todo exige rol admin (verificado también en el backend).
  */
-type Tab = 'accounts' | 'branding' | 'storage' | 'compliance' | 'scheduling' | 'preferences';
+type Tab =
+  | 'accounts'
+  | 'groups'
+  | 'roles'
+  | 'branding'
+  | 'storage'
+  | 'compliance'
+  | 'scheduling'
+  | 'preferences';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -45,6 +56,20 @@ const SECTIONS: AdminSection[] = [
     desc: 'admin.accounts.desc',
   },
   {
+    key: 'groups',
+    icon: 'user',
+    label: 'admin.tabs.groups',
+    title: 'admin.groups.title',
+    desc: 'admin.groups.desc',
+  },
+  {
+    key: 'roles',
+    icon: 'shield',
+    label: 'admin.tabs.roles',
+    title: 'admin.roles.title',
+    desc: 'admin.roles.desc',
+  },
+  {
     key: 'branding',
     icon: 'palette',
     label: 'admin.tabs.branding',
@@ -59,28 +84,79 @@ const SECTIONS: AdminSection[] = [
     desc: 'admin.questionDesc',
   },
   {
+    key: 'preferences',
+    icon: 'calendar',
+    label: 'admin.tabs.preferences',
+    title: 'admin.preferences.title',
+    desc: 'admin.preferences.desc',
+  },
+  {
     key: 'compliance',
-    icon: 'shield',
+    icon: 'file',
     label: 'admin.tabs.compliance',
     title: 'admin.compliance.title',
     desc: 'admin.compliance.desc',
   },
   {
     key: 'scheduling',
-    icon: 'calendar',
+    icon: 'clock',
     label: 'admin.tabs.scheduling',
     title: 'admin.scheduling.title',
     desc: 'admin.scheduling.desc',
   },
-  {
-    key: 'preferences',
-    icon: 'sliders',
-    label: 'admin.tabs.preferences',
-    title: 'admin.preferences.title',
-    desc: 'admin.preferences.desc',
-  },
 ];
 const activeSection = computed(() => SECTIONS.find((s) => s.key === tab.value) ?? SECTIONS[0]);
+
+// Grupos del sidebar (tipo Google Workspace Admin): cada grupo agrupa secciones bajo un encabezado.
+// `count` (opcional) es la clave de un contador reactivo mostrado como badge junto al item.
+interface NavGroup {
+  label: string; // i18n key del encabezado
+  keys: Tab[];
+}
+const NAV_GROUPS: NavGroup[] = [
+  { label: 'admin.navGroups.directory', keys: ['accounts', 'groups', 'roles'] },
+  { label: 'admin.navGroups.config', keys: ['branding', 'storage', 'preferences'] },
+  { label: 'admin.navGroups.compliance', keys: ['compliance', 'scheduling'] },
+];
+function sectionOf(key: Tab): AdminSection {
+  return SECTIONS.find((s) => s.key === key) ?? SECTIONS[0];
+}
+
+// ── Visibilidad por permiso (RBAC F8) ──
+// El admin real ve TODO. Un delegado ve sólo las secciones cuyo permiso posee (mismo criterio que el
+// default-deny del backend). `compliance` no tiene permiso en el catálogo → sólo admin (sus endpoints
+// /compliance/admin son admin-only).
+const auth = useAuthStore();
+const isAdmin = computed(() => auth.user?.role === 'admin');
+const myPerms = computed(() => new Set(auth.user?.adminPermissions ?? []));
+const SECTION_PERMISSION: Record<Tab, string | null> = {
+  accounts: 'accounts.manage',
+  groups: 'groups.manage',
+  roles: 'roles.manage',
+  branding: 'branding.manage',
+  storage: 'storage.manage',
+  preferences: 'calendar.manage',
+  scheduling: 'scheduling.manage',
+  compliance: null, // admin-only (sin permiso delegable)
+};
+function canSee(key: Tab): boolean {
+  if (isAdmin.value) return true;
+  const perm = SECTION_PERMISSION[key];
+  return perm != null && myPerms.value.has(perm);
+}
+const canManageRoles = computed(() => isAdmin.value || myPerms.value.has('roles.manage'));
+// Grupos del nav ya filtrados a lo que el usuario puede ver (grupo vacío se oculta).
+const visibleNavGroups = computed(() =>
+  NAV_GROUPS.map((g) => ({ label: g.label, keys: g.keys.filter(canSee) })).filter(
+    (g) => g.keys.length > 0
+  )
+);
+// Contador por sección (badge del nav). Sólo donde el dato ya está cargado; undefined = sin badge.
+const navCounts = computed<Partial<Record<Tab, number>>>(() => ({
+  accounts: accounts.value.length || undefined,
+  groups: groupCount.value || undefined,
+  roles: roles.value.length || undefined,
+}));
 
 // Drawer del sidebar en viewports angostos (<900px). En desktop el sidebar es sticky permanente.
 const navOpen = ref(false);
@@ -121,6 +197,8 @@ interface AdminAccount {
   name: string;
   displayName: string;
   role: 'user' | 'admin';
+  customRoleId: string | null;
+  customRoleName: string | null;
   isPrimary: boolean;
   status: 'active' | 'syncing' | 'error' | 'disabled';
   quotaBytes: number;
@@ -159,7 +237,9 @@ const blankCreate = () => ({
   smtpHost: '',
   smtpPort: 465,
   smtpSecure: true,
-  quotaMb: 0,
+  // `null` = "usar la cuota por defecto" (F6): si el admin no escribe nada, NO se manda `quotaBytes`
+  // y el backend aplica el default. Un número (incl. 0=ilimitado) se respeta tal cual.
+  quotaMb: null as number | null,
 });
 const form = ref(blankCreate());
 
@@ -174,6 +254,9 @@ const createIncomplete = computed(
 async function createAccount() {
   creating.value = true;
   createError.value = '';
+  // Campo de cuota vacío → NO mandar `quotaBytes` (el backend aplica la cuota por defecto, F6).
+  const q = form.value.quotaMb;
+  const hasQuota = typeof q === 'number' && !Number.isNaN(q);
   try {
     await api.post('/admin/accounts', {
       email: form.value.email.trim(),
@@ -185,7 +268,7 @@ async function createAccount() {
       smtpHost: form.value.smtpHost.trim(),
       smtpPort: form.value.smtpPort,
       smtpSecure: form.value.smtpSecure,
-      quotaBytes: Math.max(0, Math.round(form.value.quotaMb)) * 1024 * 1024,
+      ...(hasQuota ? { quotaBytes: Math.max(0, Math.round(q)) * 1024 * 1024 } : {}),
     });
     showCreate.value = false;
     form.value = blankCreate();
@@ -203,35 +286,11 @@ async function createAccount() {
   }
 }
 
-// --- Edición de cuota / nombre ---
-const editingId = ref<string | null>(null);
+// --- Edición de cuota / nombre (desde la ficha de usuario) ---
+// `editName`/`editQuotaMb` los alimenta `openUser` y los consume `saveProfile` (ver más abajo).
 const editQuotaMb = ref(0);
 const editName = ref('');
 const rowBusy = ref<string | null>(null);
-
-function startEdit(a: AdminAccount) {
-  editingId.value = a.id;
-  editQuotaMb.value = Math.round(a.quotaBytes / (1024 * 1024));
-  editName.value = a.displayName;
-}
-function cancelEdit() {
-  editingId.value = null;
-}
-async function saveEdit(a: AdminAccount) {
-  rowBusy.value = a.id;
-  try {
-    await api.patch(`/admin/accounts/${a.id}`, {
-      quotaBytes: Math.max(0, Math.round(editQuotaMb.value)) * 1024 * 1024,
-      ...(editName.value.trim() ? { displayName: editName.value.trim() } : {}),
-    });
-    editingId.value = null;
-    await loadAccounts();
-  } catch {
-    accError.value = t('admin.accounts.errSave');
-  } finally {
-    rowBusy.value = null;
-  }
-}
 
 async function toggleStatus(a: AdminAccount) {
   rowBusy.value = a.id;
@@ -241,6 +300,10 @@ async function toggleStatus(a: AdminAccount) {
       status: a.status === 'disabled' ? 'active' : 'disabled',
     });
     await loadAccounts();
+    // Re-vincular la ficha al registro recargado (refleja el nuevo estado sin cerrarla).
+    if (selectedUser.value?.id === a.id) {
+      selectedUser.value = accounts.value.find((x) => x.id === a.id) ?? null;
+    }
   } catch (err) {
     accError.value =
       err instanceof AxiosError && err.response?.status === 400
@@ -257,12 +320,128 @@ async function removeAccount(a: AdminAccount) {
   accError.value = '';
   try {
     await api.delete(`/admin/accounts/${a.id}`);
+    if (selectedUser.value?.id === a.id) closeUser(); // la cuenta ya no existe → cerrar la ficha
     await loadAccounts();
   } catch (err) {
     accError.value =
       err instanceof AxiosError && err.response?.status === 400
         ? t('admin.accounts.errSelf')
         : t('admin.accounts.errDelete');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+
+// ── Presentación de usuarios (maqueta admin.html): avatar de color + badge de rol + barra de uso ──
+/** Iniciales para el avatar (1–2 letras a partir del nombre visible o el email). */
+function initials(a: AdminAccount): string {
+  const src = (a.displayName || a.name || a.email || '?').trim();
+  const parts = src.split(/[\s@._-]+/).filter(Boolean);
+  const chars = parts.length >= 2 ? parts[0][0] + parts[1][0] : src.slice(0, 2);
+  return chars.toUpperCase();
+}
+// Paleta determinista para el avatar (mismo usuario → mismo color). Tonos de la maqueta.
+const AVATAR_COLORS = ['#1b66ff', '#e0457b', '#f59e0b', '#16a34a', '#9333ea', '#0891b2', '#ea580c'];
+function avatarColor(a: AdminAccount): string {
+  let h = 0;
+  const key = a.userId || a.email;
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
+  return AVATAR_COLORS[h % AVATAR_COLORS.length];
+}
+/** Etiqueta de rol: admin real → "Super administrador"; rol custom → su nombre; si no → "Usuario". */
+function roleLabel(a: AdminAccount): string {
+  if (a.role === 'admin') return t('admin.roles.superAdmin');
+  return a.customRoleName ?? t('admin.roles.plainUser');
+}
+/** Tono del badge de rol: admin (rojo), custom (azul), usuario (gris). */
+function roleTone(a: AdminAccount): 'admin' | 'custom' | 'plain' {
+  if (a.role === 'admin') return 'admin';
+  return a.customRoleName ? 'custom' : 'plain';
+}
+// `usagePct` ya existe (F6, más abajo). Tono de la barra según % de uso.
+function usageTone(pct: number): 'ok' | 'warn' | 'over' {
+  if (pct >= 90) return 'over';
+  if (pct >= 70) return 'warn';
+  return 'ok';
+}
+
+// ── Ficha de usuario (detalle): al hacer click en una fila se abre el perfil (maqueta img 2) ──
+const selectedUser = ref<AdminAccount | null>(null);
+function openUser(a: AdminAccount) {
+  selectedUser.value = a;
+  editName.value = a.displayName;
+  editQuotaMb.value = Math.round(a.quotaBytes / (1024 * 1024));
+  assignRoleId.value = a.customRoleId ?? '';
+}
+function closeUser() {
+  selectedUser.value = null;
+}
+// Guardado del perfil desde la ficha (nombre + cuota) reusando el endpoint de edición.
+async function saveProfile() {
+  const a = selectedUser.value;
+  if (!a) return;
+  rowBusy.value = a.id;
+  accError.value = '';
+  try {
+    await api.patch(`/admin/accounts/${a.id}`, {
+      quotaBytes: Math.max(0, Math.round(editQuotaMb.value)) * 1024 * 1024,
+      ...(editName.value.trim() ? { displayName: editName.value.trim() } : {}),
+    });
+    await loadAccounts();
+    // Re-vincular la ficha al registro recargado (para reflejar cambios).
+    selectedUser.value = accounts.value.find((x) => x.id === a.id) ?? null;
+  } catch {
+    accError.value = t('admin.accounts.errSave');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+
+// ============================ ROLES (RBAC, F8) ============================
+interface AdminRole {
+  id: string;
+  name: string;
+  description?: string;
+  permissions: string[];
+  isSystem: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+const roles = ref<AdminRole[]>([]);
+const groupCount = ref(0);
+// Asignación de rol desde la ficha de usuario.
+const assignRoleId = ref<string>('');
+
+async function loadRoles() {
+  try {
+    const { data } = await api.get<{ roles: AdminRole[] }>('/admin/roles');
+    roles.value = data.roles;
+  } catch {
+    /* silencioso: la sección Roles muestra su propio estado si falla */
+  }
+}
+async function loadGroupCount() {
+  try {
+    const { data } = await api.get<{ groups: unknown[] }>('/admin/groups');
+    groupCount.value = data.groups.length;
+  } catch {
+    /* contador best-effort */
+  }
+}
+// Asigna (o quita con '') el rol custom a la cuenta abierta en la ficha.
+async function assignRole() {
+  const a = selectedUser.value;
+  if (!a) return;
+  rowBusy.value = a.id;
+  accError.value = '';
+  try {
+    await api.patch(`/admin/accounts/${a.id}/role`, {
+      customRoleId: assignRoleId.value || null,
+    });
+    await loadAccounts();
+    selectedUser.value = accounts.value.find((x) => x.id === a.id) ?? null;
+  } catch {
+    accError.value = t('admin.roles.errAssign');
   } finally {
     rowBusy.value = null;
   }
@@ -511,12 +690,59 @@ async function applyUpdate() {
   updating.value = false;
 }
 
+// ============================ ALMACENAMIENTO: defaults + uso (F6) ============================
+const defaultQuotaMb = ref(0);
+const defQuotaSaving = ref(false);
+const defQuotaSaved = ref(false);
+async function loadStorageDefaults() {
+  try {
+    const { data } = await api.get<{ defaultQuotaBytes: number }>('/admin/config/storage-defaults');
+    defaultQuotaMb.value = Math.round(data.defaultQuotaBytes / (1024 * 1024));
+  } catch {
+    /* defaults a 0 (sin límite) si no responde */
+  }
+}
+async function saveStorageDefaults() {
+  defQuotaSaving.value = true;
+  defQuotaSaved.value = false;
+  try {
+    await api.patch('/admin/config/storage-defaults', {
+      defaultQuotaBytes: Math.max(0, Math.round(defaultQuotaMb.value)) * 1024 * 1024,
+    });
+    defQuotaSaved.value = true;
+  } finally {
+    defQuotaSaving.value = false;
+  }
+}
+/** % de uso (0..100) sólo cuando hay cuota; sin cuota (0=ilimitado) no hay barra significativa. */
+function usagePct(a: AdminAccount): number {
+  if (a.quotaBytes <= 0) return 0;
+  return Math.min(100, Math.round((a.usedBytes / a.quotaBytes) * 100));
+}
+
 onMounted(async () => {
+  // Si la sección inicial no es visible para este usuario (delegado sin accounts.manage), saltar a la
+  // primera sección que sí puede ver.
+  if (!canSee(tab.value)) {
+    const first = SECTIONS.find((s) => canSee(s.key));
+    if (first) tab.value = first.key;
+  }
   window.addEventListener('keydown', onKeydown);
   mq = window.matchMedia('(max-width: 900px)');
   isNarrow.value = mq.matches;
   mq.addEventListener('change', onMq);
-  await Promise.all([loadAccounts(), loadBranding(), loadStorage(), loadApiBuild(), loadUpdate()]);
+  // Cargas por permiso: un delegado sólo pide lo que puede ver (evita 403 ruidosos). El admin ve todo.
+  await Promise.all([
+    canSee('accounts') ? loadAccounts() : Promise.resolve(),
+    canManageRoles.value ? loadRoles() : Promise.resolve(),
+    canSee('groups') ? loadGroupCount() : Promise.resolve(),
+    canSee('branding') ? loadBranding() : Promise.resolve(),
+    canSee('storage') ? loadStorage() : Promise.resolve(),
+    canSee('storage') ? loadStorageDefaults() : Promise.resolve(),
+    // /admin/version y /admin/update/check son admin-only.
+    isAdmin.value ? loadApiBuild() : Promise.resolve(),
+    isAdmin.value ? loadUpdate() : Promise.resolve(),
+  ]);
 });
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown);
@@ -610,22 +836,31 @@ async function save() {
           <AppIcon name="shield" :size="22" />
           <span>{{ t('admin.title') }}</span>
         </div>
-        <ul class="admin-navlist">
-          <li v-for="s in SECTIONS" :key="s.key">
-            <button
-              class="admin-navitem"
-              :class="{ active: tab === s.key }"
-              :aria-current="tab === s.key ? 'page' : undefined"
-              :data-testid="`admin-section-${s.key}`"
-              @click="selectSection(s.key)"
-            >
-              <AppIcon :name="s.icon" :size="18" />
-              <span>{{ t(s.label) }}</span>
-            </button>
-          </li>
-        </ul>
+        <div class="admin-navscroll">
+          <div v-for="g in visibleNavGroups" :key="g.label" class="admin-navgroup">
+            <p class="admin-navgroup-label">{{ t(g.label) }}</p>
+            <ul class="admin-navlist">
+              <li v-for="key in g.keys" :key="key">
+                <button
+                  class="admin-navitem"
+                  :class="{ active: tab === key }"
+                  :aria-current="tab === key ? 'page' : undefined"
+                  :data-testid="`admin-section-${key}`"
+                  @click="selectSection(key)"
+                >
+                  <AppIcon :name="sectionOf(key).icon" :size="18" />
+                  <span>{{ t(sectionOf(key).label) }}</span>
+                  <span v-if="navCounts[key] != null" class="admin-navcount">{{
+                    navCounts[key]
+                  }}</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        </div>
         <footer class="admin-nav-foot" data-testid="build-info">
-          <!-- Estado de actualización: UNA sola vez acá (antes se repetía en cada sección). -->
+          <!-- Estado de actualización: UNA sola vez acá (#35; antes se repetía en cada sección). Sólo
+               lo carga el admin real (isAdmin) → un delegado no ve este widget. -->
           <div
             v-if="update?.updateAvailable"
             class="bi-update bi-update-yes"
@@ -660,16 +895,17 @@ async function save() {
             </button>
           </div>
           <p v-if="updateMsg" class="ub-msg-sm" data-testid="update-msg">{{ updateMsg }}</p>
-          <div class="bi-line">
-            <span class="bi-app">{{ brand.name }}</span>
-            <span class="bi-ver">v{{ BUILD_INFO.version }}</span>
-          </div>
-          <div class="bi-line bi-dim">
-            <span data-testid="build-web">web {{ BUILD_INFO.build }}</span>
-            <span class="bi-sha">{{ BUILD_INFO.sha }}</span>
-          </div>
-          <div v-if="apiBuild" class="bi-line bi-dim">
-            <span data-testid="build-api">api {{ apiBuild }}</span>
+          <!-- Chip de versión (rediseño maqueta): reemplaza las líneas build sueltas. El testid
+               `build-web` va en la línea "web {build}" (contrato del e2e: detecta cache tras deploy). -->
+          <div class="admin-verchip">
+            <AppIcon name="shield" :size="16" />
+            <div class="admin-verchip-text">
+              <span class="bi-app">{{ brand.name }} v{{ BUILD_INFO.version }}</span>
+              <span class="bi-dim" data-testid="build-web"
+                >web {{ BUILD_INFO.build }} · {{ BUILD_INFO.sha }}</span
+              >
+              <span v-if="apiBuild" class="bi-dim" data-testid="build-api">api {{ apiBuild }}</span>
+            </div>
           </div>
         </footer>
       </nav>
@@ -687,7 +923,7 @@ async function save() {
             <p class="admin-section-desc">{{ t(activeSection.desc) }}</p>
           </div>
           <button
-            v-if="tab === 'accounts'"
+            v-if="tab === 'accounts' && !selectedUser"
             class="btn-primary admin-head-action"
             data-testid="admin-new-account"
             @click="showCreate = !showCreate"
@@ -704,167 +940,283 @@ async function save() {
           <!-- ===================== PREFERENCIAS DE CALENDARIO ===================== -->
           <AdminCalendarPrefs v-else-if="tab === 'preferences'" />
 
-          <!-- ===================== CUENTAS ===================== -->
-          <div v-if="tab === 'accounts'" class="card">
-            <!-- Form de alta -->
-            <div v-if="showCreate" class="create-form" @input="createError = ''">
-              <div class="grid2">
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.email') }}</span
-                  ><input v-model="form.email" class="adminput" placeholder="user@empresa.com"
-                /></label>
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.password') }}</span
-                  ><input
-                    v-model="form.password"
-                    type="password"
-                    class="adminput"
-                    autocomplete="new-password"
-                /></label>
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.displayName') }}</span
-                  ><input v-model="form.displayName" class="adminput"
-                /></label>
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.quotaMb') }}</span
-                  ><input v-model.number="form.quotaMb" type="number" min="0" class="adminput"
-                /></label>
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.imapHost') }}</span
-                  ><input v-model="form.imapHost" class="adminput" placeholder="imap.empresa.com"
-                /></label>
-                <div class="grid2 tight">
-                  <label class="fld"
-                    ><span>{{ t('admin.accounts.imapPort') }}</span
-                    ><input v-model.number="form.imapPort" type="number" class="adminput"
-                  /></label>
-                  <label class="fld check2"
-                    ><input v-model="form.imapSecure" type="checkbox" />
-                    {{ t('admin.accounts.tls') }}
-                  </label>
+          <!-- ===================== GRUPOS ===================== -->
+          <AdminGroups v-else-if="tab === 'groups'" />
+
+          <!-- ===================== ROLES Y PERMISOS (RBAC, F8) ===================== -->
+          <AdminRoles v-else-if="tab === 'roles'" @changed="loadRoles" />
+
+          <!-- ===================== USUARIOS ===================== -->
+          <template v-if="tab === 'accounts'">
+            <!-- Ficha de usuario (detalle, maqueta admin.html) -->
+            <div v-if="selectedUser" class="user-detail" data-testid="user-detail">
+              <button class="back-link" @click="closeUser">
+                <AppIcon name="arrowLeft" :size="16" />
+                <span>{{ t('admin.users.back') }}</span>
+              </button>
+              <div class="user-detail-grid">
+                <aside class="card user-hero">
+                  <div class="user-hero-band" :style="{ background: avatarColor(selectedUser) }" />
+                  <div class="user-hero-avatar" :style="{ background: avatarColor(selectedUser) }">
+                    {{ initials(selectedUser) }}
+                  </div>
+                  <h2 class="user-hero-name">{{ selectedUser.displayName }}</h2>
+                  <p class="user-hero-email">{{ selectedUser.email }}</p>
+                  <div class="user-hero-badges">
+                    <span class="role-badge" :class="roleTone(selectedUser)">{{
+                      roleLabel(selectedUser)
+                    }}</span>
+                    <span class="status-dot" :class="selectedUser.status"
+                      ><i />{{ t('admin.accounts.st.' + selectedUser.status) }}</span
+                    >
+                  </div>
+                  <ul class="user-hero-meta">
+                    <li v-if="selectedUser.lastSyncedAt">
+                      <AppIcon name="clock" :size="15" />
+                      <span>{{ fmtDate(selectedUser.lastSyncedAt) }}</span>
+                    </li>
+                    <li>
+                      <AppIcon name="database" :size="15" />
+                      <span
+                        >{{ fmtBytes(selectedUser.usedBytes) }} {{ t('admin.users.of') }}
+                        {{
+                          selectedUser.quotaBytes > 0
+                            ? fmtBytes(selectedUser.quotaBytes)
+                            : t('admin.accounts.unlimited')
+                        }}</span
+                      >
+                    </li>
+                  </ul>
+                </aside>
+
+                <div class="user-detail-main">
+                  <section class="card user-panel">
+                    <h3>{{ t('admin.users.profile') }}</h3>
+                    <div class="grid2">
+                      <label class="fld"
+                        ><span>{{ t('admin.accounts.displayName') }}</span
+                        ><input v-model="editName" class="adminput"
+                      /></label>
+                      <label class="fld"
+                        ><span>{{ t('admin.accounts.email') }}</span
+                        ><input :value="selectedUser.email" class="adminput" disabled
+                      /></label>
+                      <label class="fld"
+                        ><span>{{ t('admin.accounts.quotaMb') }}</span
+                        ><input v-model.number="editQuotaMb" type="number" min="0" class="adminput"
+                      /></label>
+                    </div>
+                    <div class="actions">
+                      <button
+                        class="btn-primary"
+                        :disabled="rowBusy === selectedUser.id"
+                        @click="saveProfile"
+                      >
+                        {{ t('admin.users.saveChanges') }}
+                      </button>
+                      <button
+                        v-if="selectedUser.role !== 'admin'"
+                        class="btn-ghost"
+                        :disabled="rowBusy === selectedUser.id"
+                        @click="toggleStatus(selectedUser)"
+                      >
+                        {{
+                          selectedUser.status === 'disabled'
+                            ? t('admin.accounts.enable')
+                            : t('admin.accounts.disable')
+                        }}
+                      </button>
+                    </div>
+                    <p v-if="accError" class="err-text">{{ accError }}</p>
+                  </section>
+
+                  <section v-if="canManageRoles" class="card user-panel">
+                    <h3>{{ t('admin.users.roleSection') }}</h3>
+                    <p v-if="selectedUser.role === 'admin'" class="muted">
+                      {{ t('admin.users.adminRoleNote') }}
+                    </p>
+                    <div v-else class="role-assign">
+                      <select
+                        v-model="assignRoleId"
+                        class="adminput"
+                        :aria-label="t('admin.users.roleSection')"
+                      >
+                        <option value="">{{ t('admin.users.noRole') }}</option>
+                        <option v-for="r in roles" :key="r.id" :value="r.id">{{ r.name }}</option>
+                      </select>
+                      <button
+                        class="btn-primary"
+                        :disabled="rowBusy === selectedUser.id"
+                        @click="assignRole"
+                      >
+                        {{ t('admin.users.assign') }}
+                      </button>
+                    </div>
+                  </section>
+
+                  <section class="card user-panel">
+                    <h3>{{ t('admin.users.storage') }}</h3>
+                    <p class="storage-line">
+                      {{ fmtBytes(selectedUser.usedBytes) }} {{ t('admin.users.of') }}
+                      {{
+                        selectedUser.quotaBytes > 0
+                          ? fmtBytes(selectedUser.quotaBytes)
+                          : t('admin.accounts.unlimited')
+                      }}
+                    </p>
+                    <div class="usage-bar">
+                      <span
+                        :class="usageTone(usagePct(selectedUser))"
+                        :style="{
+                          width: (selectedUser.quotaBytes > 0 ? usagePct(selectedUser) : 4) + '%',
+                        }"
+                      />
+                    </div>
+                    <div v-if="selectedUser.role !== 'admin'" class="danger-zone">
+                      <button
+                        class="btn-danger"
+                        :disabled="rowBusy === selectedUser.id"
+                        @click="removeAccount(selectedUser)"
+                      >
+                        {{ t('admin.accounts.delete') }}
+                      </button>
+                    </div>
+                  </section>
                 </div>
-                <label class="fld"
-                  ><span>{{ t('admin.accounts.smtpHost') }}</span
-                  ><input v-model="form.smtpHost" class="adminput" placeholder="smtp.empresa.com"
-                /></label>
-                <div class="grid2 tight">
-                  <label class="fld"
-                    ><span>{{ t('admin.accounts.smtpPort') }}</span
-                    ><input v-model.number="form.smtpPort" type="number" class="adminput"
-                  /></label>
-                  <label class="fld check2"
-                    ><input v-model="form.smtpSecure" type="checkbox" />
-                    {{ t('admin.accounts.tls') }}
-                  </label>
-                </div>
-              </div>
-              <p class="hint">{{ t('admin.accounts.imapHint') }}</p>
-              <div class="actions">
-                <button
-                  class="btn-primary"
-                  :disabled="creating || createIncomplete"
-                  @click="createAccount"
-                >
-                  {{ creating ? t('admin.accounts.creating') : t('admin.accounts.create') }}
-                </button>
-                <span v-if="createError" class="err-text">{{ createError }}</span>
               </div>
             </div>
 
-            <p v-if="accLoading" class="muted">{{ t('common.loading') }}</p>
-            <p v-else-if="accError" class="err-text">{{ accError }}</p>
-            <table v-else class="acc-table">
-              <thead>
-                <tr>
-                  <th>{{ t('admin.accounts.colEmail') }}</th>
-                  <th>{{ t('admin.accounts.colStatus') }}</th>
-                  <th>{{ t('admin.accounts.colQuota') }}</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr v-for="a in accounts" :key="a.id" :class="{ dim: a.status === 'disabled' }">
-                  <td>
-                    <template v-if="editingId === a.id">
-                      <input v-model="editName" class="adminput sm" />
-                    </template>
-                    <template v-else>
-                      <div class="acc-name">
-                        {{ a.displayName }}
-                        <span v-if="a.role === 'admin'" class="badge admin">admin</span>
-                      </div>
-                      <div class="acc-email">{{ a.email }}</div>
-                    </template>
-                  </td>
-                  <td>
-                    <span class="status" :class="a.status">{{
-                      t('admin.accounts.st.' + a.status)
-                    }}</span>
-                  </td>
-                  <td>
-                    <template v-if="editingId === a.id">
-                      <input
-                        v-model.number="editQuotaMb"
-                        type="number"
-                        min="0"
-                        class="adminput sm"
-                      />
-                      <span class="mb">MB</span>
-                    </template>
-                    <template v-else>
-                      <span class="quota">{{ fmtBytes(a.usedBytes) }}</span>
-                      <span class="quota-sep">/</span>
-                      <span class="quota">{{
-                        a.quotaBytes > 0 ? fmtBytes(a.quotaBytes) : t('admin.accounts.unlimited')
+            <!-- Lista de usuarios + alta -->
+            <template v-else>
+              <!-- Form de alta -->
+              <div v-if="showCreate" class="card create-card" @input="createError = ''">
+                <div class="grid2">
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.email') }}</span
+                    ><input v-model="form.email" class="adminput" placeholder="user@empresa.com"
+                  /></label>
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.password') }}</span
+                    ><input
+                      v-model="form.password"
+                      type="password"
+                      class="adminput"
+                      autocomplete="new-password"
+                  /></label>
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.displayName') }}</span
+                    ><input v-model="form.displayName" class="adminput"
+                  /></label>
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.quotaMb') }}</span
+                    ><input
+                      v-model.number="form.quotaMb"
+                      type="number"
+                      min="0"
+                      class="adminput"
+                      :placeholder="t('admin.accounts.quotaDefaultPh')"
+                  /></label>
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.imapHost') }}</span
+                    ><input v-model="form.imapHost" class="adminput" placeholder="imap.empresa.com"
+                  /></label>
+                  <div class="grid2 tight">
+                    <label class="fld"
+                      ><span>{{ t('admin.accounts.imapPort') }}</span
+                      ><input v-model.number="form.imapPort" type="number" class="adminput"
+                    /></label>
+                    <label class="fld check2"
+                      ><input v-model="form.imapSecure" type="checkbox" />
+                      {{ t('admin.accounts.tls') }}
+                    </label>
+                  </div>
+                  <label class="fld"
+                    ><span>{{ t('admin.accounts.smtpHost') }}</span
+                    ><input v-model="form.smtpHost" class="adminput" placeholder="smtp.empresa.com"
+                  /></label>
+                  <div class="grid2 tight">
+                    <label class="fld"
+                      ><span>{{ t('admin.accounts.smtpPort') }}</span
+                      ><input v-model.number="form.smtpPort" type="number" class="adminput"
+                    /></label>
+                    <label class="fld check2"
+                      ><input v-model="form.smtpSecure" type="checkbox" />
+                      {{ t('admin.accounts.tls') }}
+                    </label>
+                  </div>
+                </div>
+                <p class="hint">{{ t('admin.accounts.imapHint') }}</p>
+                <div class="actions">
+                  <button
+                    class="btn-primary"
+                    :disabled="creating || createIncomplete"
+                    @click="createAccount"
+                  >
+                    {{ creating ? t('admin.accounts.creating') : t('admin.accounts.create') }}
+                  </button>
+                  <span v-if="createError" class="err-text">{{ createError }}</span>
+                </div>
+              </div>
+
+              <div class="card users-card">
+                <p v-if="accLoading" class="muted">{{ t('common.loading') }}</p>
+                <p v-else-if="accError" class="err-text">{{ accError }}</p>
+                <div v-else class="user-table" data-testid="user-table">
+                  <div class="user-thead">
+                    <span>{{ t('admin.users.colUser') }}</span>
+                    <span>{{ t('admin.users.colRole') }}</span>
+                    <span>{{ t('admin.users.colStatus') }}</span>
+                    <span>{{ t('admin.users.colStorage') }}</span>
+                    <span class="uchev-h" />
+                  </div>
+                  <button
+                    v-for="a in accounts"
+                    :key="a.id"
+                    class="user-row"
+                    :class="{ dim: a.status === 'disabled' }"
+                    :data-testid="`user-row-${a.id}`"
+                    @click="openUser(a)"
+                  >
+                    <span class="ucell ucell-user">
+                      <span class="uavatar" :style="{ background: avatarColor(a) }">{{
+                        initials(a)
                       }}</span>
-                    </template>
-                  </td>
-                  <td class="row-actions">
-                    <template v-if="editingId === a.id">
-                      <button class="link-btn" :disabled="rowBusy === a.id" @click="saveEdit(a)">
-                        {{ t('admin.accounts.saveRow') }}
-                      </button>
-                      <button class="link-btn" @click="cancelEdit">
-                        {{ t('admin.accounts.cancelRow') }}
-                      </button>
-                    </template>
-                    <template v-else>
-                      <button
-                        class="icon-act"
-                        :title="t('admin.accounts.edit')"
-                        @click="startEdit(a)"
+                      <span class="uinfo">
+                        <span class="uname">{{ a.displayName }}</span>
+                        <span class="uemail">{{ a.email }}</span>
+                      </span>
+                    </span>
+                    <span class="ucell ucell-role">
+                      <span class="role-badge" :class="roleTone(a)">{{ roleLabel(a) }}</span>
+                    </span>
+                    <span class="ucell ucell-status">
+                      <span class="status-dot" :class="a.status"
+                        ><i />{{ t('admin.accounts.st.' + a.status) }}</span
                       >
-                        <AppIcon name="settings" :size="16" />
-                      </button>
-                      <button
-                        class="icon-act"
-                        :disabled="rowBusy === a.id"
-                        :title="
-                          a.status === 'disabled'
-                            ? t('admin.accounts.enable')
-                            : t('admin.accounts.disable')
-                        "
-                        @click="toggleStatus(a)"
+                    </span>
+                    <span class="ucell ucell-storage">
+                      <span class="ustorage-text"
+                        >{{ fmtBytes(a.usedBytes) }} {{ t('admin.users.of') }}
+                        {{
+                          a.quotaBytes > 0 ? fmtBytes(a.quotaBytes) : t('admin.accounts.unlimited')
+                        }}</span
                       >
-                        <AppIcon :name="a.status === 'disabled' ? 'check' : 'x'" :size="16" />
-                      </button>
-                      <button
-                        class="icon-act danger"
-                        :disabled="rowBusy === a.id"
-                        :title="t('admin.accounts.delete')"
-                        @click="removeAccount(a)"
-                      >
-                        <AppIcon name="trash" :size="16" />
-                      </button>
-                    </template>
-                  </td>
-                </tr>
-                <tr v-if="accounts.length === 0">
-                  <td colspan="4" class="muted center">{{ t('admin.accounts.empty') }}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
+                      <span class="usage-bar sm">
+                        <span
+                          :class="usageTone(usagePct(a))"
+                          :style="{ width: (a.quotaBytes > 0 ? usagePct(a) : 4) + '%' }"
+                        />
+                      </span>
+                    </span>
+                    <span class="ucell ucell-chev"><AppIcon name="chevronRight" :size="18" /></span>
+                  </button>
+                  <p v-if="accounts.length === 0" class="muted center empty-row">
+                    {{ t('admin.accounts.empty') }}
+                  </p>
+                </div>
+              </div>
+            </template>
+          </template>
 
           <!-- ===================== MARCA ===================== -->
           <div v-else-if="tab === 'branding'" class="card">
@@ -1037,7 +1389,9 @@ async function save() {
               </div>
 
               <p
-                v-if="selected === 's3' && !s3.useInstanceRole && tested !== 'ok' && !s3Incomplete()"
+                v-if="
+                  selected === 's3' && !s3.useInstanceRole && tested !== 'ok' && !s3Incomplete()
+                "
                 class="warn-text"
               >
                 {{ t('admin.testHint') }}
@@ -1050,6 +1404,61 @@ async function save() {
                   })
                 }}
               </p>
+            </div>
+
+            <!-- F6: cuota por defecto + uso por cuenta -->
+            <div class="storage-extra">
+              <div class="quota-default">
+                <label class="fld-lbl">{{ t('admin.storage.defaultQuota') }}</label>
+                <div class="quota-row">
+                  <input
+                    v-model.number="defaultQuotaMb"
+                    type="number"
+                    min="0"
+                    class="adminput sm"
+                  />
+                  <span class="mb">MB</span>
+                  <button
+                    class="btn-secondary"
+                    :disabled="defQuotaSaving"
+                    @click="saveStorageDefaults"
+                  >
+                    {{ defQuotaSaving ? t('admin.saving') : t('admin.apply') }}
+                  </button>
+                  <span v-if="defQuotaSaved" class="ok-text">{{ t('admin.saved') }}</span>
+                </div>
+                <p class="hint">{{ t('admin.storage.defaultQuotaHint') }}</p>
+              </div>
+
+              <div class="usage-panel">
+                <h3 class="usage-h">{{ t('admin.storage.usageByAccount') }}</h3>
+                <div v-for="a in accounts" :key="a.id" class="usage-item">
+                  <div class="usage-top">
+                    <span class="usage-name">{{ a.displayName }}</span>
+                    <span class="usage-val">
+                      {{ fmtBytes(a.usedBytes) }} /
+                      {{
+                        a.quotaBytes > 0 ? fmtBytes(a.quotaBytes) : t('admin.accounts.unlimited')
+                      }}
+                    </span>
+                  </div>
+                  <div
+                    class="usage-bar"
+                    :class="{ unlimited: a.quotaBytes <= 0 }"
+                    role="progressbar"
+                    :aria-valuenow="usagePct(a)"
+                    aria-valuemin="0"
+                    aria-valuemax="100"
+                  >
+                    <span
+                      class="usage-fill"
+                      :class="{ warn: usagePct(a) >= 90 }"
+                      :style="{ width: usagePct(a) + '%' }"
+                    />
+                  </div>
+                </div>
+                <p v-if="accounts.length === 0" class="muted">{{ t('admin.accounts.empty') }}</p>
+              </div>
             </div>
           </div>
         </div>
@@ -1093,21 +1502,40 @@ async function save() {
 .admin-brand :deep(svg) {
   color: var(--accent);
 }
+.admin-navscroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 10px 8px;
+}
+.admin-navgroup {
+  margin-top: 12px;
+}
+.admin-navgroup:first-child {
+  margin-top: 2px;
+}
+.admin-navgroup-label {
+  margin: 0 0 4px;
+  padding: 0 12px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-3);
+}
 .admin-navlist {
   list-style: none;
   margin: 0;
-  padding: 4px 10px;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 2px;
-  flex: 1;
 }
 .admin-navitem {
   display: flex;
   align-items: center;
   gap: 12px;
   width: 100%;
-  padding: 10px 12px;
+  padding: 9px 12px;
   border: none;
   border-radius: 9px;
   background: transparent;
@@ -1121,6 +1549,16 @@ async function save() {
     background 0.12s,
     color 0.12s;
 }
+.admin-navitem :deep(svg) {
+  flex-shrink: 0;
+}
+.admin-navitem > span:not(.admin-navcount) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .admin-navitem:hover {
   background: var(--hover);
   color: var(--text-1);
@@ -1129,33 +1567,68 @@ async function save() {
   background: var(--accent-soft);
   color: var(--accent-ink);
 }
+.admin-navitem.active :deep(svg) {
+  color: var(--accent);
+}
 .admin-navitem:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-.admin-nav-foot {
-  padding: 14px 20px;
-  border-top: 1px solid var(--border);
-  font-size: 11.5px;
+.admin-navcount {
+  flex-shrink: 0;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface-dim);
+  border: 1px solid var(--border);
   color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-variant-numeric: tabular-nums;
 }
-.admin-nav-foot .bi-line {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  line-height: 1.6;
+.admin-navitem.active .admin-navcount {
+  background: var(--surface);
+  border-color: transparent;
+  color: var(--accent-ink);
 }
-.admin-nav-foot .bi-app {
+.admin-nav-foot {
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.admin-verchip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-dim);
+}
+.admin-verchip :deep(svg) {
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.admin-verchip-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-variant-numeric: tabular-nums;
+}
+.admin-verchip-text .bi-app {
+  font-size: 12.5px;
   font-weight: 700;
   color: var(--text-1);
 }
-.admin-nav-foot .bi-dim {
-  opacity: 0.85;
-}
-.admin-nav-foot .bi-sha {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  opacity: 0.75;
+.admin-verchip-text .bi-dim {
+  font-size: 11px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 /* ---- Contenido ---- */
 .admin-main {
@@ -1504,6 +1977,74 @@ async function save() {
   color: var(--text-3);
   margin: 8px 0 0;
 }
+/* ---- F6: defaults + uso ---- */
+.storage-extra {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.quota-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.usage-h {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin: 0 0 12px;
+}
+.usage-item {
+  margin-bottom: 14px;
+}
+.usage-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  margin-bottom: 5px;
+}
+.usage-name {
+  font-weight: 600;
+  color: var(--text-1);
+}
+.usage-val {
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.usage-bar {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-dim);
+  overflow: hidden;
+}
+.usage-bar.unlimited {
+  background: repeating-linear-gradient(
+    90deg,
+    var(--surface-dim),
+    var(--surface-dim) 6px,
+    var(--hover) 6px,
+    var(--hover) 12px
+  );
+}
+.usage-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.3s;
+}
+.usage-fill.warn {
+  background: var(--danger);
+}
 
 /* ---- Cuentas ---- */
 .create-form {
@@ -1701,5 +2242,389 @@ async function save() {
 .file-btn {
   display: inline-block;
   cursor: pointer;
+}
+
+/* ============ USUARIOS: tabla rica (avatar + rol + estado + uso) — maqueta admin.html ============ */
+.users-card {
+  padding: 6px 6px;
+}
+.create-card {
+  margin-bottom: 16px;
+}
+.user-table {
+  display: flex;
+  flex-direction: column;
+}
+.user-thead,
+.user-row {
+  display: grid;
+  grid-template-columns: minmax(0, 2.2fr) minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.6fr) 28px;
+  align-items: center;
+  gap: 12px;
+}
+.user-thead {
+  padding: 8px 16px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  border-bottom: 1px solid var(--border);
+}
+.user-row {
+  width: 100%;
+  padding: 12px 16px;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: background 0.12s;
+}
+.user-row:last-child {
+  border-bottom: none;
+}
+.user-row:hover {
+  background: var(--hover);
+}
+.user-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+.user-row.dim {
+  opacity: 0.6;
+}
+.ucell {
+  min-width: 0;
+}
+.ucell-user {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.uavatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.uinfo {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.uname {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.uemail {
+  font-size: 12.5px;
+  color: var(--text-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ucell-storage {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.ustorage-text {
+  font-size: 12.5px;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+}
+.ucell-chev {
+  display: flex;
+  justify-content: flex-end;
+  color: var(--text-3);
+}
+.empty-row {
+  padding: 40px 16px;
+}
+
+/* Badge de rol */
+.role-badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.role-badge.admin {
+  background: color-mix(in srgb, var(--red) 14%, var(--surface));
+  color: var(--red);
+}
+.role-badge.custom {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.role-badge.plain {
+  background: var(--surface-dim);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+
+/* Estado con punto de color */
+.status-dot {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.status-dot i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-3);
+  flex-shrink: 0;
+}
+.status-dot.active {
+  color: var(--green);
+}
+.status-dot.active i {
+  background: var(--green);
+}
+.status-dot.disabled {
+  color: var(--red);
+}
+.status-dot.disabled i {
+  background: var(--red);
+}
+.status-dot.error {
+  color: var(--amber);
+}
+.status-dot.error i {
+  background: var(--amber);
+}
+.status-dot.syncing {
+  color: var(--accent);
+}
+.status-dot.syncing i {
+  background: var(--accent);
+}
+
+/* Barra de uso de almacenamiento */
+.usage-bar {
+  width: 100%;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--surface-dim);
+  overflow: hidden;
+}
+.usage-bar.sm {
+  height: 6px;
+  max-width: 220px;
+}
+.usage-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.3s;
+}
+.usage-bar > span.warn {
+  background: var(--amber);
+}
+.usage-bar > span.over {
+  background: var(--red);
+}
+
+/* ============ Ficha de usuario (detalle) ============ */
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 2px;
+  margin-bottom: 14px;
+}
+.back-link:hover {
+  color: var(--accent);
+}
+.user-detail-grid {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 18px;
+  align-items: start;
+}
+.user-hero {
+  padding: 0;
+  overflow: hidden;
+  text-align: center;
+}
+.user-hero-band {
+  height: 88px;
+}
+.user-hero-avatar {
+  width: 96px;
+  height: 96px;
+  border-radius: 50%;
+  margin: -48px auto 0;
+  border: 4px solid var(--surface);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 30px;
+  font-weight: 700;
+}
+.user-hero-name {
+  margin: 12px 0 2px;
+  font-size: 20px;
+  font-weight: 800;
+}
+.user-hero-email {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.user-hero-badges {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 14px 0;
+}
+.user-hero-meta {
+  list-style: none;
+  margin: 0;
+  padding: 0 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  text-align: left;
+}
+.user-hero-meta li {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.user-hero-meta :deep(svg) {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.user-detail-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.user-panel h3 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+}
+.role-assign {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.role-assign .adminput {
+  flex: 1;
+}
+.storage-line {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+.danger-zone {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.btn-ghost {
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: var(--hover);
+}
+.btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-danger {
+  padding: 9px 16px;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  border-radius: 8px;
+  background: transparent;
+  color: var(--red);
+  cursor: pointer;
+}
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--red) 10%, var(--surface));
+}
+.btn-danger:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+@media (max-width: 760px) {
+  .user-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  .user-thead {
+    display: none;
+  }
+  .user-row {
+    grid-template-columns: 1fr auto;
+    grid-template-areas: 'user chev' 'role role' 'status status' 'storage storage';
+    gap: 8px;
+  }
+  .ucell-user {
+    grid-area: user;
+  }
+  .ucell-role {
+    grid-area: role;
+  }
+  .ucell-status {
+    grid-area: status;
+  }
+  .ucell-storage {
+    grid-area: storage;
+  }
+  .ucell-chev {
+    grid-area: chev;
+  }
+  .usage-bar.sm {
+    max-width: none;
+  }
 }
 </style>

@@ -99,9 +99,13 @@ router.beforeEach((to) => {
   if (to.meta.public && auth.isAuthenticated) {
     return { name: 'inbox' };
   }
-  // Gate de admin en el cliente (defensa en UX; el backend re-valida rol en cada endpoint).
-  if (to.meta.requiresAdmin && auth.user?.role !== 'admin') {
-    return { name: 'inbox' };
+  // Gate de admin en el cliente (defensa en UX; el backend re-valida en cada endpoint).
+  // Admite al admin real Y a los portadores de un rol custom con ≥1 permiso (RBAC F8): sin esto, un
+  // delegado no podría entrar a /admin y su rol sería inútil desde la UI.
+  if (to.meta.requiresAdmin) {
+    const isAdmin = auth.user?.role === 'admin';
+    const hasAdminPerm = (auth.user?.adminPermissions.length ?? 0) > 0;
+    if (!isAdmin && !hasAdminPerm) return { name: 'inbox' };
   }
   // Gate de compliance (UX; el backend es la autoridad real vía 403 COMPLIANCE_REQUIRED).
   // - block_full: se FUERZA la pantalla de aceptación (no se puede usar nada hasta aceptar).

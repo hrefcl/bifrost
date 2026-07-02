@@ -1,5 +1,6 @@
 import { createImapClient } from './mail-transport.js';
 import { User, type IUser } from '../models/User.js';
+import { resolveAdminAccess } from '../lib/authz.js';
 import { Account, type IAccount } from '../models/Account.js';
 import { redis } from '../config/redis.js';
 import { jwtAccessTtlSeconds } from '../config/env.js';
@@ -50,13 +51,21 @@ export async function verifyImapCredentials(input: LoginInput): Promise<boolean>
   }
 }
 
-export async function loginOrRegister(input: LoginInput): Promise<{
+export async function loginOrRegister(
+  input: LoginInput,
+  opts: { allowAdminBootstrap?: boolean } = {}
+): Promise<{
   user: IUser;
   account: IAccount;
   isNew: boolean;
   /** true si este login disparó el bootstrap admin (no había admin → este usuario quedó admin). */
   bootstrappedAdmin: boolean;
 }> {
+  // El bootstrap admin (primer usuario = admin cuando no hay admin) es SÓLO para el flujo de login/
+  // setup. El alta desde el panel /admin lo DESHABILITA (allowAdminBootstrap:false): si no, un delegado
+  // con accounts.manage podría, en una instancia sin admin, crear una cuenta admin con credenciales
+  // elegidas por él = escalada (review D, HIGH). El alta admin real sigue siendo el CLI `admin:grant`.
+  const allowAdminBootstrap = opts.allowAdminBootstrap ?? true;
   // Una cuenta DESHABILITADA por el admin no puede iniciar sesión (ni reactivarse sola en el
   // upsert de abajo). Se chequea ANTES de verificar IMAP para no exponer un oráculo de credenciales
   // sobre cuentas bloqueadas. statusCode 403 → el error handler lo devuelve como 403 (no 500).
@@ -88,7 +97,7 @@ export async function loginOrRegister(input: LoginInput): Promise<{
   // admin" y sería escalada silenciosa si se borraran todos los admins — la recuperación correcta es el
   // CLI EXPLÍCITO `admin:grant`. Al ir el rol en $setOnInsert el grant es atómico por-email (un upsert
   // concurrente del mismo email no lo duplica ni pisa). Si ya hay admin, los nuevos caen al default 'user'.
-  const noAdminYet = !(await User.exists({ role: 'admin' }));
+  const noAdminYet = allowAdminBootstrap && !(await User.exists({ role: 'admin' }));
   const bootstrappedAdmin = isNew && noAdminYet;
   // `??` sólo cubría undefined: el form de login manda displayName:'' → quedaba vacío y el
   // usuario violaba `required` (rompía cualquier user.save() posterior). Normalizamos: vacío/
@@ -252,11 +261,13 @@ async function revokeTokenFamily(familyId: string): Promise<void> {
   await redis.del(fkey);
 }
 
-export function toLoginResponse(
+export async function toLoginResponse(
   user: IUser,
   account: IAccount,
   accessToken: string
-): LoginResponse {
+): Promise<LoginResponse> {
+  // Permisos admin efectivos (RBAC F8): así el cliente ya sabe, al loguear, si puede entrar a /admin.
+  const { permissions } = await resolveAdminAccess(user._id.toString());
   return {
     accessToken,
     expiresIn: jwtAccessTtlSeconds,
@@ -265,6 +276,7 @@ export function toLoginResponse(
       primaryEmail: user.primaryEmail,
       displayName: user.displayName,
       role: user.role,
+      adminPermissions: [...permissions],
       avatarUrl: user.avatarUrl,
       username: user.username,
       preferences: user.preferences,
