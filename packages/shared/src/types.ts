@@ -53,6 +53,11 @@ export interface User {
    */
   adminPermissions: string[];
   avatarUrl?: string;
+  /** Perfil personal (firmas F3): cargo, departamento, teléfono, foto (URL interna). */
+  jobTitle?: string;
+  department?: string;
+  phone?: string;
+  photoUrl?: string;
   /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
   username?: string;
   preferences: UserPreferences;

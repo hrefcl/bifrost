@@ -108,6 +108,9 @@ const updateAccountSchema = z
     quotaBytes: z.number().int().min(0).optional(),
     // El admin sólo conmuta active⇄disabled; 'syncing'/'error' los maneja el sistema.
     status: z.enum(['active', 'disabled']).optional(),
+    // Perfil (firmas F3): el admin edita Cargo/Departamento desde la ficha. '' limpia.
+    jobTitle: z.string().trim().max(120).optional(),
+    department: z.string().trim().max(120).optional(),
   })
   .strict();
 
@@ -649,7 +652,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
       .lean();
     const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } })
-      .select('displayName primaryEmail role customRoleId')
+      .select('displayName primaryEmail role customRoleId jobTitle department')
       .lean();
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
     // Nombres de los roles custom asignados (para mostrarlos en la lista de cuentas).
@@ -682,6 +685,8 @@ export default function adminRoutes(fastify: FastifyInstance) {
           customRoleName: u?.customRoleId
             ? (roleNameById.get(u.customRoleId.toString()) ?? null)
             : null,
+          jobTitle: u?.jobTitle ?? null,
+          department: u?.department ?? null,
           isPrimary: a.isPrimary,
           status: a.status,
           quotaBytes: a.quotaBytes ?? 0,
@@ -765,8 +770,20 @@ export default function adminRoutes(fastify: FastifyInstance) {
       if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
       if (body.status !== undefined) set.status = body.status;
       if (Object.keys(set).length > 0) await Account.updateOne({ _id: id }, { $set: set });
-      if (body.displayName) {
-        await User.updateOne({ _id: account.userId }, { $set: { displayName: body.displayName } });
+      // Campos del usuario (nombre + perfil de firmas). '' en jobTitle/department limpia el campo.
+      const uSet: Record<string, unknown> = {};
+      const uUnset: Record<string, unknown> = {};
+      if (body.displayName) uSet.displayName = body.displayName;
+      for (const k of ['jobTitle', 'department'] as const) {
+        if (body[k] === undefined) continue;
+        if (body[k]) uSet[k] = body[k];
+        else uUnset[k] = '';
+      }
+      const uUpdate: Record<string, unknown> = {};
+      if (Object.keys(uSet).length > 0) uUpdate.$set = uSet;
+      if (Object.keys(uUnset).length > 0) uUpdate.$unset = uUnset;
+      if (Object.keys(uUpdate).length > 0) {
+        await User.updateOne({ _id: account.userId }, uUpdate);
       }
       return { ok: true };
     }

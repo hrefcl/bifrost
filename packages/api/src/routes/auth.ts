@@ -13,7 +13,7 @@ import { resolveAdminAccess } from '../lib/authz.js';
 import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
-import { externalizeDataImages } from '../services/signature-images.js';
+import { externalizeDataImages, storeDataImage } from '../services/signature-images.js';
 import { randomToken } from '../config/crypto.js';
 import type { LoginRequest, LoginResponse, RefreshResponse } from '@webmail6/shared';
 
@@ -33,6 +33,18 @@ const preferencesPatchSchema = z
   .object({
     defaultSignature: z.string().max(50_000).optional(),
     autoIncludeSignature: z.boolean().optional(),
+  })
+  .strict();
+
+// Perfil personal editable por el usuario (firmas F3). La foto entra como data: URL ráster y se
+// EXTERNALIZA a URL interna (`storeDataImage`) — nunca se acepta una URL remota (review H2).
+const profilePatchSchema = z
+  .object({
+    jobTitle: z.string().trim().max(120).optional(),
+    department: z.string().trim().max(120).optional(),
+    phone: z.string().trim().max(40).optional(),
+    photoDataUrl: z.string().max(3_000_000).optional(),
+    clearPhoto: z.boolean().optional(),
   })
   .strict();
 
@@ -167,6 +179,10 @@ export default function authRoutes(fastify: FastifyInstance) {
       role: user.role,
       adminPermissions: [...permissions],
       avatarUrl: user.avatarUrl,
+      jobTitle: user.jobTitle,
+      department: user.department,
+      phone: user.phone,
+      photoUrl: user.photoUrl,
       username: user.username,
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),
@@ -218,6 +234,51 @@ export default function authRoutes(fastify: FastifyInstance) {
     return {
       defaultSignature: user.preferences.defaultSignature,
       autoIncludeSignature: user.preferences.autoIncludeSignature,
+    };
+  });
+
+  // Perfil personal (firmas F3): cargo, departamento, teléfono y foto. `$set`/`$unset` dirigido
+  // (un string vacío LIMPIA el campo). La foto (data: URL) se externaliza a URL interna.
+  fastify.patch('/me/profile', async (request, reply) => {
+    const body = profilePatchSchema.parse(request.body);
+    const set: Record<string, unknown> = {};
+    const unset: Record<string, unknown> = {};
+    const text = (v: string | undefined, key: string) => {
+      if (v === undefined) return;
+      const t = v.trim();
+      if (t) set[key] = t;
+      else unset[key] = '';
+    };
+    text(body.jobTitle, 'jobTitle');
+    text(body.department, 'department');
+    text(body.phone, 'phone');
+    if (body.clearPhoto) {
+      unset.photoUrl = '';
+    } else if (body.photoDataUrl !== undefined) {
+      const url = await storeDataImage(request.user.userId, body.photoDataUrl, env.FRONTEND_URL);
+      if (!url) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Foto inválida (usá una imagen PNG/JPG/WEBP/GIF de hasta 2 MB).',
+        });
+      }
+      set.photoUrl = url;
+    }
+    const update: Record<string, unknown> = {};
+    if (Object.keys(set).length > 0) update.$set = set;
+    if (Object.keys(unset).length > 0) update.$unset = unset;
+    const user = await User.findByIdAndUpdate(request.user.userId, update, { new: true });
+    if (!user) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
+    }
+    return {
+      jobTitle: user.jobTitle,
+      department: user.department,
+      phone: user.phone,
+      photoUrl: user.photoUrl,
     };
   });
 }
