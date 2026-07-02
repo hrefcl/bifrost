@@ -84,6 +84,174 @@ async function saveSignature() {
     saving.value = false;
   }
 }
+
+// ── Firmas white-label (F4): elegir template + datos + preview en vivo ──
+interface SigTemplate {
+  id: string;
+  nameKey: string;
+}
+interface SigOptions {
+  templates: SigTemplate[];
+  policy: { lockTemplate: boolean; allowCustomHtml: boolean; enforceSignature: boolean };
+  current: { source?: 'template' | 'custom'; templateId?: string; includePhoto?: boolean } | null;
+  hasPhoto: boolean;
+}
+const sigTemplates = ref<SigTemplate[]>([]);
+const sigPolicy = ref({ lockTemplate: false, allowCustomHtml: true, enforceSignature: false });
+const sigMode = ref<'template' | 'custom'>('template');
+const selectedTemplate = ref('');
+const includePhoto = ref(true);
+const previewHtml = ref('');
+const previewLoading = ref(false);
+const prof = ref({ jobTitle: '', department: '', phone: '' });
+const photoUrl = ref<string | null>(null);
+const profSaving = ref(false);
+
+async function loadSigOptions() {
+  try {
+    const { data } = await api.get<SigOptions>('/auth/me/signature/options');
+    sigTemplates.value = data.templates;
+    sigPolicy.value = data.policy;
+    const cur = data.current;
+    const legacyCustom = Boolean(auth.user?.preferences.defaultSignature);
+    sigMode.value = cur?.source ?? (legacyCustom ? 'custom' : 'template');
+    if (!data.policy.allowCustomHtml) sigMode.value = 'template';
+    const firstId = data.templates[0]?.id ?? '';
+    const chosen = cur?.templateId;
+    selectedTemplate.value = data.policy.lockTemplate ? firstId : (chosen ?? firstId);
+    includePhoto.value = cur?.includePhoto ?? true;
+    prof.value = {
+      jobTitle: auth.user?.jobTitle ?? '',
+      department: auth.user?.department ?? '',
+      phone: auth.user?.phone ?? '',
+    };
+    photoUrl.value = auth.user?.photoUrl ?? null;
+    loadPreview();
+  } catch {
+    /* la sección muestra su estado igual */
+  }
+}
+
+let previewTimer: ReturnType<typeof setTimeout> | undefined;
+function loadPreview() {
+  if (sigMode.value !== 'template' || !selectedTemplate.value) {
+    previewHtml.value = '';
+    return;
+  }
+  clearTimeout(previewTimer);
+  previewLoading.value = true;
+  previewTimer = setTimeout(() => {
+    void (async () => {
+      try {
+        const { data } = await api.get<{ html: string }>('/auth/me/signature/preview', {
+          params: { templateId: selectedTemplate.value, includePhoto: includePhoto.value },
+        });
+        previewHtml.value = data.html;
+      } catch {
+        previewHtml.value = '';
+      } finally {
+        previewLoading.value = false;
+      }
+    })();
+  }, 250);
+}
+
+async function saveSigPref() {
+  await api.patch('/auth/me/signature', {
+    source: sigMode.value,
+    templateId: selectedTemplate.value || undefined,
+    includePhoto: includePhoto.value,
+  });
+}
+async function chooseTemplate(id: string) {
+  if (sigPolicy.value.lockTemplate) return;
+  selectedTemplate.value = id;
+  await saveSigPref();
+  loadPreview();
+}
+async function setSigMode(m: 'template' | 'custom') {
+  sigMode.value = m;
+  await saveSigPref();
+  if (m === 'custom') void nextTick(fillSigEl);
+  else loadPreview();
+}
+async function toggleIncludePhoto() {
+  await saveSigPref();
+  loadPreview();
+}
+
+async function saveProfile() {
+  profSaving.value = true;
+  saved.value = false;
+  try {
+    const { data } = await api.patch<{
+      jobTitle?: string;
+      department?: string;
+      phone?: string;
+    }>('/auth/me/profile', {
+      jobTitle: prof.value.jobTitle,
+      department: prof.value.department,
+      phone: prof.value.phone,
+    });
+    if (auth.user) {
+      auth.user.jobTitle = data.jobTitle;
+      auth.user.department = data.department;
+      auth.user.phone = data.phone;
+    }
+    saved.value = true;
+    loadPreview();
+  } catch {
+    error.value = t('settings.signature.error');
+  } finally {
+    profSaving.value = false;
+  }
+}
+
+const PHOTO_MAX = 2 * 1024 * 1024;
+function onPhotoPick(e: Event) {
+  error.value = '';
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.type)) {
+    error.value = t('settings.signature.photoType');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+    if (!dataUrl || dataUrl.length * 0.75 > PHOTO_MAX) {
+      error.value = t('settings.signature.photoSize');
+      return;
+    }
+    void (async () => {
+      try {
+        const { data } = await api.patch<{ photoUrl?: string }>('/auth/me/profile', {
+          photoDataUrl: dataUrl,
+        });
+        photoUrl.value = data.photoUrl ?? null;
+        if (auth.user) auth.user.photoUrl = data.photoUrl;
+        loadPreview();
+      } catch {
+        error.value = t('settings.signature.photoType');
+      }
+    })();
+  };
+  reader.readAsDataURL(file);
+}
+async function clearPhoto() {
+  const { data } = await api.patch<{ photoUrl?: string }>('/auth/me/profile', { clearPhoto: true });
+  photoUrl.value = data.photoUrl ?? null;
+  if (auth.user) auth.user.photoUrl = data.photoUrl;
+  loadPreview();
+}
+
+// Cargar opciones al entrar a la sección firma (además del onMounted de abajo).
+watch(section, (s) => {
+  if (s === 'signature') void loadSigOptions();
+});
+onMounted(() => {
+  if (section.value === 'signature') void loadSigOptions();
+});
 </script>
 
 <template>
@@ -165,27 +333,143 @@ async function saveSignature() {
           </div>
         </template>
 
-        <!-- Firma -->
+        <!-- Firma (white-label F4) -->
         <template v-else-if="section === 'signature'">
           <h2 class="section-h">{{ t('settings.signature.title') }}</h2>
           <p class="section-desc">{{ t('settings.signature.desc') }}</p>
-          <div
-            ref="sigEl"
-            class="sig-editor"
-            contenteditable="true"
-            role="textbox"
-            aria-multiline="true"
-            @input="onSigInput"
-          ></div>
-          <p class="sig-hint">{{ t('settings.signature.htmlHint') }}</p>
-          <label class="check-row">
-            <input v-model="autoInclude" type="checkbox" />
+
+          <p v-if="sigPolicy.enforceSignature" class="sig-policy-note">
+            {{ t('settings.signature.enforced') }}
+          </p>
+
+          <!-- Toggle template / HTML propio (custom sólo si la política lo permite) -->
+          <div v-if="sigPolicy.allowCustomHtml && !sigPolicy.lockTemplate" class="sig-modes">
+            <button
+              class="sig-mode"
+              :class="{ active: sigMode === 'template' }"
+              @click="setSigMode('template')"
+            >
+              {{ t('settings.signature.modeTemplate') }}
+            </button>
+            <button
+              class="sig-mode"
+              :class="{ active: sigMode === 'custom' }"
+              @click="setSigMode('custom')"
+            >
+              {{ t('settings.signature.modeCustom') }}
+            </button>
+          </div>
+
+          <!-- MODO TEMPLATE -->
+          <div v-if="sigMode === 'template'" class="sig-tpl">
+            <!-- Datos personales que rellenan la firma -->
+            <div class="sig-fields">
+              <label class="fld"
+                ><span>{{ t('settings.signature.jobTitle') }}</span
+                ><input v-model="prof.jobTitle" class="inp" maxlength="120"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('settings.signature.department') }}</span
+                ><input v-model="prof.department" class="inp" maxlength="120"
+              /></label>
+              <label class="fld"
+                ><span>{{ t('settings.signature.phone') }}</span
+                ><input v-model="prof.phone" class="inp" maxlength="40"
+              /></label>
+              <div class="fld">
+                <span>{{ t('settings.signature.photo') }}</span>
+                <div class="photo-row">
+                  <span class="photo-prev" :class="{ empty: !photoUrl }">
+                    <img v-if="photoUrl" :src="photoUrl" alt="foto" />
+                  </span>
+                  <label class="ghost-btn file-btn">
+                    {{ t('settings.signature.pickPhoto') }}
+                    <input
+                      type="file"
+                      accept="image/png,image/jpeg,image/webp,image/gif"
+                      hidden
+                      @change="onPhotoPick"
+                    />
+                  </label>
+                  <button v-if="photoUrl" class="link-btn" @click="clearPhoto">
+                    {{ t('settings.signature.removePhoto') }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div class="save-row">
+              <button class="primary-btn" :disabled="profSaving" @click="saveProfile">
+                {{ profSaving ? t('settings.signature.saving') : t('settings.signature.saveData') }}
+              </button>
+              <label class="check-row inline">
+                <input v-model="includePhoto" type="checkbox" @change="toggleIncludePhoto" />
+                {{ t('settings.signature.includePhoto') }}
+              </label>
+            </div>
+
+            <!-- Galería de templates (radiogroup) -->
+            <div
+              class="sig-gallery"
+              role="radiogroup"
+              :aria-label="t('settings.signature.chooseTemplate')"
+            >
+              <button
+                v-for="tpl in sigTemplates"
+                :key="tpl.id"
+                class="sig-card"
+                :class="{ active: selectedTemplate === tpl.id }"
+                role="radio"
+                :aria-checked="selectedTemplate === tpl.id"
+                :disabled="sigPolicy.lockTemplate"
+                @click="chooseTemplate(tpl.id)"
+              >
+                <span class="sig-card-name">{{ t(tpl.nameKey) }}</span>
+                <AppIcon
+                  v-if="selectedTemplate === tpl.id"
+                  name="check"
+                  :size="16"
+                  class="sig-card-check"
+                />
+              </button>
+            </div>
+
+            <!-- Preview en vivo -->
+            <div class="sig-preview-wrap">
+              <div class="sig-preview-head">{{ t('settings.signature.preview') }}</div>
+              <div class="sig-preview">
+                <p v-if="previewLoading" class="muted sm">{{ t('common.loading') }}</p>
+                <!-- previewHtml viene saneado SERVER-SIDE (mismo pipeline sanitizeEmailHtml que el
+                     envío) — fuente única, no se rendiza HTML del cliente. -->
+                <!-- eslint-disable-next-line vue/no-v-html -->
+                <div v-else-if="previewHtml" v-html="previewHtml"></div>
+                <p v-else class="muted sm">{{ t('settings.signature.previewEmpty') }}</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- MODO CUSTOM (HTML pegado) -->
+          <div v-else class="sig-custom">
+            <div
+              ref="sigEl"
+              class="sig-editor"
+              contenteditable="true"
+              role="textbox"
+              aria-multiline="true"
+              @input="onSigInput"
+            ></div>
+            <p class="sig-hint">{{ t('settings.signature.htmlHint') }}</p>
+            <div class="save-row">
+              <button class="primary-btn" :disabled="saving" @click="saveSignature">
+                {{ saving ? t('settings.signature.saving') : t('settings.signature.save') }}
+              </button>
+            </div>
+          </div>
+
+          <label v-if="!sigPolicy.enforceSignature" class="check-row">
+            <input v-model="autoInclude" type="checkbox" @change="saveSignature" />
             {{ t('settings.signature.autoInclude') }}
           </label>
           <div class="save-row">
-            <button class="primary-btn" :disabled="saving" @click="saveSignature">
-              {{ saving ? t('settings.signature.saving') : t('settings.signature.save') }}
-            </button>
             <span v-if="saved" class="ok">{{ t('settings.signature.saved') }}</span>
             <span v-if="error" class="err">{{ error }}</span>
           </div>
@@ -439,5 +723,172 @@ async function saveSignature() {
 .ok-badge {
   color: var(--green);
   background: var(--green-soft);
+}
+
+/* ── Firma white-label (F4) ── */
+.sig-policy-note {
+  font-size: 13px;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 8px 12px;
+  margin: 0 0 14px;
+}
+.sig-modes {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface-dim);
+  border-radius: 9px;
+  margin-bottom: 16px;
+}
+.sig-mode {
+  border: none;
+  background: transparent;
+  padding: 6px 14px;
+  border-radius: 7px;
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-2);
+  cursor: pointer;
+}
+.sig-mode.active {
+  background: var(--surface);
+  color: var(--text-1);
+  box-shadow: var(--shadow-sm);
+}
+.sig-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.fld {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-2);
+}
+.inp {
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 400;
+  background: var(--surface);
+  color: var(--text-1);
+}
+.photo-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.photo-prev {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--surface-dim);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.photo-prev img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.ghost-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-1);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.file-btn {
+  display: inline-block;
+}
+.link-btn {
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.check-row.inline {
+  margin: 0;
+}
+.sig-gallery {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0;
+}
+.sig-card {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+}
+.sig-card:hover:not(:disabled) {
+  border-color: var(--border-strong);
+}
+.sig-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+.sig-card:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.sig-card-check {
+  color: var(--accent);
+}
+.sig-preview-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.sig-preview-head {
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  background: var(--surface-dim);
+  border-bottom: 1px solid var(--border);
+}
+.sig-preview {
+  padding: 18px;
+  background: var(--surface);
+  min-height: 60px;
+}
+.muted {
+  color: var(--text-3);
+}
+.sm {
+  font-size: 12.5px;
+}
+@media (max-width: 560px) {
+  .sig-fields {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

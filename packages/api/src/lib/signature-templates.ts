@@ -256,11 +256,11 @@ function cleanHost(url: string | undefined): string {
 }
 
 export const SIGNATURE_TEMPLATES = [
-  { id: 'horizontal', nameKey: 'signature.tpl.horizontal', render: horizontal },
-  { id: 'vertical', nameKey: 'signature.tpl.vertical', render: vertical },
-  { id: 'photo-round', nameKey: 'signature.tpl.photoRound', render: photoRound },
-  { id: 'corporate', nameKey: 'signature.tpl.corporate', render: corporate },
-  { id: 'minimal', nameKey: 'signature.tpl.minimal', render: minimal },
+  { id: 'horizontal', nameKey: 'settings.signatureTpl.horizontal', render: horizontal },
+  { id: 'vertical', nameKey: 'settings.signatureTpl.vertical', render: vertical },
+  { id: 'photo-round', nameKey: 'settings.signatureTpl.photoRound', render: photoRound },
+  { id: 'corporate', nameKey: 'settings.signatureTpl.corporate', render: corporate },
+  { id: 'minimal', nameKey: 'settings.signatureTpl.minimal', render: minimal },
 ] as const satisfies readonly SignatureTemplate[];
 
 export type SignatureTemplateId = (typeof SIGNATURE_TEMPLATES)[number]['id'];
