@@ -67,6 +67,10 @@ import {
   faCalendarClock,
   faList,
   faLink,
+  faMicrophone,
+  faMicrophoneSlash,
+  faVideoSlash,
+  faDisplay,
 } from '@fortawesome/pro-duotone-svg-icons';
 
 // svg-core inyectaría su CSS en <head> vía <style> → la CSP (style-src 'self') lo bloquearía.
@@ -135,6 +139,11 @@ export const ICONS = {
   calendarClock: faCalendarClock,
   list: faList,
   link: faLink,
+  // Controles de la llamada Meet (barra estilo Google Meet).
+  mic: faMicrophone,
+  micOff: faMicrophoneSlash,
+  videoOff: faVideoSlash,
+  screenShare: faDisplay,
 } as const satisfies Record<string, IconDefinition>;
 
 /** Nombres válidos de icono (unión cerrada del mapa). El nuevo código debe usar este tipo. */

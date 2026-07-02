@@ -6,6 +6,7 @@ import type { Participant } from 'livekit-client';
 import { api } from '@/lib/http';
 import { useAuthStore } from '@/stores/auth';
 import MeetVideoTile from '@/components/meet/MeetVideoTile.vue';
+import AppIcon from '@/components/AppIcon.vue';
 
 const props = defineProps<{
   slug: string;
@@ -409,7 +410,7 @@ onBeforeUnmount(() => {
       </div>
 
       <!-- Barra de control inferior estilo Google Meet -->
-      <div class="flex items-center justify-center gap-3 py-3 bg-neutral-950/80">
+      <div class="meet-controls">
         <button
           type="button"
           class="ctl"
@@ -418,7 +419,7 @@ onBeforeUnmount(() => {
           :title="t('meet.call.mic')"
           @click="toggleMic"
         >
-          {{ micOn ? '🎤' : '🔇' }}
+          <AppIcon :name="micOn ? 'mic' : 'micOff'" :size="22" />
         </button>
         <button
           type="button"
@@ -428,7 +429,7 @@ onBeforeUnmount(() => {
           :title="t('meet.call.cam')"
           @click="toggleCam"
         >
-          {{ camOn ? '📹' : '🚫' }}
+          <AppIcon :name="camOn ? 'video' : 'videoOff'" :size="22" />
         </button>
         <button
           type="button"
@@ -438,14 +439,17 @@ onBeforeUnmount(() => {
           :title="t('meet.call.shareScreen')"
           @click="toggleScreen"
         >
-          🖥️
+          <AppIcon name="screenShare" :size="22" />
         </button>
         <button type="button" class="ctl" :title="t('meet.call.copyLink')" @click="copyLink">
-          {{ linkCopied ? '✓' : '🔗' }}
+          <AppIcon :name="linkCopied ? 'check' : 'link'" :size="22" />
         </button>
-        <span class="text-sm text-neutral-400 px-2">{{ participantCount }}</span>
+        <div class="ctl-count">
+          <AppIcon name="users" :size="16" />
+          <span>{{ participantCount }}</span>
+        </div>
         <button type="button" class="ctl ctl-leave" :title="t('meet.call.leave')" @click="leave">
-          📞
+          <AppIcon name="phone" :size="22" />
         </button>
       </div>
     </template>
@@ -453,16 +457,67 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
+/* Barra de controles estilo Google Meet: fila centrada, botones circulares, hang-up rojo tipo pill. */
+.meet-controls {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 14px 16px calc(14px + env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.85), rgba(0, 0, 0, 0.3));
+}
 .ctl {
-  @apply w-12 h-12 rounded-full bg-neutral-700 hover:bg-neutral-600 flex items-center justify-center text-xl;
+  width: 48px;
+  height: 48px;
+  border: none;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  background: rgba(60, 64, 67, 0.9); /* gris neutro Google Meet */
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    transform 0.1s;
 }
+.ctl:hover {
+  background: rgba(82, 86, 90, 0.95);
+}
+.ctl:active {
+  transform: scale(0.94);
+}
+/* Muteado (mic/cam off): rojo Google. */
 .ctl-off {
-  @apply bg-red-600 hover:bg-red-500;
+  background: #ea4335;
 }
+.ctl-off:hover {
+  background: #f2534a;
+}
+/* Activo (compartiendo pantalla): azul claro Google, icono oscuro. */
 .ctl-active {
-  @apply bg-blue-600 hover:bg-blue-500;
+  background: #8ab4f8;
+  color: #202124;
 }
+.ctl-active:hover {
+  background: #a6c8fb;
+}
+/* Colgar: pill rojo más ancho, como el "end call" de Meet. */
 .ctl-leave {
-  @apply bg-red-600 hover:bg-red-500 w-14;
+  width: 64px;
+  background: #ea4335;
+}
+.ctl-leave:hover {
+  background: #f2534a;
+}
+/* Contador de participantes: sutil, con icono duotone. */
+.ctl-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 8px;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 14px;
+  font-weight: 600;
 }
 </style>
