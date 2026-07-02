@@ -419,7 +419,7 @@ async function saveSignature() {
 }
 .ok {
   font-size: 13.5px;
-  color: #16a34a;
+  color: var(--green);
   font-weight: 600;
 }
 .err {
@@ -437,7 +437,7 @@ async function saveSignature() {
   flex-shrink: 0;
 }
 .ok-badge {
-  color: #16a34a;
-  background: color-mix(in srgb, #16a34a 14%, transparent);
+  color: var(--green);
+  background: var(--green-soft);
 }
 </style>

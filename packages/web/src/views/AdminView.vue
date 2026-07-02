@@ -1869,8 +1869,8 @@ async function save() {
   border-radius: 5px;
 }
 .badge.ok {
-  color: #16a34a;
-  background: color-mix(in srgb, #16a34a 14%, transparent);
+  color: var(--green);
+  background: var(--green-soft);
 }
 .badge.admin {
   color: var(--accent);
@@ -1960,7 +1960,7 @@ async function save() {
 }
 .ok-text {
   font-size: 13.5px;
-  color: #16a34a;
+  color: var(--green);
   font-weight: 600;
 }
 .err-text {
@@ -1969,7 +1969,7 @@ async function save() {
 }
 .warn-text {
   font-size: 12px;
-  color: #d97706;
+  color: var(--amber);
   margin: 8px 0 0;
 }
 .current {
@@ -2116,8 +2116,8 @@ async function save() {
   border-radius: 12px;
 }
 .status.active {
-  color: #16a34a;
-  background: color-mix(in srgb, #16a34a 14%, transparent);
+  color: var(--green);
+  background: var(--green-soft);
 }
 .status.disabled {
   color: var(--text-3);
