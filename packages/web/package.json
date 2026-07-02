@@ -13,13 +13,12 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@fortawesome/fontawesome-svg-core": "^6.7.2",
-    "@fortawesome/pro-duotone-svg-icons": "^6.7.2",
     "@fullcalendar/core": "^6.1.21",
     "@fullcalendar/daygrid": "^6.1.21",
     "@fullcalendar/interaction": "^6.1.21",
     "@fullcalendar/timegrid": "^6.1.21",
     "@fullcalendar/vue3": "^6.1.21",
+    "@phosphor-icons/vue": "^2.2.1",
     "@tiptap/extension-link": "^3.27.1",
     "@tiptap/extension-placeholder": "^3",
     "@tiptap/starter-kit": "^3.27.1",

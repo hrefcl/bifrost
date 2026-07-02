@@ -3,15 +3,10 @@ RUN corepack enable && corepack prepare pnpm@9.15.0 --activate
 WORKDIR /app
 
 # pnpm-lock.yaml es OBLIGATORIO para --frozen-lockfile (antes faltaba → fallaba el build).
-# .npmrc apunta @fortawesome/* al registry Pro e interpola el token desde el env (no se hornea).
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml .npmrc ./
+COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages/shared/package.json packages/shared/
 COPY packages/web/package.json packages/web/
-# BuildKit secret: el token FA Pro se lee sólo durante este RUN (no queda en ninguna capa/imagen).
-# En CI lo inyecta docker.yml (secrets: fontawesome_token=${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}).
-RUN --mount=type=secret,id=fontawesome_token \
-    FONTAWESOME_NPM_AUTH_TOKEN="$(cat /run/secrets/fontawesome_token 2>/dev/null || true)" \
-    pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile
 
 COPY tsconfig.base.json ./
 COPY packages/shared/src packages/shared/src
