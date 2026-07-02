@@ -63,6 +63,12 @@ const UserSchema = new Schema<IUser>(
       composeFormat: { type: String, enum: ['html', 'text'], default: 'html' },
       defaultSignature: { type: String },
       autoIncludeSignature: { type: Boolean, default: true },
+      // Firma white-label (F4/F5): elección de template + datos por-usuario. Ausente = legado (custom).
+      signature: {
+        source: { type: String, enum: ['template', 'custom'] },
+        templateId: { type: String },
+        includePhoto: { type: Boolean },
+      },
       notifications: {
         desktopEnabled: { type: Boolean, default: true },
         soundEnabled: { type: Boolean, default: false },

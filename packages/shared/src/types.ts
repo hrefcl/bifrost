@@ -26,8 +26,18 @@ export interface UserPreferences {
   showPreview: boolean;
   keyboardShortcutSet: 'gmail' | 'outlook';
   composeFormat: 'html' | 'text';
+  /** Firma legada / 'custom': HTML pegado por el usuario (se usa cuando `signature.source==='custom'`). */
   defaultSignature?: string;
   autoIncludeSignature: boolean;
+  /**
+   * Firma white-label (firmas F4/F5). `source:'template'` → se rendiza `templateId` con el branding
+   * del admin + datos del User al ENVIAR. `source:'custom'` → usa `defaultSignature`. Ausente = legado.
+   */
+  signature?: {
+    source: 'template' | 'custom';
+    templateId?: string;
+    includePhoto?: boolean;
+  };
   notifications: {
     desktopEnabled: boolean;
     soundEnabled: boolean;
