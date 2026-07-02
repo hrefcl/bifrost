@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import type { FastifyInstance } from 'fastify';
 
 const h = vi.hoisted(() => ({ sent: 0, appended: 0, lastRaw: '' }));
+// Espía para asertar la regresión del fix de Enviados (el send debe SINCRONIZAR el folder Sent).
+const imapMock = vi.hoisted(() => ({ syncFolderHeaders: vi.fn(() => Promise.resolve(0)) }));
 
 vi.mock('nodemailer', () => ({
   createTransport: () => ({
@@ -31,6 +33,14 @@ vi.mock('imapflow', () => {
   return { ImapFlow };
 });
 
+// Mock PARCIAL de imap.js: `appendToSent` queda REAL (usa el ImapFlow mockeado → cuenta h.appended),
+// pero `syncFolderHeaders` se espía para asertar que el send sincroniza el folder Sent tras el APPEND
+// (regresión del bug "el enviado no aparecía en Enviados"). El fake IMAP no ejercita el sync real.
+vi.mock('../../services/imap.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../services/imap.js')>();
+  return { ...actual, syncFolderHeaders: imapMock.syncFolderHeaders };
+});
+
 import {
   setupTestDb,
   teardownTestDb,
@@ -40,6 +50,7 @@ import {
   seedUserWithAccount,
 } from '../../../test/integration-helper.js';
 import { Draft } from '../../models/Draft.js';
+import { Folder } from '../../models/Folder.js';
 import { User } from '../../models/User.js';
 import { Contact } from '../../models/Contact.js';
 import { recoverStuckDrafts } from '../drafts.js';
@@ -61,6 +72,7 @@ describe('envío de drafts (F3.5)', () => {
     h.sent = 0;
     h.appended = 0;
     h.lastRaw = '';
+    imapMock.syncFolderHeaders.mockClear();
   });
 
   async function makeDraft(userId: string, accountId: string, to = [{ address: 'dest@test.com' }]) {
@@ -90,6 +102,35 @@ describe('envío de drafts (F3.5)', () => {
     expect(after?.status).toBe('sent');
     expect(after?.sentMessageId).toBeTruthy();
     expect(after?.sentAt).toBeTruthy();
+  });
+
+  it('tras enviar, SINCRONIZA el folder Sent (regresión: el enviado debe aparecer en Enviados)', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
+    // El APPEND deja el mensaje en IMAP Sent, pero la vista Enviados lee de Mongo → el handler debe
+    // sincronizar el folder Sent para que aparezca. Bug histórico: no lo hacía (quedaba sólo en IMAP).
+    const sent = await Folder.create({
+      accountId: account._id,
+      name: 'Sent',
+      path: 'Sent',
+      displayName: 'Sent',
+      specialUse: 'sent',
+      uidValidity: 1,
+      uidNext: 1,
+    });
+    const draft = await makeDraft(user._id.toString(), account._id.toString());
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/drafts/${draft._id.toString()}/send`,
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(200);
+    expect(h.appended).toBe(1); // copió a IMAP Sent
+    // ...y sincronizó ESE folder Sent para reflejarlo en Mongo (lo que faltaba y causaba el bug).
+    expect(imapMock.syncFolderHeaders).toHaveBeenCalledTimes(1);
+    expect(imapMock.syncFolderHeaders).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: account._id }),
+      sent._id.toString()
+    );
   });
 
   it('rate-limit por buzón: excede el cap → 429 + Retry-After, NO envía y revierte a editing', async () => {

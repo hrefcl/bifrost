@@ -566,9 +566,8 @@ necesario). TDs residuales:
   Fix (`drafts.ts` + `imap.ts`): `appendToSent` devuelve el id del folder Sent local; el handler llama
   `syncFolderHeaders` (best-effort) tras el APPEND → aparece de inmediato. Verificado end-to-end en
   aulion.dev build 179: envío nuevo → aparece en Enviados sin sync manual. 495 tests API verdes.
-- **TD-SENT-SYNC-TESTGAP (LOW — QA)**: el fix está verificado LIVE pero NO cubierto por un test
-  automatizado. El mock de `imapflow` en `drafts-send.test.ts` sólo implementa `append` (no
-  `mailboxOpen`/`fetch`/`status` que `syncFolderHeaders` necesita), así que el flujo "el enviado
-  aparece en Enviados" no se puede asertar sin enriquecer el fake IMAP (ata con el deuda pre-existente
-  "el fake IMAP no ejercita expunge/append-fail"). Follow-up: extender el fake IMAP para roundtrip
-  append→sync y asertar el doc en Sent (Mongo). El fix en sí es best-effort y no rompe el envío si falla.
+- **TD-SENT-SYNC-TESTGAP — RESUELTO** (jul 2026): sin enriquecer el fake IMAP (habría sido frágil),
+  se agregó un test de regresión en `drafts-send.test.ts` con **mock PARCIAL de `imap.js`**:
+  `appendToSent` queda real (usa el ImapFlow mockeado → cuenta el APPEND) y `syncFolderHeaders` se
+  espía. El test seedea un folder Sent y asserta que el send lo sincroniza
+  (`toHaveBeenCalledWith(account, sentFolderId)`). Si alguien quita el sync, el test falla. 496 tests API.
