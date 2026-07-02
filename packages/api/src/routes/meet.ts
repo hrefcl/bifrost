@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { RoomServiceClient } from 'livekit-server-sdk';
 import { MeetRoom, serializeMeetRoom, type IMeetRoom } from '../models/MeetRoom.js';
+import { User } from '../models/User.js';
 import {
   getStoredMeetSettings,
   setMeetSettings,
@@ -279,7 +280,15 @@ export default function meetRoutes(fastify: FastifyInstance) {
       const room = await MeetRoom.findOne({ slug, status: 'active' });
       if (!room) return notFound(reply);
       const role: MeetRole = room.userId.toString() === request.user.userId ? 'host' : 'internal';
-      return issueForRoom(request, reply, settings, room, role, body.displayName);
+      // Nombre AUTORITATIVO del perfil del usuario autenticado (no el que mande el cliente): un usuario
+      // logueado NO debe aparecer como "Invitado" en su propia sala, ni poder falsear su nombre en una
+      // reunión interna. `displayName` es required en el modelo (auto-curado), así que siempre hay valor.
+      const authUser = await User.findById(request.user.userId).select('displayName').lean();
+      // `displayName` es required (auto-curado al prefijo del email) → nunca vacío; profileName es
+      // undefined sólo si el user no existe → `??` cae a lo que mande el cliente (o el default del server).
+      const profileName = authUser?.displayName.trim();
+      const authName = profileName ?? body.displayName;
+      return issueForRoom(request, reply, settings, room, role, authName);
     }
   );
 

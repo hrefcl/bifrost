@@ -1,11 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
+// Captura el `name` (display name) que llega al AccessToken → para asertar el nombre del participante.
+const tokenCapture = vi.hoisted(() => ({ name: '' }));
+
 // Mock del SDK LiveKit (hoisted): el token es un string fijo; createRoom/deleteRoom resuelven.
 // Así los tests de ruta no necesitan un servidor LiveKit real (review C-H2: ensureRoom no-fatal).
 vi.mock('livekit-server-sdk', () => {
   class AccessToken {
-    constructor(_k?: string, _s?: string, _o?: unknown) {}
+    constructor(_k?: string, _s?: string, _o?: unknown) {
+      tokenCapture.name = (_o as { name?: string } | undefined)?.name ?? '';
+    }
     addGrant(_g: unknown): void {}
     async toJwt(): Promise<string> {
       return 'header.payload.signature';
@@ -260,6 +265,34 @@ describe('Bifrost Meet — endpoints (F3.1)', () => {
       payload: {},
     });
     expect((JSON.parse(asInternal.body) as { role: string }).role).toBe('internal');
+  });
+
+  it('POST /rooms/:slug/token: usa el displayName del PERFIL autenticado (no "Invitado")', async () => {
+    // Regresión: en sala personal no se pide nombre (requiresName=false) → el cliente mandaba
+    // vacío/"Invitado" y el usuario logueado aparecía como "Invitado" en su propia sala. El server
+    // debe usar el nombre AUTORITATIVO del perfil, ignorando lo que mande el cliente.
+    await enableMeet();
+    const { user } = await seedUserWithAccount({ email: 'a@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { displayName: 'Admin Aulion' } });
+    const room = await MeetRoom.create({
+      userId: user._id,
+      slug: 'named-room',
+      name: 'r',
+      mode: 'personal',
+      status: 'active',
+      source: 'manual',
+      maxParticipants: 10,
+    });
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/meet/rooms/${room.slug}/token`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { displayName: 'Invitado' }, // aunque el cliente mande "Invitado"…
+    });
+    expect(res.statusCode).toBe(200);
+    // …el token lleva el nombre del perfil, no "Invitado".
+    expect(tokenCapture.name).toBe('Admin Aulion');
+    expect(tokenCapture.name).not.toBe('Invitado');
   });
 
   it('POST /public/:slug/token externo en sala personal con allowExternal=true → 200', async () => {
