@@ -263,8 +263,8 @@ onBeforeUnmount(() => {
   gap: 7px;
   padding: 5px 12px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
-  color: var(--success, #16a34a);
+  background: var(--green-soft);
+  color: var(--green);
   font-size: 12.5px;
   font-weight: 600;
 }

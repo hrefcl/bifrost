@@ -363,10 +363,10 @@ onMounted(async () => {
   cursor: default;
 }
 .ok {
-  color: #1e7e34;
+  color: var(--green);
 }
 .err {
-  color: #c0392b;
+  color: var(--danger);
 }
 .stats {
   display: grid;
@@ -414,16 +414,16 @@ onMounted(async () => {
   font-weight: 600;
 }
 .badge.confirmed {
-  background: #e6f4ea;
-  color: #1e7e34;
+  background: var(--green-soft);
+  color: var(--green);
 }
 .badge.cancelled {
-  background: #fdecea;
-  color: #c0392b;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .badge.rescheduled {
-  background: #fff4e5;
-  color: #b26a00;
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 .pager {
   display: flex;

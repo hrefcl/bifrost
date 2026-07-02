@@ -358,7 +358,7 @@ onMounted(loadDocs);
   font-size: 0.9rem;
 }
 .ca-error {
-  color: #dc2626;
+  color: var(--danger);
   margin-bottom: 0.5rem;
 }
 .ca-grid {
@@ -380,10 +380,10 @@ onMounted(loadDocs);
   cursor: pointer;
 }
 .ca-list li:hover {
-  background: rgba(0, 0, 0, 0.05);
+  background: var(--hover);
 }
 .ca-list li.active {
-  background: rgba(59, 130, 246, 0.12);
+  background: var(--accent-soft);
 }
 .ca-key {
   font-family: monospace;
@@ -393,22 +393,28 @@ onMounted(loadDocs);
   font-size: 0.7rem;
   padding: 0.1rem 0.4rem;
   border-radius: 999px;
-  background: #e5e7eb;
+  background: var(--hover);
+  color: var(--text-2);
 }
 .ca-badge.block_full {
-  background: #fecaca;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .ca-badge.block_partial {
-  background: #fed7aa;
+  background: var(--amber-soft);
+  color: var(--amber);
 }
 .ca-badge.soft {
-  background: #dbeafe;
+  background: var(--accent-soft);
+  color: var(--accent-ink);
 }
 .ca-badge.published {
-  background: #bbf7d0;
+  background: var(--green-soft);
+  color: var(--green);
 }
 .ca-badge.draft {
-  background: #e5e7eb;
+  background: var(--hover);
+  color: var(--text-3);
 }
 .ca-create,
 .ca-newver-form {
@@ -422,7 +428,7 @@ onMounted(loadDocs);
 .ca-newver select,
 .ca-newver textarea {
   padding: 0.35rem;
-  border: 1px solid #d1d5db;
+  border: 1px solid var(--border-strong);
   border-radius: 6px;
 }
 .ca-meta {

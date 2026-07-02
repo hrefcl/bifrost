@@ -38,6 +38,11 @@
   --green: #16a34a;
   --amber: #d97706;
   --star: #f4b400;
+  /* fondos suaves de estado (chips/badges). El color-mix referencia var(--green/amber/danger) → se
+     resuelve en el scope de uso, así que adaptan a dark automáticamente sin redefinirlos en .dark. */
+  --green-soft: color-mix(in srgb, var(--green) 14%, transparent);
+  --amber-soft: color-mix(in srgb, var(--amber) 15%, transparent);
+  --danger-soft: color-mix(in srgb, var(--danger) 13%, transparent);
 
   /* toast */
   --toast-bg: #1f2430;
