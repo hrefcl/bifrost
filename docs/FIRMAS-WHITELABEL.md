@@ -1,6 +1,8 @@
-# Firmas white-label con templates + branding endurecido (diseño v1)
+# Firmas white-label con templates + branding endurecido (diseño v2)
 
-**Estado:** DISEÑO (pendiente gate B/C/D). Alcance acordado con el PM (2026-07-02).
+**Estado:** DISEÑO v2 — endurecido tras gate B/C/D (B 6.5 · C 7 · D 6, todos "arquitectura OK,
+cerrar precisiones de seguridad"). Los HIGH/MED están incorporados en la sección **§Seguridad
+(obligatorio)** al final. Alcance acordado con el PM (2026-07-02).
 
 ## Objetivo
 Bifrost ofrece un catálogo de templates de firma. Cada template se rellena solo con el **branding
@@ -41,16 +43,22 @@ socialLinks?: { linkedin?, instagram?, x?, facebook?, youtube? }  // URLs
 logoWidthPx?: number      // ancho del logo en la firma (default 120)
 ```
 Los actuales (companyName, tagline, accentColor, logoDataUrl) se mantienen. Todos opcionales: cada
-template usa lo que necesita y omite lo ausente.
+template usa lo que necesita y omite lo ausente. **`domainUrl` y cada `socialLinks[*]` se validan
+http(s) en el schema (patrón `isSafeS3Endpoint`): no `javascript:`/`data:` (ver §Seguridad H1).**
 
 ### Política de firmas (`SystemConfig{key:'signaturePolicy'}`, singleton nuevo)
 ```
-allowedTemplateIds: string[]   // subconjunto del catálogo habilitado. [] = todos. length 1 = forzado.
+allowedTemplateIds: string[]   // SIEMPRE filtra lo que el usuario puede elegir. [] = todo el catálogo.
 lockTemplate: boolean          // true → el usuario no elige, se usa allowedTemplateIds[0]
 lockAccentColor: boolean       // true → oculta el picker personal; toda la app usa el color de marca
 enforceSignature: boolean      // true → firma corporativa SIEMPRE (autoInclude forzado on)
 allowCustomHtml: boolean       // false → prohíbe el 'source:custom' (HTML pegado)
 ```
+**Invariantes (validadas en `setSignaturePolicy`, patrón XError→400):**
+- Semántica explícita: `allowedTemplateIds` SIEMPRE filtra; NO hay "length 1 = forzado" implícito —
+  forzar es SOLO `lockTemplate=true`.
+- `lockTemplate=true` ⇒ `allowedTemplateIds` tiene ≥1 id VÁLIDO del catálogo (rechazar si no).
+- todo id en `allowedTemplateIds` debe existir en el catálogo estático (se ignoran/rechazan stale).
 Gate admin: reusa `branding.manage` (firmas = asunto de marca) — no se agrega permiso nuevo.
 
 ### Firma del usuario (`preferences.signature`, patrón $set dirigido del PATCH actual)
@@ -68,9 +76,12 @@ El `defaultSignature` HTML actual se mantiene para `source:'custom'`.
 jobTitle?: string      // Cargo (cierra el gap de la ficha admin)
 department?: string    // Departamento (idem)
 phone?: string         // teléfono personal (fallback al corporativo del branding)
-photoUrl?: string      // foto (círculo B/N como el de referencia; via signature-images)
+photoUrl?: string      // foto: SOLO URL interna /api/signature-images/:id (NUNCA URL remota — ver §Seguridad H2)
 ```
-Editables por el usuario (Ajustes) y por el admin (ficha de usuario del rediseño).
+Editables por el usuario (Ajustes) y por el admin (ficha de usuario del rediseño), vía PATCH `.strict()`
+con `$set` dirigido (anti mass-assign). Entran en la serialización de login/`/auth/me` (patrón campos
+top-level). La FOTO se sube como data-url ráster (mismo regex+tamaño que el logo), se externaliza al
+GUARDAR vía `signature-images` y se persiste ya como URL interna — nunca se acepta `http(s)` directo.
 
 ## Catálogo de templates (`lib/signature-templates.ts`, estático)
 Patrón idéntico al catálogo de permisos F8: array cerrado, no editable en runtime.
@@ -93,16 +104,27 @@ Cada `render` devuelve HTML de **tabla con estilos inline** (email-safe). v1 (4-
 ## Flujo de render (dinámico, al enviar)
 En `drafts.ts` (send hook), reemplazar la lectura de `defaultSignature` por:
 ```
-1. leer user.preferences.signature + user (datos personales) + getBranding() + signaturePolicy
+1. leer user.preferences.signature + user (datos personales) + getBranding() + getSignaturePolicy()
 2. resolver template efectivo:
    - si policy.lockTemplate → allowedTemplateIds[0]
-   - si no → signature.templateId (validado ∈ allowedTemplateIds, si no fallback al primero permitido)
+   - si no → signature.templateId (validado ∈ allowedTemplateIds; si stale/ausente → primer permitido)
    - si source==='custom' && policy.allowCustomHtml → usar defaultSignature crudo
-3. render(ctx) → HTML
-4. externalizeDataImages(logo/foto) → sanitizeEmailHtml → append (separador RFC 3676 actual)
+3. render(ctx) → HTML  ← ESCAPA todo texto interpolado (escapeHtml) + valida esquema de toda URL
+                          (http|https|mailto|tel). Ver §Seguridad H1.
+4. externalizeDataImages(logo/foto) → sanitizeEmailHtml (BACKSTOP, no única capa) → append (sep RFC 3676)
 5. autoInclude: forzado on si policy.enforceSignature
 ```
 El branding se lee EN CADA envío → cambios de marca se reflejan sin tocar las firmas guardadas.
+Costo: +2 `SystemConfig.findOne` indexados sobre colección diminuta + upserts idempotentes por hash
+(dedup existente) → despreciable frente al SMTP+IMAP APPEND (confirmado B/C). Opcional cache TTL corto.
+
+**Fail-open acotado (H/M — enforceSignature):** el render de templates estáticos es determinístico y no
+debe fallar con datos bien formados. Si aun así el render lanza:
+- `enforceSignature=false` → enviar SIN firma (no bloquear el correo).
+- `enforceSignature=true`  → fallback determinístico a **firma mínima en TEXTO PLANO** (displayName +
+  companyName + contacto), construida sin template ni imágenes → nunca se envía sin firma corporativa,
+  nunca se bloquea el envío.
+En ambos casos: `log/metric signature_render_failed` (causa raíz). NUNCA se bloquea el envío del correo.
 
 ## UX
 - **Admin → "Marca de la empresa"** (ampliada): campos nuevos de branding + panel **"Firmas"**:
@@ -134,11 +156,40 @@ El branding se lee EN CADA envío → cambios de marca se reflejan sin tocar las
   actual + opción de templates. Deep-merge defensivo (patrón calendarDefaults).
 - Sin política configurada, la firma sigue siendo opcional y editable como hoy.
 
-## Riesgos / puntos a validar en B/C/D
-- **Render en el send-hook**: no debe agregar latencia notable ni fallar el envío si el branding/logo
-  falla (fail-open: si el render tira error, caer al `defaultSignature`/sin firma, nunca bloquear el envío).
-- **Externalización del logo por-envío**: dedup por hash ya existe (no re-sube el mismo logo cada vez).
-- **Sanitización**: el HTML de los templates es nuestro (estático), pero pasa igual por `sanitizeEmailHtml`.
-- **Preview vs render real**: si el preview es client-side, el catálogo se espeja en web → riesgo de
-  drift. Alternativa: endpoint `GET /me/signature/preview` que rendiza server-side (fuente única).
-  Recomendado el endpoint para no duplicar los templates.
+## §Seguridad (obligatorio — cierra el gate B/C/D)
+Contexto OUTBOUND (correo a terceros): "escape en origen + sanitize de salida", nunca una sola capa.
+
+- **H1 — Escape + validación de URL en el render (los 3 reviewers, HIGH).** `renderSignature` DEBE
+  HTML-escapar TODO texto interpolado no confiable (`displayName`, `jobTitle`, `department`, `phone`,
+  `companyName`, etc.) con `escapeHtml`/`escapeAttr` (ya existe: `lib/sanitizeHtml.ts`, usado en
+  `services/scheduling/email.ts:76`), y validar el esquema de TODA URL en `href`/`src`
+  (`http|https|mailto|tel`). `sanitizeEmailHtml` queda como BACKSTOP final, no como única defensa
+  (el sanitizer actual permite `img` con URL remota arbitraria → sin escape hay inyección/mXSS).
+- **H2 — `photoUrl` nunca remota (los 3, HIGH).** Se sube como data-url ráster (regex+tamaño del logo,
+  `admin.ts:40-44` + `MAX_IMG_BYTES` de `signature-images.ts`), se externaliza al GUARDAR y se persiste
+  como URL interna `/api/signature-images/:id`. NO se acepta `http(s)` directo (evita tracking-pixel /
+  exfiltración del destinatario; el servicio actual sólo externaliza `data:`, no descarga URLs → sin SSRF).
+- **Fail-open × `enforceSignature`**: resuelto en §Flujo de render (fallback a firma mínima texto plano si
+  `enforceSignature=true`; log `signature_render_failed`; nunca bloquear el envío).
+- **Invariantes de `signaturePolicy`**: en §Política (lockTemplate ⇒ ≥1 id válido; ids ∈ catálogo).
+- **Bloqueo de color — contrato público**: `/api/branding` expone `lockAccentColor`; `stores/settings.ts`
+  hace no-op de `applyAccent()` (usa el accent de marca) y `SettingsView` oculta los swatches cuando está
+  activo. Es la única forma de "app entera morada" sin persistir accent por-usuario (hoy es localStorage).
+- **Preview = MISMO pipeline que el envío (LOW pero importante)**: el endpoint `GET /me/signature/preview`
+  corre render+escape+`sanitizeEmailHtml` (no HTML crudo) y el front lo muestra sin `v-html` sobre valores
+  sin sanear → evita auto-XSS en el browser del remitente. Debounce client-side. Fuente única = backend.
+
+## Estados vacíos / a11y / i18n (MED/LOW)
+- Cada `render` maneja ausencias: sin foto → sin celda de foto; sin logo → fallback texto; branding
+  incompleto → omite filas, no rompe.
+- Nombres de templates vía claves i18n (es/en), no hardcode.
+- Selector de templates = `role=radio`/radiogroup, navegable por teclado, estado seleccionado anunciado,
+  `alt` en los previews.
+- Límite de foto = `MAX_IMG_BYTES` (reuso). Límite de `allowedTemplateIds` = subconjunto del catálogo.
+- Tests obligatorios: snapshot HTML por template, XSS por cada campo interpolado, fail-open con
+  `enforceSignature`, invariantes de policy.
+
+## Estado del gate
+Arquitectura APROBADA por los 3 (render dinámico en punto único, singletons espejados, catálogo estático,
+fail-open, preview server-side). Con §Seguridad + invariantes incorporadas (esta v2), C lo marca
+"APPROVE condicionado" cumplido. Sugerido: breve re-check de D (el más estricto) sobre v2 antes de F1.
