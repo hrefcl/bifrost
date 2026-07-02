@@ -5,6 +5,7 @@ import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon, { type IconName } from '@/components/AppIcon.vue';
 import { useSettingsStore } from '@/stores/settings';
 import { useAuthStore } from '@/stores/auth';
+import { brand } from '@/config/brand';
 import { api } from '@/lib/http';
 import { SUPPORTED_LOCALES, LOCALE_NAMES, setLocale, type Locale } from '@/i18n';
 
@@ -299,9 +300,11 @@ onMounted(() => {
           <div class="row">
             <div class="row-text">
               <div class="row-title">{{ t('settings.accent') }}</div>
-              <div class="row-desc">{{ t('settings.accentDesc') }}</div>
+              <div class="row-desc">
+                {{ brand.lockAccentColor ? t('settings.accentLocked') : t('settings.accentDesc') }}
+              </div>
             </div>
-            <div class="swatches">
+            <div v-if="!brand.lockAccentColor" class="swatches">
               <button
                 v-for="c in ACCENTS"
                 :key="c"
@@ -312,6 +315,9 @@ onMounted(() => {
                 @click="settings.setAccent(c)"
               />
             </div>
+            <span v-else class="badge ok-badge"
+              ><AppIcon name="lock" :size="13" />{{ t('settings.locked') }}</span
+            >
           </div>
 
           <div class="row">

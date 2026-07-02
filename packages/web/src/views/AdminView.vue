@@ -10,6 +10,7 @@ import AdminSchedulingPanel from '@/components/admin/AdminSchedulingPanel.vue';
 import AdminCalendarPrefs from '@/components/admin/AdminCalendarPrefs.vue';
 import AdminGroups from '@/components/admin/AdminGroups.vue';
 import AdminRoles from '@/components/admin/AdminRoles.vue';
+import AdminSignaturePolicy from '@/components/admin/AdminSignaturePolicy.vue';
 import { api } from '@/lib/http';
 import { brand, applyBrand } from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
@@ -29,6 +30,7 @@ type Tab =
   | 'groups'
   | 'roles'
   | 'branding'
+  | 'signatures'
   | 'storage'
   | 'compliance'
   | 'scheduling'
@@ -77,6 +79,13 @@ const SECTIONS: AdminSection[] = [
     desc: 'admin.branding.desc',
   },
   {
+    key: 'signatures',
+    icon: 'pencil',
+    label: 'admin.tabs.signatures',
+    title: 'admin.signatures.title',
+    desc: 'admin.signatures.desc',
+  },
+  {
     key: 'storage',
     icon: 'database',
     label: 'admin.tabs.storage',
@@ -115,7 +124,7 @@ interface NavGroup {
 }
 const NAV_GROUPS: NavGroup[] = [
   { label: 'admin.navGroups.directory', keys: ['accounts', 'groups', 'roles'] },
-  { label: 'admin.navGroups.config', keys: ['branding', 'storage', 'preferences'] },
+  { label: 'admin.navGroups.config', keys: ['branding', 'signatures', 'storage', 'preferences'] },
   { label: 'admin.navGroups.compliance', keys: ['compliance', 'scheduling'] },
 ];
 function sectionOf(key: Tab): AdminSection {
@@ -134,6 +143,7 @@ const SECTION_PERMISSION: Record<Tab, string | null> = {
   groups: 'groups.manage',
   roles: 'roles.manage',
   branding: 'branding.manage',
+  signatures: 'branding.manage',
   storage: 'storage.manage',
   preferences: 'calendar.manage',
   scheduling: 'scheduling.manage',
@@ -1379,6 +1389,11 @@ async function save() {
                 <span v-if="brandError" class="err-text">{{ brandError }}</span>
               </div>
             </div>
+          </div>
+
+          <!-- ===================== FIRMAS (política) ===================== -->
+          <div v-else-if="tab === 'signatures'" class="card">
+            <AdminSignaturePolicy />
           </div>
 
           <!-- ===================== COMPLIANCE ===================== -->

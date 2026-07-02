@@ -351,6 +351,22 @@ async function mockApi(page, { publicSlug = 'ana', user = USER } = {}) {
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
     if (p === '/admin/roles') return json(route, { roles: ROLES });
     if (p === '/admin/permissions') return json(route, { permissions: PERMISSIONS });
+    if (p === '/admin/config/signature-policy')
+      return json(route, {
+        policy: {
+          allowedTemplateIds: ['horizontal', 'photo-round'],
+          lockTemplate: false,
+          enforceSignature: false,
+          allowCustomHtml: true,
+        },
+        templates: [
+          { id: 'horizontal', nameKey: 'settings.signatureTpl.horizontal' },
+          { id: 'vertical', nameKey: 'settings.signatureTpl.vertical' },
+          { id: 'photo-round', nameKey: 'settings.signatureTpl.photoRound' },
+          { id: 'corporate', nameKey: 'settings.signatureTpl.corporate' },
+          { id: 'minimal', nameKey: 'settings.signatureTpl.minimal' },
+        ],
+      });
     // firmas (F4)
     if (p === '/auth/me/signature/options')
       return json(route, {
@@ -496,6 +512,12 @@ const run = async () => {
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-branding');
+  await page
+    .getByRole('button', { name: 'Firmas' })
+    .click()
+    .catch(() => undefined);
+  await page.waitForTimeout(300);
+  await shot(page, 'admin-signatures');
   await page
     .getByRole('button', { name: 'Agenda' })
     .click()

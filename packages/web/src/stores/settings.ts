@@ -24,6 +24,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const accent = ref<string>(safeAccent(localStorage.getItem('accent')));
 
   function applyAccent() {
+    // Bloqueo de color de empresa (firmas F6): si el admin lo activó, se IGNORA el accent personal
+    // y manda el de marca (toda la app usa el color de la empresa). El valor local se conserva por si
+    // se desbloquea después. `--accent` de marca ya lo fijó applyBrand() en el bootstrap.
+    if (brand.lockAccentColor) return;
     const root = document.documentElement;
     root.style.setProperty('--accent', accent.value);
     root.style.setProperty('--accent-700', `color-mix(in srgb, ${accent.value} 82%, #000)`);

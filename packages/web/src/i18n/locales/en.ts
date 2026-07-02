@@ -266,6 +266,23 @@ export default {
       preferences: 'Calendar',
       groups: 'Groups',
       roles: 'Roles & permissions',
+      signatures: 'Signatures',
+    },
+    signatures: {
+      title: 'Signatures',
+      desc: 'Enabled signature templates and company-wide rules.',
+      allowed: 'Enabled templates',
+      allowedHint: 'Which ones users can pick. If you check none, all are enabled.',
+      lockTemplate: 'Force a single template',
+      lockTemplateHint:
+        'Users cannot choose: everyone uses the first enabled template. Requires ≥1 enabled.',
+      enforce: 'Mandatory signature',
+      enforceHint: 'The company signature is always added, even if the user turns it off.',
+      allowCustom: 'Allow custom HTML',
+      allowCustomHint: 'Let users paste their own HTML signature in addition to templates.',
+      errLoad: 'Could not load the signature policy.',
+      errSave: 'Could not save.',
+      errInvalid: 'To force a template, enable at least one valid template.',
     },
     navGroups: {
       directory: 'Directory',
@@ -467,6 +484,8 @@ export default {
     languageDesc: 'Interface language.',
     accent: 'Accent color',
     accentDesc: 'Customize the platform’s primary color.',
+    accentLocked: 'Your organization set the platform color.',
+    locked: 'Locked',
     signature: {
       title: 'Signature',
       desc: 'Added at the end of your messages.',

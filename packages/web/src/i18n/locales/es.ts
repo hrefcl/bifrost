@@ -266,6 +266,24 @@ export default {
       preferences: 'Calendario',
       groups: 'Grupos',
       roles: 'Roles y permisos',
+      signatures: 'Firmas',
+    },
+    signatures: {
+      title: 'Firmas',
+      desc: 'Plantillas de firma habilitadas y reglas para toda la empresa.',
+      allowed: 'Plantillas habilitadas',
+      allowedHint: 'Las que el usuario puede elegir. Si no marcás ninguna, se habilitan todas.',
+      lockTemplate: 'Forzar una sola plantilla',
+      lockTemplateHint:
+        'El usuario no elige: todos usan la primera plantilla habilitada. Requiere ≥1 habilitada.',
+      enforce: 'Firma obligatoria',
+      enforceHint: 'La firma corporativa se agrega siempre, aunque el usuario la desactive.',
+      allowCustom: 'Permitir HTML propio',
+      allowCustomHint:
+        'Deja que el usuario pegue su propia firma en HTML además de las plantillas.',
+      errLoad: 'No se pudo cargar la política de firmas.',
+      errSave: 'No se pudo guardar.',
+      errInvalid: 'Para forzar una plantilla, habilitá al menos una válida.',
     },
     navGroups: {
       directory: 'Directorio',
@@ -472,6 +490,8 @@ export default {
     languageDesc: 'Idioma de la interfaz.',
     accent: 'Color de acento',
     accentDesc: 'Personaliza el color principal de la plataforma.',
+    accentLocked: 'Tu organización fijó el color de la plataforma.',
+    locked: 'Bloqueado',
     signature: {
       title: 'Firma',
       desc: 'Se añade al final de tus mensajes.',

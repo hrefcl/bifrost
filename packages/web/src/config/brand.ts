@@ -19,6 +19,8 @@ export interface Brand {
   tagline: string;
   /** Logo de empresa (data URL) configurado por el admin; null → se usa el ícono por defecto. */
   logoUrl: string | null;
+  /** Firmas F6: si el admin bloquea el color, el usuario NO puede elegir accent (toda la app usa la marca). */
+  lockAccentColor: boolean;
 }
 
 /** Devuelve el valor de entorno si tiene contenido tras trim, o el default. */
@@ -42,6 +44,7 @@ const defaults: Brand = {
   accent: envAccent(import.meta.env.VITE_BRAND_ACCENT, '#1b66ff'),
   tagline: envOr(import.meta.env.VITE_BRAND_TAGLINE, 'IMAP & JMAP'),
   logoUrl: null,
+  lockAccentColor: false,
 };
 
 export const brand: Brand = reactive({ ...defaults });
@@ -51,6 +54,7 @@ interface RemoteBranding {
   tagline: string | null;
   accentColor: string | null;
   logoDataUrl: string | null;
+  lockAccentColor?: boolean;
 }
 
 /**
@@ -79,6 +83,7 @@ export async function loadRemoteBrand(): Promise<void> {
     if (b.tagline) brand.tagline = b.tagline;
     if (b.accentColor && isHex(b.accentColor)) brand.accent = b.accentColor;
     brand.logoUrl = b.logoDataUrl ?? null;
+    brand.lockAccentColor = b.lockAccentColor ?? false;
     applyBrand();
   } catch {
     // Sin branding remoto → queda el default por env (no es un error fatal del arranque).
