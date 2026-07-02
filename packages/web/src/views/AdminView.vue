@@ -448,7 +448,23 @@ async function assignRole() {
 }
 
 // ============================ MARCA (branding) ============================
-const brandForm = ref({ companyName: '', tagline: '', accentColor: '#1b66ff', logoDataUrl: '' });
+const brandForm = ref({
+  companyName: '',
+  tagline: '',
+  accentColor: '#1b66ff',
+  logoDataUrl: '',
+  // Branding extendido (F1) — alimenta los templates de firma white-label.
+  domainUrl: '',
+  phone: '',
+  address: '',
+  linkedin: '',
+  instagram: '',
+  x: '',
+  facebook: '',
+  youtube: '',
+  logoWidthPx: 120,
+  lockAccentColor: false,
+});
 const brandLoading = ref(true);
 const brandSaving = ref(false);
 const brandSaved = ref(false);
@@ -462,11 +478,27 @@ async function loadBranding() {
       tagline: string | null;
       accentColor: string | null;
       logoDataUrl: string | null;
+      domainUrl?: string | null;
+      phone?: string | null;
+      address?: string | null;
+      socialLinks?: Record<string, string> | null;
+      logoWidthPx?: number | null;
+      lockAccentColor?: boolean;
     }>('/admin/config/branding');
     brandForm.value.companyName = data.companyName ?? '';
     brandForm.value.tagline = data.tagline ?? '';
     brandForm.value.accentColor = data.accentColor ?? brand.accent;
     brandForm.value.logoDataUrl = data.logoDataUrl ?? '';
+    brandForm.value.domainUrl = data.domainUrl ?? '';
+    brandForm.value.phone = data.phone ?? '';
+    brandForm.value.address = data.address ?? '';
+    brandForm.value.linkedin = data.socialLinks?.linkedin ?? '';
+    brandForm.value.instagram = data.socialLinks?.instagram ?? '';
+    brandForm.value.x = data.socialLinks?.x ?? '';
+    brandForm.value.facebook = data.socialLinks?.facebook ?? '';
+    brandForm.value.youtube = data.socialLinks?.youtube ?? '';
+    brandForm.value.logoWidthPx = data.logoWidthPx ?? 120;
+    brandForm.value.lockAccentColor = data.lockAccentColor ?? false;
   } catch {
     brandError.value = t('admin.branding.errLoad');
   } finally {
@@ -509,11 +541,25 @@ async function saveBranding() {
   brandSaved.value = false;
   brandError.value = '';
   try {
+    const f = brandForm.value;
     const payload = {
-      companyName: brandForm.value.companyName.trim(),
-      tagline: brandForm.value.tagline.trim(),
-      accentColor: brandForm.value.accentColor,
-      logoDataUrl: brandForm.value.logoDataUrl, // '' limpia el logo
+      companyName: f.companyName.trim(),
+      tagline: f.tagline.trim(),
+      accentColor: f.accentColor,
+      logoDataUrl: f.logoDataUrl, // '' limpia el logo
+      // Branding extendido (F1). '' limpia cada campo (nonEmpty en el backend).
+      domainUrl: f.domainUrl.trim(),
+      phone: f.phone.trim(),
+      address: f.address.trim(),
+      socialLinks: {
+        linkedin: f.linkedin.trim(),
+        instagram: f.instagram.trim(),
+        x: f.x.trim(),
+        facebook: f.facebook.trim(),
+        youtube: f.youtube.trim(),
+      },
+      logoWidthPx: f.logoWidthPx,
+      lockAccentColor: f.lockAccentColor,
     };
     await api.put('/admin/config/branding', payload);
     // Aplicar en vivo (sin recargar): la marca es reactiva y la consume toda la UI.
@@ -1265,6 +1311,66 @@ async function save() {
                   </div>
                 </div>
               </label>
+
+              <!-- ── Branding extendido (F1): datos que alimentan los templates de firma ── -->
+              <h3 class="brand-subhead">{{ t('admin.branding.signatureData') }}</h3>
+              <p class="hint">{{ t('admin.branding.signatureDataHint') }}</p>
+              <div class="grid2">
+                <label class="fld"
+                  ><span>{{ t('admin.branding.domainUrl') }}</span
+                  ><input
+                    v-model="brandForm.domainUrl"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://aulion.app"
+                /></label>
+                <label class="fld"
+                  ><span>{{ t('admin.branding.phone') }}</span
+                  ><input v-model="brandForm.phone" class="adminput" maxlength="40"
+                /></label>
+                <label class="fld"
+                  ><span>{{ t('admin.branding.address') }}</span
+                  ><input v-model="brandForm.address" class="adminput" maxlength="160"
+                /></label>
+                <label class="fld"
+                  ><span>{{ t('admin.branding.logoWidth') }}</span
+                  ><input
+                    v-model.number="brandForm.logoWidthPx"
+                    class="adminput"
+                    type="number"
+                    min="40"
+                    max="400"
+                /></label>
+                <label class="fld"
+                  ><span>LinkedIn</span
+                  ><input
+                    v-model="brandForm.linkedin"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://linkedin.com/company/…"
+                /></label>
+                <label class="fld"
+                  ><span>Instagram</span
+                  ><input v-model="brandForm.instagram" class="adminput" type="url"
+                /></label>
+                <label class="fld"
+                  ><span>X / Twitter</span><input v-model="brandForm.x" class="adminput" type="url"
+                /></label>
+                <label class="fld"
+                  ><span>Facebook</span
+                  ><input v-model="brandForm.facebook" class="adminput" type="url"
+                /></label>
+                <label class="fld"
+                  ><span>YouTube</span
+                  ><input v-model="brandForm.youtube" class="adminput" type="url"
+                /></label>
+              </div>
+              <label class="fld check2">
+                <input v-model="brandForm.lockAccentColor" type="checkbox" />
+                {{ t('admin.branding.lockAccent') }}
+              </label>
+              <p class="hint">{{ t('admin.branding.lockAccentHint') }}</p>
+
               <div class="actions">
                 <button class="btn-primary" :disabled="brandSaving" @click="saveBranding">
                   {{ brandSaving ? t('admin.saving') : t('admin.save') }}
@@ -2196,7 +2302,15 @@ async function save() {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 460px;
+  max-width: 620px;
+}
+.brand-subhead {
+  margin: 8px 0 0;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1);
 }
 .color-row {
   display: flex;

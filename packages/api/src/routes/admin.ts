@@ -43,6 +43,21 @@ const logoDataUrl = z
     return Math.floor((b64.length * 3) / 4) <= LOGO_MAX_BYTES;
   }, 'el logo supera 256KB');
 
+// URL http(s) segura para branding/firmas (F1). Bloquea javascript:/data:/otros esquemas (review H1/H3):
+// esas URLs terminan en href/src de correos salientes. `''`/null limpian el campo.
+const httpUrl = z
+  .string()
+  .trim()
+  .max(300)
+  .refine((v) => {
+    try {
+      return ['http:', 'https:'].includes(new URL(v).protocol);
+    } catch {
+      return false;
+    }
+  }, 'URL inválida (solo http/https)');
+const httpUrlOrClear = z.union([httpUrl, z.literal(''), z.null()]).optional();
+
 const brandingSchema = z
   .object({
     companyName: z.string().trim().max(60).optional(),
@@ -50,6 +65,23 @@ const brandingSchema = z
     accentColor: z.string().regex(HEX, 'color inválido').optional(),
     // '' o null LIMPIAN el logo; un data URL válido lo fija; ausente = no tocar.
     logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+    // ── Branding extendido (F1) — alimenta los templates de firma ──
+    domainUrl: httpUrlOrClear,
+    phone: z.union([z.string().trim().max(40), z.null()]).optional(),
+    address: z.union([z.string().trim().max(160), z.null()]).optional(),
+    socialLinks: z
+      .object({
+        linkedin: httpUrlOrClear,
+        instagram: httpUrlOrClear,
+        x: httpUrlOrClear,
+        facebook: httpUrlOrClear,
+        youtube: httpUrlOrClear,
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    logoWidthPx: z.union([z.number().int().min(40).max(400), z.null()]).optional(),
+    lockAccentColor: z.boolean().optional(),
   })
   .strict();
 

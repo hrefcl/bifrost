@@ -434,6 +434,16 @@ export default {
       errInvalid: 'Datos de marca inválidos (revisá color y logo).',
       errType: 'Formato de imagen no soportado (usá PNG, JPG, WEBP o GIF).',
       errSize: 'El logo supera 256 KB. Subí una imagen más liviana.',
+      signatureData: 'Datos para las firmas',
+      signatureDataHint:
+        'Estos datos alimentan los templates de firma white-label de todos los usuarios. Las URLs deben ser http(s).',
+      domainUrl: 'URL del sitio',
+      phone: 'Teléfono corporativo',
+      address: 'Dirección',
+      logoWidth: 'Ancho del logo en la firma (px)',
+      lockAccent: 'Bloquear el color de acento para todos',
+      lockAccentHint:
+        'Si se activa, los usuarios no pueden elegir su propio color: toda la app usa el color de marca.',
     },
   },
   errors: {

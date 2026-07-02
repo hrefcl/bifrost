@@ -429,6 +429,16 @@ export default {
       errInvalid: 'Invalid branding data (check color and logo).',
       errType: 'Unsupported image format (use PNG, JPG, WEBP or GIF).',
       errSize: 'The logo exceeds 256 KB. Upload a lighter image.',
+      signatureData: 'Signature data',
+      signatureDataHint:
+        'These fields feed the white-label signature templates for all users. URLs must be http(s).',
+      domainUrl: 'Website URL',
+      phone: 'Company phone',
+      address: 'Address',
+      logoWidth: 'Signature logo width (px)',
+      lockAccent: 'Lock the accent color for everyone',
+      lockAccentHint:
+        'If enabled, users cannot pick their own color: the whole app uses the brand color.',
     },
   },
   errors: {

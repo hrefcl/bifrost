@@ -281,4 +281,54 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     expect(res.statusCode).toBe(400);
     await app.close();
   });
+
+  it('branding extendido (F1): guarda domainUrl/phone/socials/logoWidthPx/lockAccentColor y los expone', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const put = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: {
+        companyName: 'Aulion',
+        domainUrl: 'https://aulion.app',
+        phone: '+56 9 1234 5678',
+        address: 'Santiago, CL',
+        socialLinks: { linkedin: 'https://linkedin.com/company/aulion', instagram: '' },
+        logoWidthPx: 140,
+        lockAccentColor: true,
+      },
+    });
+    expect(put.statusCode).toBe(200);
+
+    const pub = await app.inject({ method: 'GET', url: '/api/branding' });
+    const body = JSON.parse(pub.body);
+    expect(body.domainUrl).toBe('https://aulion.app');
+    expect(body.phone).toBe('+56 9 1234 5678');
+    expect(body.logoWidthPx).toBe(140);
+    expect(body.lockAccentColor).toBe(true);
+    // El social vacío se limpia; el válido queda.
+    expect(body.socialLinks).toEqual({ linkedin: 'https://linkedin.com/company/aulion' });
+    await app.close();
+  });
+
+  it('branding extendido (F1): rechaza URLs no-http (javascript:/data:) en domainUrl y socials (H1)', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+    const badDomain = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { domainUrl: 'javascript:alert(1)' },
+    });
+    expect(badDomain.statusCode).toBe(400);
+    const badSocial = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { socialLinks: { linkedin: 'data:text/html,<script>alert(1)</script>' } },
+    });
+    expect(badSocial.statusCode).toBe(400);
+    await app.close();
+  });
 });
