@@ -32,6 +32,9 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+        env:
+          # Token FA Pro (iconos duotone). Sin él, la resolución de @fortawesome/* devuelve 401.
+          FONTAWESOME_NPM_AUTH_TOKEN: ${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
 
       - name: Install Playwright browsers
         run: pnpm --filter @webmail6/web exec playwright install --with-deps

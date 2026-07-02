@@ -35,6 +35,14 @@ docker-mailserver, mongo, redis y traefik.
 
 ## Desarrollo
 
+Los iconos usan **FontAwesome Pro** (duotone). Antes de `pnpm install` exportá el token del registry
+(en CI/Docker ya está como secret `FONTAWESOME_NPM_AUTH_TOKEN`; el `.npmrc` lo interpola desde el env,
+nunca se commitea):
+
+```bash
+export FONTAWESOME_NPM_AUTH_TOKEN=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
 ```bash
 corepack enable && corepack prepare pnpm@9.15.0 --activate
 pnpm install

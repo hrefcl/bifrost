@@ -99,6 +99,10 @@ jobs:
             BUILD_NUMBER=${{ github.run_number }}
             BUILD_SHA=${{ github.sha }}
             BUILD_TIME=${{ steps.build.outputs.time }}
+          # Secret BuildKit: el token FA Pro se monta en el RUN de install de Dockerfile.web
+          # (iconos duotone). No se hornea en la imagen ni se expone en `docker history`.
+          secrets: |
+            fontawesome_token=${{ secrets.FONTAWESOME_NPM_AUTH_TOKEN }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
