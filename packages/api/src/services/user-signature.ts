@@ -48,8 +48,12 @@ export async function buildUserSignature(
 
   // 'custom' permitido → usa el HTML pegado; si no hay, no firma (salvo enforce → cae a template).
   if (source === 'custom' && policy.allowCustomHtml) {
-    const sig = user.preferences.defaultSignature?.trim();
-    if (sig) return { html: sanitizeEmailHtml(sig), include: true };
+    let sig = user.preferences.defaultSignature?.trim();
+    if (sig) {
+      // Los clientes de correo bloquean data: en imágenes; externalizamos incluso el custom legacy.
+      sig = await externalizeDataImages(userId, sig, baseUrl);
+      return { html: sanitizeEmailHtml(sig), include: true };
+    }
     if (!policy.enforceSignature) return { html: '', include: false };
     // enforce sin custom → cae al render de template abajo.
   }

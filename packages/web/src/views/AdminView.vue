@@ -590,6 +590,7 @@ async function saveBranding() {
     brand.tagline = payload.tagline || brand.tagline;
     brand.accent = payload.accentColor;
     brand.logoUrl = payload.logoDataUrl || null;
+    brand.lockAccentColor = payload.lockAccentColor;
     applyBrand();
     brandSaved.value = true;
   } catch (err) {

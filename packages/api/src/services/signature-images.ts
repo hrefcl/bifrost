@@ -53,12 +53,14 @@ export async function storeDataImage(
  * correos recibidos → la foto de la firma se vería rota. `baseUrl` = origen público (FRONTEND_URL).
  * Sólo ráster y bajo el límite de tamaño; un data: inválido se deja como está (el sanitizador decide).
  */
+const MAX_EMBEDDED_IMAGES = 10; // límite anti-DoS por firma/mensaje
+
 export async function externalizeDataImages(
   userId: string,
   html: string,
   baseUrl: string
 ): Promise<string> {
-  const matches = [...html.matchAll(DATA_IMG_RE)];
+  const matches = [...html.matchAll(DATA_IMG_RE)].slice(0, MAX_EMBEDDED_IMAGES);
   if (matches.length === 0) return html;
 
   let out = html;

@@ -341,6 +341,17 @@ export default function authRoutes(fastify: FastifyInstance) {
           .code(400)
           .send({ statusCode: 400, error: 'Bad Request', message: 'Template inválido' });
       }
+      // Debe estar HABILITADO por la política ([] = todos). `buildUserSignature` igual lo acota al
+      // enviar, pero rechazar acá evita persistir una preferencia inconsistente (review D, LOW).
+      const policy = await getSignaturePolicy();
+      if (
+        policy.allowedTemplateIds.length > 0 &&
+        !policy.allowedTemplateIds.includes(body.templateId)
+      ) {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: 'Template no habilitado' });
+      }
       set['preferences.signature.templateId'] = body.templateId;
     }
     if (body.includePhoto !== undefined)

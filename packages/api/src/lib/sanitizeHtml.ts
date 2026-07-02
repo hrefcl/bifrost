@@ -110,7 +110,7 @@ export const defaultOptions: sanitize.IOptions = {
     font: ['color', 'face', 'size', 'style'],
   },
   allowedStyles: { '*': SAFE_STYLES },
-  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemes: ['http', 'https', 'mailto', 'tel'],
   // `data:` SOLO en <img> (logos embebidos de firmas) — y abajo un filtro restringe a data:image/* (NO
   // data:text/html, que sería un vector). NUNCA en <a href> (data: en un link es navegable/ejecutable).
   allowedSchemesByTag: { img: ['http', 'https', 'data'] },

@@ -66,7 +66,7 @@ function safeImageUrl(url: string | undefined): string {
   if (!v) return '';
   if (DATA_IMG_RE.test(v)) return esc(v); // data:image ráster (se externaliza luego en el send-hook)
   if (v.startsWith('//')) return ''; // protocolo-relativo (//host) → fuera
-  if (v.startsWith('/')) return esc(v); // path interno same-origin (/api/signature-images/:id)
+  if (/^\/api\/signature-images\/[a-f0-9]{24}$/i.test(v)) return esc(v); // foto/logo hosteado internamente
   try {
     return ['http:', 'https:'].includes(new URL(v).protocol) ? esc(v) : '';
   } catch {

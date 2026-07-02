@@ -17,7 +17,7 @@ const base: SignatureContext = {
   email: 'ana@aulion.app',
   companyName: 'Aulion',
   tagline: 'Tu correo, tu marca',
-  logoUrl: '/api/signature-images/abc',
+  logoUrl: '/api/signature-images/0123456789abcdef01234567',
   domainUrl: 'https://aulion.app',
   companyPhone: '+56 2 2345 6789',
   address: 'Santiago, CL',
@@ -66,6 +66,18 @@ describe('signature-templates (F2)', () => {
     }
   });
 
+  it('tel: en teléfono sobrevive al sanitizer (esquema permitido)', () => {
+    const ctx: SignatureContext = {
+      ...base,
+      personalPhone: '+56 9 1234 5678',
+      domainUrl: undefined,
+      socialLinks: {},
+    };
+    const html = renderSignature('photo-round', ctx);
+    const sanitized = sanitizeEmailHtml(html);
+    expect(sanitized).toContain('href="tel:+56 9 1234 5678"');
+  });
+
   it('URL insegura en domainUrl/social → NO produce href javascript:/data:', () => {
     const evil: SignatureContext = {
       ...base,
@@ -84,7 +96,10 @@ describe('signature-templates (F2)', () => {
     const html = renderSignature('photo-round', evil);
     expect(html).not.toContain('javascript:');
     // Con photoUrl válida (interna) sí aparece el <img>.
-    const ok = renderSignature('photo-round', { ...base, photoUrl: '/api/signature-images/xyz' });
+    const ok = renderSignature('photo-round', {
+      ...base,
+      photoUrl: '/api/signature-images/0123456789abcdef01234567',
+    });
     expect(ok).toContain('<img');
   });
 
