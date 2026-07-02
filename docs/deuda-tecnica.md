@@ -534,3 +534,21 @@ necesario). TDs residuales:
   SPF/DMARC de un setup SES previo). Mejora: usar un custom resource que UPSERT (change-batch UPSERT en vez de
   RecordSet CREATE), o pre-chequear la zona y ofrecer sobreescribir/omitir los que chocan. Workaround actual:
   borrar los registros que chocan antes, o elegir DNS='n' y cargarlos a mano.
+
+## Re-auditoría (jul 2026, post-migración FontAwesome duotone)
+
+- **TD-CSP-FONT-FULLCALENDAR — RESUELTO** (jul 2026, hallado en re-audit ronda hostil, verificado en
+  el box live): FullCalendar embebe su icon-font `fcicons` como `data:application/x-font-ttf` en su CSS
+  (chunk CalendarView). La CSP no tenía `font-src` → caía a `default-src 'self'` → la fuente quedaba
+  **bloqueada** ("The action has been blocked") en cada carga de `/calendar`: violación CSP recurrente
+  (ruido que enmascara errores reales) + fallback de la icon-font. Fix: `font-src 'self' data:` en
+  `nginx.conf` (2 headers). `data:` en font-src es seguro (las fuentes no ejecutan código, a diferencia
+  de `data:` en script-src). NO relacionado con FA duotone (que es SVG inline, sin webfont).
+- **TD-FA-PRO-REGISTRY-SUPPLY-CHAIN (LOW-MED — decisión pendiente)**: hallado en re-audit ronda "operador
+  3AM". El build de la imagen web ahora **depende de un registry pago externo** (`npm.fontawesome.com`) con
+  un token. Riesgos: (a) si el token expira/se revoca o FA está caído, TODO build de `web` falla → no se
+  puede shippear un hotfix; (b) PRs desde **forks** (proyecto OSS) no reciben el secret → su build de imagen
+  web falla. Mitigación robusta: **vendorizar** los 59 SVG duotone usados (extraer el path-data al repo) y
+  soltar la dependencia de runtime/registry — para un producto turnkey/OSS es lo más resiliente, a costa de
+  perder el alta fácil de iconos nuevos. Alternativa mínima: documentar que los forks omiten el job de imagen.
+  Por ahora aceptable (repo interno, token vigente), pero registrado para decisión consciente.
