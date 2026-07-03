@@ -1,16 +1,17 @@
 <script setup lang="ts">
 /**
- * Icono de Bifrost — **Phosphor Icons (weight duotone)** para una sola línea gráfica coherente
- * (licencia MIT, apta para OSS). El mapa nombre→componente vive en `@/lib/icons`; acá sólo el wrapper.
- * La API (`name`, `size`) se mantiene 1:1 con el set anterior: ningún consumidor `<AppIcon name="…" />`
- * cambia.
+ * Icono de Bifrost — **Phosphor Icons (MIT)** para una sola línea gráfica coherente, apta para OSS. El
+ * mapa nombre→componente vive en `@/lib/icons`; acá sólo el wrapper. La API (`name`, `size`) se mantiene
+ * 1:1 con el set anterior: ningún consumidor `<AppIcon name="…" />` cambia.
  *
  * Cada icono Phosphor es un componente con root `<svg>`, así que renderizamos con `<component :is>`
- * (sin `v-html` → sin superficie de inyección, sin hack de CSP). `weight="duotone"` da el efecto de
- * dos tonos; el color secundario hereda `currentColor` a opacidad reducida → se adapta al contexto.
+ * (sin `v-html` → sin superficie de inyección, sin hack de CSP). El **weight** (trazo: light/regular/
+ * duotone/…) NO se hardcodea: lo elige el admin app-wide y viaja en `brand.iconWeight` (white-label —
+ * la plataforma tiene el estilo que el admin quiere para sus empleados). Default `light`.
  */
 import { computed } from 'vue';
 import { ICONS, type IconName } from '@/lib/icons';
+import { brand } from '@/config/brand';
 
 // Re-export para los consumidores que hacían `import AppIcon, { type IconName } from '…/AppIcon.vue'`.
 export type { IconName };
@@ -35,7 +36,7 @@ const iconComponent = computed(() => ICONS[props.name]);
   <component
     :is="iconComponent"
     :size="size"
-    weight="duotone"
+    :weight="brand.iconWeight"
     class="app-icon"
     aria-hidden="true"
   />
