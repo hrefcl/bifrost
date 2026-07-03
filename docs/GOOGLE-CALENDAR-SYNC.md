@@ -81,7 +81,7 @@ Desconexión = **soft**: `status:'revoked'` + `$unset` de los tokens (no se borr
 ### Campos nuevos en `CalendarEvent` (todos OPCIONALES)
 ```
 googleEventId?:     string   // id del evento en Google (relación clara evento↔Google)
-googleSyncStatus?:  'pending' | 'synced' | 'error' | 'skipped'   // ausente = nunca tocó Google
+googleSyncStatus?:  'pending' | 'synced' | 'error' | 'skipped' | 'deleting' | 'deleted'  // ausente = nunca tocó Google
 googleSyncError?:   string   // último error de sync de ESTE evento
 googleLastSyncedAt?: Date
 ```
