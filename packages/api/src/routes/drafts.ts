@@ -12,6 +12,8 @@ import { randomToken } from '../config/crypto.js';
 import { requireOwnedAccount, requireOwnedEmail, OwnershipError } from '../lib/authz.js';
 import { providerForType } from '../services/storage/index.js';
 import { sanitizeEmailHtml, plainTextFromHtml } from '../lib/sanitizeHtml.js';
+import { buildUserSignature } from '../services/user-signature.js';
+import { env } from '../config/env.js';
 import type { StoredDraftAttachment } from '../models/Draft.js';
 import type { Draft as DraftDto } from '@webmail6/shared';
 
@@ -375,14 +377,17 @@ export default function draftRoutes(fastify: FastifyInstance) {
     }
 
     // Firma del usuario: se añade SERVER-SIDE al enviar (no al draft persistido) para preservar el
-    // HTML rico que el editor TipTap del composer filtraría. Separador estándar "-- " (RFC 3676) que
-    // marca el inicio de la firma. Se re-sanitiza el resultado (firma + cuerpo, ambos confiables).
+    // HTML rico que el editor TipTap del composer filtraría. Separador estándar "-- " (RFC 3676).
+    // La firma se RENDIZA dinámicamente (template white-label con branding+datos, o HTML custom legado)
+    // según la política de empresa — ver services/user-signature.ts. Fail-open: nunca bloquea el envío.
     const user = await User.findById(userId).lean();
-    const sig = user?.preferences.defaultSignature?.trim();
-    if (user?.preferences.autoIncludeSignature && sig) {
-      const sep = '<br><br><div data-bifrost-sig-sep="1">-- </div>';
-      claimed.bodyHtml = sanitizeEmailHtml(`${claimed.bodyHtml ?? ''}${sep}${sig}`);
-      claimed.bodyText = plainTextFromHtml(claimed.bodyHtml);
+    if (user) {
+      const { html: sig, include } = await buildUserSignature(user, env.FRONTEND_URL);
+      if (include && sig) {
+        const sep = '<br><br><div data-bifrost-sig-sep="1">-- </div>';
+        claimed.bodyHtml = sanitizeEmailHtml(`${claimed.bodyHtml ?? ''}${sep}${sig}`);
+        claimed.bodyText = plainTextFromHtml(claimed.bodyHtml);
+      }
     }
 
     // Message-ID determinista, persistido ANTES de enviar (dedupe en reintentos).

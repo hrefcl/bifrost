@@ -109,4 +109,75 @@ describe('PATCH /api/auth/me/preferences (firma)', () => {
     expect(res.statusCode).toBe(401);
     await app.close();
   });
+
+  // ── Perfil personal (firmas F3) ──
+  // 1x1 PNG transparente (data: URL ráster válido, chico).
+  const PNG_1PX =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+
+  it('/me/profile: guarda cargo/depto/teléfono y /me lo refleja', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'prof@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me/profile',
+      headers,
+      payload: { jobTitle: 'Gerente', department: 'Comercial', phone: '+56 9 1111 2222' },
+    });
+    expect(res.statusCode).toBe(200);
+    const me = await app.inject({ method: 'GET', url: '/api/auth/me', headers });
+    const body = JSON.parse(me.body);
+    expect(body.jobTitle).toBe('Gerente');
+    expect(body.department).toBe('Comercial');
+    expect(body.phone).toBe('+56 9 1111 2222');
+    await app.close();
+  });
+
+  it('/me/profile: la foto (data:) se EXTERNALIZA a URL interna, nunca queda el data: (H2)', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'photo@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me/profile',
+      headers,
+      payload: { photoDataUrl: PNG_1PX },
+    });
+    expect(res.statusCode).toBe(200);
+    const photoUrl = JSON.parse(res.body).photoUrl as string;
+    expect(photoUrl).toContain('/api/signature-images/');
+    expect(photoUrl).not.toContain('data:');
+    await app.close();
+  });
+
+  it('/me/profile: rechaza foto inválida (no ráster) con 400', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'badphoto@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me/profile',
+      headers,
+      payload: { photoDataUrl: 'data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==' },
+    });
+    expect(res.statusCode).toBe(400);
+    await app.close();
+  });
+
+  it('/me/profile: string vacío LIMPIA el campo', async () => {
+    const app = await buildTestApp();
+    const { user } = await seedUserWithAccount({ email: 'clr@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { jobTitle: 'Viejo' } });
+    const headers = authHeaders(app, user._id.toString());
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/auth/me/profile',
+      headers,
+      payload: { jobTitle: '' },
+    });
+    const fresh = await User.findById(user._id).select('jobTitle').lean();
+    expect(fresh?.jobTitle).toBeUndefined();
+    await app.close();
+  });
 });

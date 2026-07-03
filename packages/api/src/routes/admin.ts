@@ -35,6 +35,12 @@ import {
   CalendarSettingsError,
 } from '../services/calendar-settings.js';
 import { getStorageDefaults, setStorageDefaults } from '../services/storage-defaults.js';
+import {
+  getSignaturePolicy,
+  setSignaturePolicy,
+  SignaturePolicyError,
+} from '../services/signature-policy.js';
+import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
 import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
@@ -51,6 +57,21 @@ const logoDataUrl = z
     return Math.floor((b64.length * 3) / 4) <= LOGO_MAX_BYTES;
   }, 'el logo supera 256KB');
 
+// URL http(s) segura para branding/firmas (F1). Bloquea javascript:/data:/otros esquemas (review H1/H3):
+// esas URLs terminan en href/src de correos salientes. `''`/null limpian el campo.
+const httpUrl = z
+  .string()
+  .trim()
+  .max(300)
+  .refine((v) => {
+    try {
+      return ['http:', 'https:'].includes(new URL(v).protocol);
+    } catch {
+      return false;
+    }
+  }, 'URL inválida (solo http/https)');
+const httpUrlOrClear = z.union([httpUrl, z.literal(''), z.null()]).optional();
+
 const brandingSchema = z
   .object({
     companyName: z.string().trim().max(60).optional(),
@@ -58,6 +79,23 @@ const brandingSchema = z
     accentColor: z.string().regex(HEX, 'color inválido').optional(),
     // '' o null LIMPIAN el logo; un data URL válido lo fija; ausente = no tocar.
     logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+    // ── Branding extendido (F1) — alimenta los templates de firma ──
+    domainUrl: httpUrlOrClear,
+    phone: z.union([z.string().trim().max(40), z.null()]).optional(),
+    address: z.union([z.string().trim().max(160), z.null()]).optional(),
+    socialLinks: z
+      .object({
+        linkedin: httpUrlOrClear,
+        instagram: httpUrlOrClear,
+        x: httpUrlOrClear,
+        facebook: httpUrlOrClear,
+        youtube: httpUrlOrClear,
+      })
+      .strict()
+      .nullable()
+      .optional(),
+    logoWidthPx: z.union([z.number().int().min(40).max(400), z.null()]).optional(),
+    lockAccentColor: z.boolean().optional(),
   })
   .strict();
 
@@ -89,6 +127,9 @@ const updateAccountSchema = z
     quotaBytes: z.number().int().min(0).optional(),
     // El admin sólo conmuta active⇄disabled; 'syncing'/'error' los maneja el sistema.
     status: z.enum(['active', 'disabled']).optional(),
+    // Perfil (firmas F3): el admin edita Cargo/Departamento desde la ficha. '' limpia.
+    jobTitle: z.string().trim().max(120).optional(),
+    department: z.string().trim().max(120).optional(),
   })
   .strict();
 
@@ -644,6 +685,46 @@ export default function adminRoutes(fastify: FastifyInstance) {
     }
   );
 
+  // ---- Política de firmas (firmas F6) — gate branding.manage (firmas = asunto de marca) ----
+  const signaturePolicySchema = z
+    .object({
+      allowedTemplateIds: z.array(z.string().max(60)).max(50).optional(),
+      lockTemplate: z.boolean().optional(),
+      enforceSignature: z.boolean().optional(),
+      allowCustomHtml: z.boolean().optional(),
+    })
+    .strict();
+
+  fastify.get(
+    '/config/signature-policy',
+    { config: { permission: 'branding.manage' } },
+    async () => {
+      // Incluye el catálogo (id + clave i18n) para que el panel liste los templates habilitables.
+      return {
+        policy: await getSignaturePolicy(),
+        templates: SIGNATURE_TEMPLATES.map((t) => ({ id: t.id, nameKey: t.nameKey })),
+      };
+    }
+  );
+
+  fastify.put(
+    '/config/signature-policy',
+    { config: { permission: 'branding.manage' } },
+    async (request, reply) => {
+      const patch = signaturePolicySchema.parse(request.body);
+      try {
+        return await setSignaturePolicy(patch);
+      } catch (e) {
+        if (e instanceof SignaturePolicyError) {
+          return reply
+            .code(400)
+            .send({ statusCode: 400, error: 'Bad Request', message: e.message });
+        }
+        throw e;
+      }
+    }
+  );
+
   // Auditoría de reservas (A2): lista global con filtros y paginación. Sólo lectura.
   const auditQuery = z.object({
     status: z.enum(['confirmed', 'cancelled', 'rescheduled']).optional(),
@@ -703,7 +784,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
       .lean();
     const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } })
-      .select('displayName primaryEmail role customRoleId')
+      .select('displayName primaryEmail role customRoleId jobTitle department')
       .lean();
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
     // Nombres de los roles custom asignados (para mostrarlos en la lista de cuentas).
@@ -736,6 +817,8 @@ export default function adminRoutes(fastify: FastifyInstance) {
           customRoleName: u?.customRoleId
             ? (roleNameById.get(u.customRoleId.toString()) ?? null)
             : null,
+          jobTitle: u?.jobTitle ?? null,
+          department: u?.department ?? null,
           isPrimary: a.isPrimary,
           status: a.status,
           quotaBytes: a.quotaBytes ?? 0,
@@ -880,8 +963,20 @@ export default function adminRoutes(fastify: FastifyInstance) {
       if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
       if (body.status !== undefined) set.status = body.status;
       if (Object.keys(set).length > 0) await Account.updateOne({ _id: id }, { $set: set });
-      if (body.displayName) {
-        await User.updateOne({ _id: account.userId }, { $set: { displayName: body.displayName } });
+      // Campos del usuario (nombre + perfil de firmas). '' en jobTitle/department limpia el campo.
+      const uSet: Record<string, unknown> = {};
+      const uUnset: Record<string, unknown> = {};
+      if (body.displayName) uSet.displayName = body.displayName;
+      for (const k of ['jobTitle', 'department'] as const) {
+        if (body[k] === undefined) continue;
+        if (body[k]) uSet[k] = body[k];
+        else uUnset[k] = '';
+      }
+      const uUpdate: Record<string, unknown> = {};
+      if (Object.keys(uSet).length > 0) uUpdate.$set = uSet;
+      if (Object.keys(uUnset).length > 0) uUpdate.$unset = uUnset;
+      if (Object.keys(uUpdate).length > 0) {
+        await User.updateOne({ _id: account.userId }, uUpdate);
       }
       return { ok: true };
     }

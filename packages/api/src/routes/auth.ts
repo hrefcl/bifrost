@@ -13,7 +13,10 @@ import { resolveAdminAccess } from '../lib/authz.js';
 import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
-import { externalizeDataImages } from '../services/signature-images.js';
+import { externalizeDataImages, storeDataImage } from '../services/signature-images.js';
+import { getSignaturePolicy } from '../services/signature-policy.js';
+import { SIGNATURE_TEMPLATES, isValidTemplateId } from '../lib/signature-templates.js';
+import { renderPreview } from '../services/user-signature.js';
 import { randomToken } from '../config/crypto.js';
 import type { LoginRequest, LoginResponse, RefreshResponse } from '@webmail6/shared';
 
@@ -33,6 +36,27 @@ const preferencesPatchSchema = z
   .object({
     defaultSignature: z.string().max(50_000).optional(),
     autoIncludeSignature: z.boolean().optional(),
+  })
+  .strict();
+
+// Perfil personal editable por el usuario (firmas F3). La foto entra como data: URL ráster y se
+// EXTERNALIZA a URL interna (`storeDataImage`) — nunca se acepta una URL remota (review H2).
+const profilePatchSchema = z
+  .object({
+    jobTitle: z.string().trim().max(120).optional(),
+    department: z.string().trim().max(120).optional(),
+    phone: z.string().trim().max(40).optional(),
+    photoDataUrl: z.string().max(3_000_000).optional(),
+    clearPhoto: z.boolean().optional(),
+  })
+  .strict();
+
+// Elección de firma white-label del usuario (firmas F4). `.strict()` anti mass-assign.
+const signaturePrefSchema = z
+  .object({
+    source: z.enum(['template', 'custom']).optional(),
+    templateId: z.string().max(60).optional(),
+    includePhoto: z.boolean().optional(),
   })
   .strict();
 
@@ -167,6 +191,10 @@ export default function authRoutes(fastify: FastifyInstance) {
       role: user.role,
       adminPermissions: [...permissions],
       avatarUrl: user.avatarUrl,
+      jobTitle: user.jobTitle,
+      department: user.department,
+      phone: user.phone,
+      photoUrl: user.photoUrl,
       username: user.username,
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),
@@ -219,5 +247,140 @@ export default function authRoutes(fastify: FastifyInstance) {
       defaultSignature: user.preferences.defaultSignature,
       autoIncludeSignature: user.preferences.autoIncludeSignature,
     };
+  });
+
+  // Perfil personal (firmas F3): cargo, departamento, teléfono y foto. `$set`/`$unset` dirigido
+  // (un string vacío LIMPIA el campo). La foto (data: URL) se externaliza a URL interna.
+  fastify.patch('/me/profile', async (request, reply) => {
+    const body = profilePatchSchema.parse(request.body);
+    const set: Record<string, unknown> = {};
+    const unset: Record<string, unknown> = {};
+    const text = (v: string | undefined, key: string) => {
+      if (v === undefined) return;
+      const t = v.trim();
+      if (t) set[key] = t;
+      else unset[key] = '';
+    };
+    text(body.jobTitle, 'jobTitle');
+    text(body.department, 'department');
+    text(body.phone, 'phone');
+    if (body.clearPhoto) {
+      unset.photoUrl = '';
+    } else if (body.photoDataUrl !== undefined) {
+      const url = await storeDataImage(request.user.userId, body.photoDataUrl, env.FRONTEND_URL);
+      if (!url) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Foto inválida (usá una imagen PNG/JPG/WEBP/GIF de hasta 2 MB).',
+        });
+      }
+      set.photoUrl = url;
+    }
+    const update: Record<string, unknown> = {};
+    if (Object.keys(set).length > 0) update.$set = set;
+    if (Object.keys(unset).length > 0) update.$unset = unset;
+    const user = await User.findByIdAndUpdate(request.user.userId, update, { new: true });
+    if (!user) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
+    }
+    return {
+      jobTitle: user.jobTitle,
+      department: user.department,
+      phone: user.phone,
+      photoUrl: user.photoUrl,
+    };
+  });
+
+  // Opciones de firma para la UI de Ajustes (firmas F4): templates permitidos por la política,
+  // flags de la política, la elección actual y si el usuario tiene foto.
+  fastify.get('/me/signature/options', async (request) => {
+    const [user, policy] = await Promise.all([
+      User.findById(request.user.userId).lean(),
+      getSignaturePolicy(),
+    ]);
+    const allowed = policy.allowedTemplateIds.length
+      ? policy.allowedTemplateIds
+      : SIGNATURE_TEMPLATES.map((t) => t.id);
+    return {
+      templates: SIGNATURE_TEMPLATES.filter((t) => allowed.includes(t.id)).map((t) => ({
+        id: t.id,
+        nameKey: t.nameKey,
+      })),
+      policy: {
+        lockTemplate: policy.lockTemplate,
+        allowCustomHtml: policy.allowCustomHtml,
+        enforceSignature: policy.enforceSignature,
+      },
+      current: user?.preferences.signature ?? null,
+      hasPhoto: Boolean(user?.photoUrl),
+    };
+  });
+
+  // Preview en vivo (firmas F4): rendiza server-side el MISMO pipeline que el envío (fuente única).
+  fastify.get('/me/signature/preview', async (request) => {
+    const q = z
+      .object({ templateId: z.string(), includePhoto: z.coerce.boolean().optional() })
+      .parse(request.query);
+    const user = await User.findById(request.user.userId).lean();
+    if (!user) return { html: '' };
+    const html = await renderPreview(user, q.templateId, env.FRONTEND_URL, q.includePhoto ?? true);
+    return { html };
+  });
+
+  // Guarda la elección de firma del usuario (firmas F4). $set dirigido de paths anidados.
+  fastify.patch('/me/signature', async (request, reply) => {
+    const body = signaturePrefSchema.parse(request.body);
+    // La política se consulta una vez si hace falta validar source/templateId contra ella.
+    const policy =
+      body.source === 'custom' || body.templateId !== undefined ? await getSignaturePolicy() : null;
+    const set: Record<string, unknown> = {};
+    if (body.source !== undefined) {
+      // Rechazar 'custom' si la política lo prohíbe (consistente con la rama de templateId). Sin esto
+      // se persistía una preferencia inconsistente; `buildUserSignature` igual la ignora al enviar
+      // (allowCustomHtml=false → cae a template), pero no debe guardarse (review A, L1).
+      if (body.source === 'custom' && policy && !policy.allowCustomHtml) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Firma personalizada no permitida por la política.',
+        });
+      }
+      set['preferences.signature.source'] = body.source;
+    }
+    if (body.templateId !== undefined) {
+      if (!isValidTemplateId(body.templateId)) {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: 'Template inválido' });
+      }
+      // Debe estar HABILITADO por la política ([] = todos). `buildUserSignature` igual lo acota al
+      // enviar, pero rechazar acá evita persistir una preferencia inconsistente (review D, LOW).
+      if (
+        policy &&
+        policy.allowedTemplateIds.length > 0 &&
+        !policy.allowedTemplateIds.includes(body.templateId)
+      ) {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: 'Template no habilitado' });
+      }
+      set['preferences.signature.templateId'] = body.templateId;
+    }
+    if (body.includePhoto !== undefined)
+      set['preferences.signature.includePhoto'] = body.includePhoto;
+    const user = await User.findByIdAndUpdate(
+      request.user.userId,
+      { $set: set },
+      { new: true }
+    ).lean();
+    if (!user) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
+    }
+    return user.preferences.signature ?? null;
   });
 }

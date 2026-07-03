@@ -10,9 +10,14 @@ mkdirSync(OUT, { recursive: true });
 
 const USER = {
   id: 'u1',
-  displayName: 'Admin Demo',
+  displayName: 'Ana Pérez',
   primaryEmail: 'admin@aulion.app',
   role: 'admin',
+  jobTitle: 'Gerente',
+  department: 'Comercial',
+  phone: '+56 9 1234 5678',
+  photoUrl: null,
+  preferences: { autoIncludeSignature: true },
   adminPermissions: [
     'accounts.manage',
     'groups.manage',
@@ -346,6 +351,40 @@ async function mockApi(page, { publicSlug = 'ana', user = USER } = {}) {
     if (p === '/admin/accounts') return json(route, { accounts: ACCOUNTS });
     if (p === '/admin/roles') return json(route, { roles: ROLES });
     if (p === '/admin/permissions') return json(route, { permissions: PERMISSIONS });
+    if (p === '/admin/config/signature-policy')
+      return json(route, {
+        policy: {
+          allowedTemplateIds: ['horizontal', 'photo-round'],
+          lockTemplate: false,
+          enforceSignature: false,
+          allowCustomHtml: true,
+        },
+        templates: [
+          { id: 'horizontal', nameKey: 'settings.signatureTpl.horizontal' },
+          { id: 'vertical', nameKey: 'settings.signatureTpl.vertical' },
+          { id: 'photo-round', nameKey: 'settings.signatureTpl.photoRound' },
+          { id: 'corporate', nameKey: 'settings.signatureTpl.corporate' },
+          { id: 'minimal', nameKey: 'settings.signatureTpl.minimal' },
+        ],
+      });
+    // firmas (F4)
+    if (p === '/auth/me/signature/options')
+      return json(route, {
+        templates: [
+          { id: 'horizontal', nameKey: 'settings.signatureTpl.horizontal' },
+          { id: 'vertical', nameKey: 'settings.signatureTpl.vertical' },
+          { id: 'photo-round', nameKey: 'settings.signatureTpl.photoRound' },
+          { id: 'corporate', nameKey: 'settings.signatureTpl.corporate' },
+          { id: 'minimal', nameKey: 'settings.signatureTpl.minimal' },
+        ],
+        policy: { lockTemplate: false, allowCustomHtml: true, enforceSignature: false },
+        current: { source: 'template', templateId: 'horizontal', includePhoto: true },
+        hasPhoto: false,
+      });
+    if (p === '/auth/me/signature/preview')
+      return json(route, {
+        html: '<table style="font-family:Arial,sans-serif;font-size:13px"><tr><td style="border-left:3px solid #1b66ff;padding-left:14px"><div style="font-size:16px;font-weight:bold">Ana Pérez</div><div style="color:#5a6472">Gerente · Comercial</div><div style="font-weight:bold;color:#1b66ff">Aulion</div><div style="margin-top:6px;color:#5a6472"><a href="mailto:ana@aulion.app" style="color:#1b66ff;text-decoration:none">ana@aulion.app</a> · <a href="https://aulion.app" style="color:#1b66ff;text-decoration:none">aulion.app</a></div></td></tr></table>',
+      });
     if (p === '/admin/config/branding') return json(route, BRANDING);
     if (p === '/admin/config/storage') return json(route, { providerType: 'local' });
     if (p === '/admin/groups')
@@ -474,6 +513,12 @@ const run = async () => {
     .catch(() => undefined);
   await shot(page, 'admin-branding');
   await page
+    .getByRole('button', { name: 'Firmas' })
+    .click()
+    .catch(() => undefined);
+  await page.waitForTimeout(300);
+  await shot(page, 'admin-signatures');
+  await page
     .getByRole('button', { name: 'Agenda' })
     .click()
     .catch(() => undefined);
@@ -493,6 +538,15 @@ const run = async () => {
     .click()
     .catch(() => undefined);
   await shot(page, 'admin-accounts-dark', 'dark');
+
+  // Ajustes → Firma (F4)
+  await page.goto(`${BASE}/settings`, { waitUntil: 'networkidle' });
+  await page
+    .getByRole('button', { name: /Firma/ })
+    .click()
+    .catch(() => undefined);
+  await page.waitForTimeout(500);
+  await shot(page, 'settings-signature');
 
   // Scheduling host
   await page.goto(`${BASE}/scheduling`, { waitUntil: 'networkidle' });

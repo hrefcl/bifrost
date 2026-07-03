@@ -26,8 +26,18 @@ export interface UserPreferences {
   showPreview: boolean;
   keyboardShortcutSet: 'gmail' | 'outlook';
   composeFormat: 'html' | 'text';
+  /** Firma legada / 'custom': HTML pegado por el usuario (se usa cuando `signature.source==='custom'`). */
   defaultSignature?: string;
   autoIncludeSignature: boolean;
+  /**
+   * Firma white-label (firmas F4/F5). `source:'template'` → se rendiza `templateId` con el branding
+   * del admin + datos del User al ENVIAR. `source:'custom'` → usa `defaultSignature`. Ausente = legado.
+   */
+  signature?: {
+    source: 'template' | 'custom';
+    templateId?: string;
+    includePhoto?: boolean;
+  };
   notifications: {
     desktopEnabled: boolean;
     soundEnabled: boolean;
@@ -53,6 +63,11 @@ export interface User {
    */
   adminPermissions: string[];
   avatarUrl?: string;
+  /** Perfil personal (firmas F3): cargo, departamento, teléfono, foto (URL interna). */
+  jobTitle?: string;
+  department?: string;
+  phone?: string;
+  photoUrl?: string;
   /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
   username?: string;
   preferences: UserPreferences;

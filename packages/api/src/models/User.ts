@@ -13,6 +13,12 @@ export interface IUser extends Document {
   defaultScheduleId?: mongoose.Types.ObjectId;
   /** Rol custom (RBAC, F8). OPCIONAL. Se IGNORA si `role==='admin'` (admin = superusuario). */
   customRoleId?: mongoose.Types.ObjectId;
+  // ── Perfil personal (firmas F3) — también alimenta la ficha admin (Cargo/Departamento) ──
+  jobTitle?: string; // Cargo
+  department?: string; // Departamento
+  phone?: string; // teléfono personal
+  /** Foto: SIEMPRE URL interna `/api/signature-images/:id` (nunca remota — review firmas H2). */
+  photoUrl?: string;
   preferences: UserPreferences;
   createdAt: Date;
   updatedAt: Date;
@@ -34,6 +40,11 @@ const UserSchema = new Schema<IUser>(
     defaultScheduleId: { type: Schema.Types.ObjectId },
     // Rol custom (RBAC). Ref a Role; se limpia en cascada si el rol se borra (anti-lockout, review C/D).
     customRoleId: { type: Schema.Types.ObjectId, ref: 'Role' },
+    // Perfil personal (firmas F3). photoUrl se persiste ya como URL interna (foto externalizada).
+    jobTitle: { type: String },
+    department: { type: String },
+    phone: { type: String },
+    photoUrl: { type: String },
     preferences: {
       language: { type: String, default: 'es' },
       timezone: { type: String, default: 'America/Mexico_City' },
@@ -52,6 +63,12 @@ const UserSchema = new Schema<IUser>(
       composeFormat: { type: String, enum: ['html', 'text'], default: 'html' },
       defaultSignature: { type: String },
       autoIncludeSignature: { type: Boolean, default: true },
+      // Firma white-label (F4/F5): elección de template + datos por-usuario. Ausente = legado (custom).
+      signature: {
+        source: { type: String, enum: ['template', 'custom'] },
+        templateId: { type: String },
+        includePhoto: { type: Boolean },
+      },
       notifications: {
         desktopEnabled: { type: Boolean, default: true },
         soundEnabled: { type: Boolean, default: false },

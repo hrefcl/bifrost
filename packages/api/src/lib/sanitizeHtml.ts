@@ -97,7 +97,9 @@ export const defaultOptions: sanitize.IOptions = {
   ]),
   allowedAttributes: {
     ...sanitize.defaults.allowedAttributes,
-    '*': ['style', 'align', 'dir'],
+    // `data-bifrost-sig-sep`: marcador INERTE del separador de firma (drafts.ts) — se preserva para
+    // poder identificar/quitar la firma en el futuro (reply/quote). Un data-* no ejecuta ni navega.
+    '*': ['style', 'align', 'dir', 'data-bifrost-sig-sep'],
     img: ['src', 'alt', 'width', 'height', 'style'],
     a: ['href', 'target', 'rel', 'style'],
     table: EMAIL_LAYOUT_ATTRS,
@@ -110,7 +112,7 @@ export const defaultOptions: sanitize.IOptions = {
     font: ['color', 'face', 'size', 'style'],
   },
   allowedStyles: { '*': SAFE_STYLES },
-  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemes: ['http', 'https', 'mailto', 'tel'],
   // `data:` SOLO en <img> (logos embebidos de firmas) — y abajo un filtro restringe a data:image/* (NO
   // data:text/html, que sería un vector). NUNCA en <a href> (data: en un link es navegable/ejecutable).
   allowedSchemesByTag: { img: ['http', 'https', 'data'] },
@@ -134,4 +136,35 @@ export function sanitizeEmailHtml(html: string): string {
 
 export function plainTextFromHtml(html: string): string {
   return sanitize(html, { allowedTags: [], allowedAttributes: {} }).trim();
+}
+
+/**
+ * Escapa texto para interpolar seguro en HTML (contenido y atributos). "Escape en origen": los
+ * valores no confiables (nombre/cargo/teléfono del usuario, datos de marca) NUNCA se concatenan
+ * crudos en un template; `sanitizeEmailHtml` queda como backstop, no como única capa (review firmas H1).
+ */
+export function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
+ * Devuelve la URL escapada si su esquema es seguro para `href`/`src` salientes, o '' si no.
+ * Sólo http/https/mailto/tel (bloquea javascript:/data:/vbscript: etc. — review firmas H1).
+ */
+export function safeUrl(url: string | undefined | null, allowMailtoTel = true): string {
+  const v = (url ?? '').trim();
+  if (!v) return '';
+  let scheme: string;
+  try {
+    scheme = new URL(v).protocol;
+  } catch {
+    return '';
+  }
+  const ok = ['http:', 'https:', ...(allowMailtoTel ? ['mailto:', 'tel:'] : [])];
+  return ok.includes(scheme) ? escapeHtml(v) : '';
 }
