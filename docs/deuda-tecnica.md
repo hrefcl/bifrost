@@ -615,3 +615,23 @@ verificados funcionando. El review adversarial confirmó gaps REALES del provisi
   en `status:'error'` (el sync no desencripta creds vacías) y arriesga bootstrap-admin/ownership. NO
   hacerlo; las cuentas se pueblan bien al primer login. La CLI debería poder importar cuentas
   existentes de forma consistente (marcarlas "pendiente-de-login", no sincronizarlas hasta el 1er login).
+
+## Editor de firmas — review A/B/C/D (jul 2026, PR fixes)
+
+Del review del editor de firmas v2 (B Codex / C GLM-z.ai / D Kimi — F excluido por REGLA 0.1, A=Claude).
+Sin HIGH. MEDIUM cerrados: save no-atómico (endpoint combinado atomic-first), race de preview (contador
+monotónico), validación de tamaño de logo, hint de modo. Diferidos como deuda (no bloqueantes):
+
+- **TD-SIG-CAS (MEDIUM, diferible — target 1-admin):** `setBranding`/`setSignaturePolicy` hacen read-merge-write
+  del doc entero de `SystemConfig` → lost-update si DOS admins editan a la vez (last-writer-wins). El repo ya
+  tiene patrón CAS (overrides de scheduling). Fix: ETag/`updatedAt` o `$set` por-campo. Preexistía al editor;
+  target Cleverty = 1 admin → C/D lo marcan diferible. Elevar si multi-admin se vuelve real.
+- **TD-SIG-PREVIEW-EXTENDED (MEDIUM/UX, D-003/D-009):** el preview en vivo del admin renderiza los campos que
+  el editor edita (color/logo/eslogan/empresa) + los guardados; NO permite override en vivo de domainUrl/phone/
+  address/socialLinks/logoWidthPx/foto (se ven los guardados). PRODUCT DECISION: el editor edita el estilo de
+  empresa; esos campos viven en Marca. Fidelidad total = follow-up.
+- **PRODUCT DECISION (D-002 v-html):** la galería/preview usan `v-html` SOBRE HTML saneado por el backend
+  (`sanitizeEmailHtml`, endurecido en #48, mismo patrón que SettingsView). Mitigación = el sanitizer; no es
+  XSS explotable. Documentado, no bloqueante.
+- **PRODUCT DECISION (preview sin clamp de política):** el preview del admin NO se acota a `allowedTemplateIds`
+  a propósito — el admin debe poder previsualizar CUALQUIER diseño antes de habilitarlo/fijarlo.

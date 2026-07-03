@@ -281,6 +281,7 @@ export default {
       modeChooseHint: 'Marcá los diseños que el equipo puede usar. Sin marcar ninguna = todas.',
       modeStandard: 'Estándar único para toda la empresa',
       modeStandardHint: 'Elegí UN diseño; todos lo usan (el usuario no puede cambiarlo).',
+      pickStandardHint: 'Elegí una plantilla como estándar para poder guardar.',
       badgeStandard: 'Estándar',
       badgeOn: 'Habilitada',
       tabTemplate: 'Plantilla',
