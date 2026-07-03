@@ -277,6 +277,12 @@ export default {
       lockTemplate: 'Force a single template',
       lockTemplateHint:
         'Users cannot choose: everyone uses the first enabled template. Requires ≥1 enabled.',
+      modeChoose: 'Each user picks from the enabled ones',
+      modeChooseHint: 'Check the designs the team can use. None checked = all.',
+      modeStandard: 'Single standard for the whole company',
+      modeStandardHint: 'Pick ONE design; everyone uses it (users cannot change it).',
+      badgeStandard: 'Standard',
+      badgeOn: 'Enabled',
       enforce: 'Mandatory signature',
       enforceHint: 'The company signature is always added, even if the user turns it off.',
       allowCustom: 'Allow custom HTML',

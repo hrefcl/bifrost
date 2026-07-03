@@ -4,6 +4,7 @@ import { externalizeDataImages } from './signature-images.js';
 import {
   renderSignature,
   minimalPlainSignature,
+  SIGNATURE_TEMPLATES,
   type SignatureContext,
 } from '../lib/signature-templates.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
@@ -107,6 +108,30 @@ function signatureContext(
  * usuario + branding. El template pedido se acota a los permitidos por la política (mismo pipeline
  * render+externalize+sanitize que el envío → lo que se ve es lo que se manda). Fail-open a ''.
  */
+/**
+ * Rendiza TODOS los templates del catálogo con los datos del usuario+branding, SIN clamp de política
+ * (para la galería visual del admin: se ven todos, habilitados o no). Fail-open por template a ''.
+ */
+export async function renderAllTemplates(
+  user: SignatureUser,
+  baseUrl: string
+): Promise<{ id: string; nameKey: string; html: string }[]> {
+  const branding = await getBranding();
+  const ctx = signatureContext(user, branding, true, baseUrl);
+  return Promise.all(
+    SIGNATURE_TEMPLATES.map(async (t) => {
+      let html = '';
+      try {
+        html = await externalizeDataImages(String(user._id), renderSignature(t.id, ctx), baseUrl);
+        html = sanitizeEmailHtml(html);
+      } catch {
+        html = '';
+      }
+      return { id: t.id, nameKey: t.nameKey, html };
+    })
+  );
+}
+
 export async function renderPreview(
   user: SignatureUser,
   templateId: string,

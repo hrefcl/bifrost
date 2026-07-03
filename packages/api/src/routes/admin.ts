@@ -41,6 +41,8 @@ import {
   SignaturePolicyError,
 } from '../services/signature-policy.js';
 import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
+import { renderAllTemplates } from '../services/user-signature.js';
+import { env } from '../config/env.js';
 import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
@@ -704,6 +706,18 @@ export default function adminRoutes(fastify: FastifyInstance) {
         policy: await getSignaturePolicy(),
         templates: SIGNATURE_TEMPLATES.map((t) => ({ id: t.id, nameKey: t.nameKey })),
       };
+    }
+  );
+
+  // Galería visual: cada template rendizado con los datos del admin + branding (sin clamp de política),
+  // para que la empresa VEA los diseños y elija el estándar. Fail-open por template a ''.
+  fastify.get(
+    '/config/signature-previews',
+    { config: { permission: 'branding.manage' } },
+    async (request) => {
+      const user = await User.findById(request.user.userId).lean();
+      if (!user) return { previews: [] };
+      return { previews: await renderAllTemplates(user, env.FRONTEND_URL) };
     }
   );
 
