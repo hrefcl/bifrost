@@ -277,6 +277,12 @@ export default {
       lockTemplate: 'Forzar una sola plantilla',
       lockTemplateHint:
         'El usuario no elige: todos usan la primera plantilla habilitada. Requiere ≥1 habilitada.',
+      modeChoose: 'Cada uno elige entre las habilitadas',
+      modeChooseHint: 'Marcá los diseños que el equipo puede usar. Sin marcar ninguna = todas.',
+      modeStandard: 'Estándar único para toda la empresa',
+      modeStandardHint: 'Elegí UN diseño; todos lo usan (el usuario no puede cambiarlo).',
+      badgeStandard: 'Estándar',
+      badgeOn: 'Habilitada',
       enforce: 'Firma obligatoria',
       enforceHint: 'La firma corporativa se agrega siempre, aunque el usuario la desactive.',
       allowCustom: 'Permitir HTML propio',
@@ -536,11 +542,12 @@ export default {
     },
     // Nombres de las plantillas de firma (catálogo backend).
     signatureTpl: {
-      horizontal: 'Horizontal',
-      vertical: 'Vertical',
-      photoRound: 'Foto circular',
-      corporate: 'Corporativa',
-      minimal: 'Minimal',
+      clasica: 'Clásica',
+      moderna: 'Moderna',
+      minimalista: 'Minimalista',
+      tarjeta: 'Tarjeta',
+      centrada: 'Centrada',
+      corporativa: 'Corporativa',
     },
     security: {
       title: 'Seguridad',

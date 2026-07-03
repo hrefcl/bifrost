@@ -32,12 +32,12 @@ describe('PATCH /api/auth/me/signature (elección de firma)', () => {
       method: 'PATCH',
       url: '/api/auth/me/signature',
       headers,
-      payload: { source: 'template', templateId: 'horizontal', includePhoto: false },
+      payload: { source: 'template', templateId: 'clasica', includePhoto: false },
     });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.source).toBe('template');
-    expect(body.templateId).toBe('horizontal');
+    expect(body.templateId).toBe('clasica');
     expect(body.includePhoto).toBe(false);
   });
 
@@ -54,12 +54,12 @@ describe('PATCH /api/auth/me/signature (elección de firma)', () => {
 
   it('400: templateId válido pero NO habilitado por la política', async () => {
     const { app, headers } = await auth();
-    await setSignaturePolicy({ allowedTemplateIds: ['minimal'] });
+    await setSignaturePolicy({ allowedTemplateIds: ['minimalista'] });
     const res = await app.inject({
       method: 'PATCH',
       url: '/api/auth/me/signature',
       headers,
-      payload: { templateId: 'horizontal' },
+      payload: { templateId: 'clasica' },
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().message).toContain('no habilitado');

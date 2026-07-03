@@ -138,9 +138,6 @@ function switchLocale(l: Locale) {
           </button>
         </div>
 
-        <label class="field-label">{{ t('login.displayNameOptional') }}</label>
-        <input v-model="form.displayName" type="text" class="field" />
-
         <button
           v-if="!hasBaseServer"
           type="button"

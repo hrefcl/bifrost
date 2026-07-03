@@ -4,6 +4,7 @@ import { externalizeDataImages } from './signature-images.js';
 import {
   renderSignature,
   minimalPlainSignature,
+  SIGNATURE_TEMPLATES,
   type SignatureContext,
 } from '../lib/signature-templates.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
@@ -41,7 +42,7 @@ export async function buildUserSignature(
   if (!include) return { html: '', include: false };
 
   const userId = String(user._id);
-  const ctx = signatureContext(user, branding, pref?.includePhoto ?? true);
+  const ctx = signatureContext(user, branding, pref?.includePhoto ?? true, baseUrl);
 
   // source ausente = legado 'custom' (respeta usuarios con defaultSignature ya guardada).
   const source = pref?.source ?? 'custom';
@@ -78,7 +79,8 @@ export async function buildUserSignature(
 function signatureContext(
   user: SignatureUser,
   branding: BrandingConfig,
-  includePhoto: boolean
+  includePhoto: boolean,
+  baseUrl: string
 ): SignatureContext {
   return {
     displayName: user.displayName,
@@ -96,6 +98,8 @@ function signatureContext(
     address: branding.address,
     accentColor: branding.accentColor,
     socialLinks: branding.socialLinks,
+    // Base para los iconos hosteados (`/sig-icons/*.png`). En email deben ser URLs absolutas.
+    assetBase: baseUrl,
   };
 }
 
@@ -104,6 +108,30 @@ function signatureContext(
  * usuario + branding. El template pedido se acota a los permitidos por la política (mismo pipeline
  * render+externalize+sanitize que el envío → lo que se ve es lo que se manda). Fail-open a ''.
  */
+/**
+ * Rendiza TODOS los templates del catálogo con los datos del usuario+branding, SIN clamp de política
+ * (para la galería visual del admin: se ven todos, habilitados o no). Fail-open por template a ''.
+ */
+export async function renderAllTemplates(
+  user: SignatureUser,
+  baseUrl: string
+): Promise<{ id: string; nameKey: string; html: string }[]> {
+  const branding = await getBranding();
+  const ctx = signatureContext(user, branding, true, baseUrl);
+  return Promise.all(
+    SIGNATURE_TEMPLATES.map(async (t) => {
+      let html = '';
+      try {
+        html = await externalizeDataImages(String(user._id), renderSignature(t.id, ctx), baseUrl);
+        html = sanitizeEmailHtml(html);
+      } catch {
+        html = '';
+      }
+      return { id: t.id, nameKey: t.nameKey, html };
+    })
+  );
+}
+
 export async function renderPreview(
   user: SignatureUser,
   templateId: string,
@@ -118,7 +146,7 @@ export async function renderPreview(
       : templateId
   );
   try {
-    const ctx = signatureContext(user, branding, includePhoto);
+    const ctx = signatureContext(user, branding, includePhoto, baseUrl);
     let html = renderSignature(effectiveId, ctx);
     html = await externalizeDataImages(String(user._id), html, baseUrl);
     return sanitizeEmailHtml(html);
