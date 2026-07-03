@@ -4,6 +4,8 @@ import { Account } from '../../models/Account.js';
 import { EventType } from '../../models/EventType.js';
 import { hostCalendarDay } from '../../lib/scheduling/time.js';
 import { buildBusy, confirmedCountByDay, overlapsAny, BUSY_PAD_MS } from './booking-service.js';
+import { googleConfigured } from '../../config/env.js';
+import { enqueueGoogleSync } from '../google/dispatch.js';
 
 /**
  * Reconciler (job repetible BullMQ) — repara estados parciales dejados por un CRASH entre las escrituras
@@ -23,10 +25,12 @@ export async function runReconcile(): Promise<{
   linked: number;
   reschedules: number;
   orphanCe: number;
+  gcalRequeued: number;
 }> {
   let linked = 0;
   let reschedules = 0;
   let orphanCe = 0;
+  let gcalRequeued = 0;
   const cutoff = new Date(Date.now() - GRACE_MS);
 
   // (1) Bookings confirmadas sin CalendarEvent (con grace para no pisar un create en vuelo).
@@ -153,7 +157,23 @@ export async function runReconcile(): Promise<{
     }
   }
 
-  return { linked, reschedules, orphanCe };
+  // (4) Backstop del sync con Google (F-gcal): re-encola eventos que quedaron pendientes/erróneos o con
+  // un tombstone de borrado sin completar (p.ej. enqueue perdido con Redis caído, o reintentos agotados).
+  // El job es idempotente, así que re-encolar es seguro. Sólo si la feature está configurada.
+  if (googleConfigured()) {
+    const stuck = await CalendarEvent.find({
+      googleSyncStatus: { $in: ['pending', 'error', 'deleting'] },
+      updatedAt: { $lt: cutoff }, // grace: no competir con un sync en vuelo
+    })
+      .select('_id')
+      .limit(BATCH);
+    for (const ce of stuck) {
+      await enqueueGoogleSync(ce._id);
+      gcalRequeued++;
+    }
+  }
+
+  return { linked, reschedules, orphanCe, gcalRequeued };
 }
 
 /**
