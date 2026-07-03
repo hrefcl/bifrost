@@ -15,6 +15,9 @@ export interface IAccount extends Document {
   lastSyncedAt?: Date;
   /** Cuota de adjuntos subidos, en bytes. 0/ausente = sin límite (ver enforcement en attachments). */
   quotaBytes?: number;
+  /** Provisioning: al SUSPENDER, se guarda acá la línea `email|hash` que se quitó del accounts.cf,
+   *  para poder REACTIVAR sin perder la contraseña. Presente ⇒ el buzón está suspendido. */
+  provisionSuspendedLine?: string;
   createdAt: Date;
   updatedAt: Date;
 
@@ -86,6 +89,8 @@ const AccountSchema = new Schema<IAccount>(
     lastSyncedAt: { type: Date },
     // Cuota de adjuntos en bytes (0 = sin límite). La fija el admin; se aplica al subir adjuntos.
     quotaBytes: { type: Number, default: 0, min: 0 },
+    // Provisioning: línea `email|hash` guardada al suspender (presente ⇒ suspendido). Ver IAccount.
+    provisionSuspendedLine: { type: String },
   },
   { timestamps: true }
 );

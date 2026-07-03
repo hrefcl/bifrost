@@ -7,35 +7,39 @@ import { provisioningEnabled, MailboxExistsError } from '../services/mailbox/ind
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import { verifyProvisionKey, hasActiveProvisionKey } from '../services/provision-keys.js';
+import {
+  getMailbox,
+  listMailboxes,
+  patchMailbox,
+  setMailboxPassword,
+  resetMailboxPassword,
+  MailboxNotFoundError,
+} from '../services/mailbox/manage.js';
 
 /**
  * API MÁQUINA-A-MÁQUINA de provisioning (`/api/provision/*`). Bifrost como AUTORIDAD de cuentas: sistemas
- * externos (p.ej. el panel corporativo Vanir) crean/borran buzones por API con `X-Provision-Key`, en vez
- * del anti-patrón de conectarse al EC2 con claves AWS y correr `setup email add` a mano.
+ * externos (Vanir/Valhalla super_admin) gestionan el CRUD COMPLETO de buzones por API con `X-Provision-Key`,
+ * en vez del anti-patrón de conectarse al EC2 con claves AWS y correr `setup email add` a mano.
  *
- * Auth: header `X-Provision-Key` == `PROVISION_API_KEY` (comparación timing-safe). Sin la key configurada,
- * TODO el prefijo responde 404 (no revela que el endpoint existe). Es independiente del JWT de usuario
- * (`requiresAuth:false`) — es acceso de servicio, no de sesión.
+ * Auth uniforme: TODO endpoint del prefijo usa `X-Provision-Key` (`requiresAuth:false` salta el JWT). Sin
+ * key configurada → 404 (no revela el endpoint). Con key pero inválida/ausente → 401.
+ *
+ * Códigos: 200/201 OK · 401 key inválida/ausente · 404 no existe · 409 ya existe (alta) · 502 mailserver
+ * falló · 503 provisioning off. GARANTÍA: un 502 NO deja side-effect (los writes son atómicos temp+rename
+ * con rollback) → reintentar es seguro. Además el alta acepta `Idempotency-Key` (mismo key → misma
+ * respuesta cacheada, con la password generada) para no perderla ante un retry tras respuesta perdida.
  */
 
-/**
- * Key BOOTSTRAP del entorno (docker-secret `PROVISION_API_KEY_FILE`), turnkey del provisioner. Convive
- * con las keys gestionadas desde /admin (DB). process.env (no el `env` congelado): testeable sin reiniciar.
- */
 function envKey(): string | null {
   const k = process.env.PROVISION_API_KEY?.trim();
   return k && k.length > 0 ? k : null;
 }
-
-/** Comparación en tiempo constante (evita oráculo por timing). Longitudes distintas → false sin comparar. */
 function keyMatches(provided: string, expected: string): boolean {
   const a = Buffer.from(provided);
   const b = Buffer.from(expected);
   if (a.length !== b.length) return false;
   return timingSafeEqual(a, b);
 }
-
-/** Autentica el token contra la key bootstrap del env O cualquier key ACTIVA gestionada en /admin. */
 async function isAuthorized(provided: string | undefined): Promise<boolean> {
   if (typeof provided !== 'string' || provided.length === 0) return false;
   const bootstrap = envKey();
@@ -43,25 +47,58 @@ async function isAuthorized(provided: string | undefined): Promise<boolean> {
   return verifyProvisionKey(provided);
 }
 
+// Cache de idempotencia para el ALTA (Idempotency-Key → respuesta). TTL 15 min. Resuelve el caso
+// "el alta tuvo éxito pero la respuesta se perdió → el retry daría 409 sin la password generada".
+const IDEM_TTL_MS = 15 * 60 * 1000;
+const idemCache = new Map<string, { at: number; status: number; body: unknown }>();
+function idemGet(key: string): { status: number; body: unknown } | null {
+  const hit = idemCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > IDEM_TTL_MS) {
+    idemCache.delete(key);
+    return null;
+  }
+  return { status: hit.status, body: hit.body };
+}
+function idemSet(key: string, status: number, body: unknown): void {
+  if (idemCache.size > 2000) idemCache.clear(); // backstop anti-crecimiento
+  idemCache.set(key, { at: Date.now(), status, body });
+}
+
+const emailParam = (raw: string) =>
+  z
+    .object({ email: z.string().email() })
+    .parse({ email: decodeURIComponent(raw) })
+    .email.toLowerCase();
+
 const createSchema = z
   .object({
     email: z.string().email(),
-    // Opcional: si se omite, Bifrost genera una contraseña fuerte y la devuelve UNA vez.
     password: z.string().min(1).optional(),
     displayName: z.string().trim().max(120).optional(),
     quotaBytes: z.number().int().min(0).optional(),
   })
   .strict();
 
+const patchSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    quotaBytes: z.number().int().min(0).optional(),
+    aliases: z.array(z.string().email()).max(50).optional(),
+    active: z.boolean().optional(),
+  })
+  .strict();
+
+const passwordSchema = z.object({ password: z.string().min(1).max(200) }).strict();
+const resetSchema = z
+  .object({ password: z.string().min(1).max(200).optional() })
+  .strict()
+  .optional();
+
 export default function provisionRoutes(fastify: FastifyInstance) {
-  // Auth de servicio para TODO el plugin. requiresAuth:false salta el JWT; acá exigimos la API-key.
   fastify.addHook('onRequest', async (request: FastifyRequest, reply: FastifyReply) => {
     const provided = request.headers['x-provision-key'];
-    if (await isAuthorized(typeof provided === 'string' ? provided : undefined)) {
-      // Autorizado (key bootstrap o gestionada) → seguimos al chequeo de provider abajo.
-    } else {
-      // Si NO hay ninguna key configurada (ni env ni gestionada), ocultamos el endpoint (404) para no
-      // filtrar su existencia. Si hay keys pero la provista es inválida/ausente → 401.
+    if (!(await isAuthorized(typeof provided === 'string' ? provided : undefined))) {
       const anyKey = envKey() !== null || (await hasActiveProvisionKey());
       return anyKey
         ? reply
@@ -69,7 +106,6 @@ export default function provisionRoutes(fastify: FastifyInstance) {
             .send({ statusCode: 401, error: 'Unauthorized', message: 'Invalid provision key' })
         : reply.code(404).send({ statusCode: 404, error: 'Not Found', message: 'Not Found' });
     }
-    // La key es válida pero el server no está en modo turnkey → no hay backend que cree buzones.
     if (!(await provisioningEnabled())) {
       return reply.code(503).send({
         statusCode: 503,
@@ -79,9 +115,28 @@ export default function provisionRoutes(fastify: FastifyInstance) {
     }
   });
 
-  // Alta idempotente-friendly: crea el buzón REAL + la cuenta Bifrost.
+  // ── LISTAR (paginado + búsqueda) ──
+  fastify.get('/mailboxes', { config: { requiresAuth: false } }, async (request) => {
+    const q = z
+      .object({
+        page: z.coerce.number().int().min(1).default(1),
+        pageSize: z.coerce.number().int().min(1).max(500).default(50),
+        search: z.string().trim().max(200).optional(),
+      })
+      .parse(request.query);
+    return listMailboxes(q);
+  });
+
+  // ── CREAR ── (idempotente-friendly vía Idempotency-Key)
   fastify.post('/mailboxes', { config: { requiresAuth: false } }, async (request, reply) => {
     const body = createSchema.parse(request.body);
+    const idem = request.headers['idempotency-key'];
+    const idemKey = typeof idem === 'string' && idem.trim() ? idem.trim() : null;
+    if (idemKey) {
+      const cached = idemGet(idemKey);
+      if (cached) return reply.code(cached.status).send(cached.body);
+    }
+
     let result;
     try {
       result = await provisionMailboxAccount({
@@ -91,38 +146,122 @@ export default function provisionRoutes(fastify: FastifyInstance) {
       });
     } catch (err) {
       if (err instanceof MailboxExistsError) {
-        return reply.code(409).send({
-          statusCode: 409,
-          error: 'Conflict',
-          message: 'Ya existe un buzón con ese email.',
-        });
+        return reply
+          .code(409)
+          .send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'Ya existe un buzón con ese email.',
+          });
       }
-      throw err;
+      throw err; // atómico con rollback → sin buzón creado; el retry es seguro (→ 500 sin side-effect)
     }
-    // Cuota por defecto (o la indicada). Mismo criterio que el alta desde /admin.
     const quotaBytes = body.quotaBytes ?? (await getStorageDefaults()).defaultQuotaBytes;
     await Account.updateOne({ _id: result.account._id }, { $set: { quotaBytes } });
-    return reply.code(201).send({
-      id: result.account._id.toString(),
-      email: result.account.email,
-      status: result.account.status,
-      quotaBytes,
-      // Sólo si Bifrost generó la contraseña: se entrega UNA vez (no se persiste en claro).
+
+    const mailbox = await getMailbox(result.account.email);
+    const respBody = {
+      ...mailbox,
+      // Password SÓLO si Bifrost la generó (se entrega UNA vez; no se persiste en claro).
       ...(result.passwordGenerated ? { password: result.password } : {}),
-    });
+    };
+    if (idemKey) idemSet(idemKey, 201, respBody);
+    return reply.code(201).send(respBody);
   });
 
-  // Baja: revoca el buzón real + borra la cuenta y sus datos (cascade compartido con /admin).
+  // ── VER una ──
+  fastify.get('/mailboxes/:email', { config: { requiresAuth: false } }, async (request, reply) => {
+    const email = emailParam((request.params as { email: string }).email);
+    const mailbox = await getMailbox(email);
+    if (!mailbox) {
+      return reply
+        .code(404)
+        .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+    }
+    return mailbox;
+  });
+
+  // ── EDITAR (displayName / quota / aliases / active) ──
+  fastify.patch(
+    '/mailboxes/:email',
+    { config: { requiresAuth: false } },
+    async (request, reply) => {
+      const email = emailParam((request.params as { email: string }).email);
+      const patch = patchSchema.parse(request.body);
+      try {
+        return await patchMailbox(email, patch);
+      } catch (err) {
+        if (err instanceof MailboxNotFoundError) {
+          return reply
+            .code(404)
+            .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        // Un fallo del mailserver (alias/suspend) → 502 (sin side-effect parcial que importe).
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo aplicar el cambio en el servidor de correo. Reintentá.',
+        });
+      }
+    }
+  );
+
+  // ── CAMBIAR contraseña (admin fija una) ──
+  fastify.put(
+    '/mailboxes/:email/password',
+    { config: { requiresAuth: false } },
+    async (request, reply) => {
+      const email = emailParam((request.params as { email: string }).email);
+      const { password } = passwordSchema.parse(request.body);
+      try {
+        await setMailboxPassword(email, password);
+      } catch (err) {
+        if (err instanceof MailboxNotFoundError) {
+          return reply
+            .code(404)
+            .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo cambiar la contraseña en el servidor de correo. Reintentá.',
+        });
+      }
+      return { ok: true };
+    }
+  );
+
+  // ── RESETEAR contraseña (Bifrost genera y devuelve UNA vez) ──
+  fastify.post(
+    '/mailboxes/:email/reset-password',
+    { config: { requiresAuth: false } },
+    async (request, reply) => {
+      const email = emailParam((request.params as { email: string }).email);
+      const body = resetSchema.parse(request.body ?? {});
+      try {
+        return await resetMailboxPassword(email, body?.password);
+      } catch (err) {
+        if (err instanceof MailboxNotFoundError) {
+          return reply
+            .code(404)
+            .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo resetear la contraseña en el servidor de correo. Reintentá.',
+        });
+      }
+    }
+  );
+
+  // ── ELIMINAR ──
   fastify.delete(
     '/mailboxes/:email',
     { config: { requiresAuth: false } },
     async (request, reply) => {
-      const { email } = z
-        .object({ email: z.string().email() })
-        .parse({ email: decodeURIComponent((request.params as { email: string }).email) });
-      const account = await Account.findOne({ email: email.toLowerCase() })
-        .select('userId email')
-        .lean();
+      const email = emailParam((request.params as { email: string }).email);
+      const account = await Account.findOne({ email }).select('userId email').lean();
       if (!account) {
         return reply
           .code(404)
@@ -147,20 +286,4 @@ export default function provisionRoutes(fastify: FastifyInstance) {
       return { ok: true };
     }
   );
-
-  // Consulta de existencia (para que el llamador sea idempotente sin depender del 409).
-  fastify.get('/mailboxes/:email', { config: { requiresAuth: false } }, async (request, reply) => {
-    const { email } = z
-      .object({ email: z.string().email() })
-      .parse({ email: decodeURIComponent((request.params as { email: string }).email) });
-    const account = await Account.findOne({ email: email.toLowerCase() })
-      .select('email status')
-      .lean();
-    if (!account) {
-      return reply
-        .code(404)
-        .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
-    }
-    return { email: account.email, status: account.status };
-  });
 }
