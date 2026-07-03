@@ -519,11 +519,12 @@ export default {
       photoSize: 'Photo exceeds 2 MB. Upload a lighter one.',
     },
     signatureTpl: {
-      horizontal: 'Horizontal',
-      vertical: 'Vertical',
-      photoRound: 'Round photo',
-      corporate: 'Corporate',
-      minimal: 'Minimal',
+      clasica: 'Classic',
+      moderna: 'Modern',
+      minimalista: 'Minimalist',
+      tarjeta: 'Card',
+      centrada: 'Centered',
+      corporativa: 'Corporate',
     },
     security: {
       title: 'Security',

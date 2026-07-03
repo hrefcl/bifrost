@@ -32,7 +32,7 @@ describe('buildUserSignature (firmas F5) + signature-policy (F6)', () => {
 
   it('source template → rendiza el template con branding + datos del User', async () => {
     await setBranding({ companyName: 'Aulion', domainUrl: 'https://aulion.app' }, 'admin');
-    const user = await makeUser({ signature: { source: 'template', templateId: 'horizontal' } });
+    const user = await makeUser({ signature: { source: 'template', templateId: 'clasica' } });
     const { html, include } = await buildUserSignature(user, BASE);
     expect(include).toBe(true);
     expect(html).toContain('Ana Pérez');
@@ -60,7 +60,7 @@ describe('buildUserSignature (firmas F5) + signature-policy (F6)', () => {
   it('autoInclude=false y sin enforce → no incluye firma', async () => {
     const user = await makeUser({
       autoIncludeSignature: false,
-      signature: { source: 'template', templateId: 'minimal' },
+      signature: { source: 'template', templateId: 'minimalista' },
     });
     const { include } = await buildUserSignature(user, BASE);
     expect(include).toBe(false);
@@ -70,7 +70,7 @@ describe('buildUserSignature (firmas F5) + signature-policy (F6)', () => {
     await setSignaturePolicy({ enforceSignature: true });
     const user = await makeUser({
       autoIncludeSignature: false,
-      signature: { source: 'template', templateId: 'minimal' },
+      signature: { source: 'template', templateId: 'minimalista' },
     });
     const { html, include } = await buildUserSignature(user, BASE);
     expect(include).toBe(true);
@@ -78,10 +78,10 @@ describe('buildUserSignature (firmas F5) + signature-policy (F6)', () => {
   });
 
   it('lockTemplate → usa el template forzado, ignorando la elección del usuario', async () => {
-    await setSignaturePolicy({ allowedTemplateIds: ['minimal'], lockTemplate: true });
-    const user = await makeUser({ signature: { source: 'template', templateId: 'horizontal' } });
+    await setSignaturePolicy({ allowedTemplateIds: ['minimalista'], lockTemplate: true });
+    const user = await makeUser({ signature: { source: 'template', templateId: 'clasica' } });
     const { html } = await buildUserSignature(user, BASE);
-    // 'minimal' es un <div>, no la tabla del 'horizontal'.
+    // 'minimalista' es un <div>, no la tabla del 'clasica'.
     expect(html).toContain('<div');
     expect(html).not.toContain('cellpadding');
   });
@@ -91,8 +91,8 @@ describe('buildUserSignature (firmas F5) + signature-policy (F6)', () => {
       setSignaturePolicy({ lockTemplate: true, allowedTemplateIds: [] })
     ).rejects.toBeInstanceOf(SignaturePolicyError);
     // ids stale se filtran contra el catálogo.
-    const p = await setSignaturePolicy({ allowedTemplateIds: ['bogus', 'minimal'] });
-    expect(p.allowedTemplateIds).toEqual(['minimal']);
+    const p = await setSignaturePolicy({ allowedTemplateIds: ['bogus', 'minimalista'] });
+    expect(p.allowedTemplateIds).toEqual(['minimalista']);
   });
 
   it('allowCustomHtml=false + source custom + enforce → cae al render de template (no HTML pegado)', async () => {

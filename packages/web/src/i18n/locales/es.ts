@@ -526,11 +526,12 @@ export default {
     },
     // Nombres de las plantillas de firma (catálogo backend).
     signatureTpl: {
-      horizontal: 'Horizontal',
-      vertical: 'Vertical',
-      photoRound: 'Foto circular',
-      corporate: 'Corporativa',
-      minimal: 'Minimal',
+      clasica: 'Clásica',
+      moderna: 'Moderna',
+      minimalista: 'Minimalista',
+      tarjeta: 'Tarjeta',
+      centrada: 'Centrada',
+      corporativa: 'Corporativa',
     },
     security: {
       title: 'Seguridad',

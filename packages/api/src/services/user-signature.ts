@@ -41,7 +41,7 @@ export async function buildUserSignature(
   if (!include) return { html: '', include: false };
 
   const userId = String(user._id);
-  const ctx = signatureContext(user, branding, pref?.includePhoto ?? true);
+  const ctx = signatureContext(user, branding, pref?.includePhoto ?? true, baseUrl);
 
   // source ausente = legado 'custom' (respeta usuarios con defaultSignature ya guardada).
   const source = pref?.source ?? 'custom';
@@ -78,7 +78,8 @@ export async function buildUserSignature(
 function signatureContext(
   user: SignatureUser,
   branding: BrandingConfig,
-  includePhoto: boolean
+  includePhoto: boolean,
+  baseUrl: string
 ): SignatureContext {
   return {
     displayName: user.displayName,
@@ -96,6 +97,8 @@ function signatureContext(
     address: branding.address,
     accentColor: branding.accentColor,
     socialLinks: branding.socialLinks,
+    // Base para los iconos hosteados (`/sig-icons/*.png`). En email deben ser URLs absolutas.
+    assetBase: baseUrl,
   };
 }
 
@@ -118,7 +121,7 @@ export async function renderPreview(
       : templateId
   );
   try {
-    const ctx = signatureContext(user, branding, includePhoto);
+    const ctx = signatureContext(user, branding, includePhoto, baseUrl);
     let html = renderSignature(effectiveId, ctx);
     html = await externalizeDataImages(String(user._id), html, baseUrl);
     return sanitizeEmailHtml(html);

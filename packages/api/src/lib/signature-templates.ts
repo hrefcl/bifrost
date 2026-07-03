@@ -1,13 +1,12 @@
 import { escapeHtml, safeUrl } from './sanitizeHtml.js';
 
 /**
- * Catálogo ESTÁTICO y CERRADO de templates de firma white-label (F2). Patrón idéntico al catálogo de
- * permisos (F8): no editable en runtime. Cada `render` recibe el contexto (branding del admin + datos
- * personales del User) y devuelve HTML de TABLA con estilos inline (email-safe).
+ * Catálogo ESTÁTICO de templates de firma white-label. Cada `render` recibe el contexto (branding del
+ * admin + datos del User + `assetBase`) y devuelve HTML de TABLA con estilos inline (email-safe).
  *
- * SEGURIDAD (review firmas H1 — contexto OUTBOUND): TODO texto interpolado se escapa con `esc()` y TODA
- * URL pasa por `safeUrl()` (sólo http/https/mailto/tel). El HTML resultante igual pasa por
- * `sanitizeEmailHtml` en el send-hook, pero ese es el BACKSTOP, no la única capa.
+ * SEGURIDAD (contexto OUTBOUND): TODO texto se escapa con `esc()` y TODA URL pasa por `safeUrl()`. Los
+ * iconos (campo/redes) son PNG HOSTEADOS en `${assetBase}/sig-icons/*.png` — NO data:/SVG (Gmail los
+ * bloquea). El HTML igual pasa por `sanitizeEmailHtml` en el send-hook (backstop).
  */
 
 export interface SignatureContext {
@@ -35,62 +34,117 @@ export interface SignatureContext {
     facebook?: string;
     youtube?: string;
   };
+  /** Base pública para los assets de icono (`${assetBase}/sig-icons/*.png`). La setea el send-hook. */
+  assetBase?: string;
 }
 
 export interface SignatureTemplate {
   id: string;
-  /** Clave i18n del nombre visible (no hardcode — review). */
+  /** Clave i18n del nombre visible. */
   nameKey: string;
   render(ctx: SignatureContext): string;
 }
 
-// ── helpers de escape/validación (todos los templates los usan) ──
+// ── helpers de escape/validación ──
 const esc = escapeHtml;
 const HEX = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
-/** Color de acento validado (hex) o el fallback — evita romper el atributo `style`. */
+const INK = '#1c2128';
+const MUTED = '#5a6472';
+const FAINT = '#95a0b2';
+const FONT = 'font-family:Arial,Helvetica,sans-serif';
+
 function color(c: string | undefined, fallback = '#1b66ff'): string {
   return c && HEX.test(c) ? c : fallback;
 }
+function assetBase(ctx: SignatureContext): string {
+  return (ctx.assetBase ?? '').replace(/\/+$/, '');
+}
+
 /** `<a>` con URL validada; si el esquema no es seguro, cae a texto escapado (sin link). */
 function link(url: string | undefined, text: string, style = ''): string {
   const href = safeUrl(url);
   const t = esc(text);
   return href ? `<a href="${href}" style="${style}">${t}</a>` : t;
 }
-// Imágenes seguras para firmas: data:image ráster (logo del branding), path interno same-origin
-// (/api/signature-images/:id → foto ya externalizada) o http(s) absoluta. BLOQUEA data:text/html,
-// javascript: y demás (review H1/H2). Devuelve la URL escapada o '' si no es segura.
+
+// Imágenes seguras: data:image ráster (logo), path interno /api/signature-images/:id, /sig-icons/ (assets
+// hosteados) o http(s) absoluta. BLOQUEA data:text/html, javascript:, protocolo-relativo.
 const DATA_IMG_RE = /^data:image\/(png|jpe?g|webp|gif);base64,[a-z0-9+/=]+$/i;
 function safeImageUrl(url: string | undefined): string {
   const v = (url ?? '').trim();
   if (!v) return '';
-  if (DATA_IMG_RE.test(v)) return esc(v); // data:image ráster (se externaliza luego en el send-hook)
-  if (v.startsWith('//')) return ''; // protocolo-relativo (//host) → fuera
-  if (/^\/api\/signature-images\/[a-f0-9]{24}$/i.test(v)) return esc(v); // foto/logo hosteado internamente
+  if (DATA_IMG_RE.test(v)) return esc(v);
+  if (v.startsWith('//')) return '';
+  if (/^\/api\/signature-images\/[a-f0-9]{24}$/i.test(v)) return esc(v);
+  if (/\/sig-icons\/[a-z-]+\.png$/i.test(v)) return esc(v);
   try {
     return ['http:', 'https:'].includes(new URL(v).protocol) ? esc(v) : '';
   } catch {
     return '';
   }
 }
-/** `<img>` sólo si la URL de imagen es segura. */
 function img(url: string | undefined, alt: string, style: string): string {
   const src = safeImageUrl(url);
   return src ? `<img src="${src}" alt="${esc(alt)}" style="${style}" />` : '';
 }
-/** Fila de redes como links de texto (email-safe, sin assets externos). */
-function socialRow(ctx: SignatureContext, sep = ' · '): string {
-  const s = ctx.socialLinks ?? {};
-  const items = [
-    link(s.linkedin, 'LinkedIn'),
-    link(s.instagram, 'Instagram'),
-    link(s.x, 'X'),
-    link(s.facebook, 'Facebook'),
-    link(s.youtube, 'YouTube'),
-  ].filter((x) => x.startsWith('<a')); // sólo las que tienen URL válida
-  return items.length ? items.join(esc(sep)) : '';
+
+/** Icono de campo (teléfono/mail/web/ubicación) PNG hosteado, o '' si no hay assetBase. */
+function icon(ctx: SignatureContext, name: string, size = 15): string {
+  const base = assetBase(ctx);
+  if (!base) return '';
+  return `<img src="${base}/sig-icons/${name}.png" width="${String(size)}" height="${String(size)}" alt="" style="display:inline-block;vertical-align:middle;border:0" />`;
 }
-/** Línea "cargo · departamento" (omite lo ausente). */
+
+/** Fila de contacto: icono + texto (linkable). Devuelve '' si no hay valor. */
+function contactRow(ctx: SignatureContext, iconName: string, value: string, href?: string): string {
+  if (!value) return '';
+  const ic = icon(ctx, iconName);
+  const cell = ic ? `<td style="padding:2px 8px 2px 0;line-height:1">${ic}</td>` : '';
+  const text = link(href, value, `color:${MUTED};text-decoration:none`);
+  return `<tr>${cell}<td style="padding:2px 0;color:${MUTED};font-size:13px;line-height:1.4">${text}</td></tr>`;
+}
+
+/** Avatar circular: foto si hay; si no, círculo con la inicial (sin imagen, table-safe). */
+function avatar(ctx: SignatureContext, ac: string, size = 72): string {
+  const s = String(size);
+  const photo = img(
+    ctx.photoUrl,
+    ctx.displayName,
+    `width:${s}px;height:${s}px;border-radius:50%;object-fit:cover;display:block`
+  );
+  if (photo) return photo;
+  const initial = esc((ctx.displayName.trim().charAt(0) || '?').toUpperCase());
+  return (
+    `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:${ac}">` +
+    `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.4))}px;font-weight:bold;${FONT}">${initial}</td></tr></table>`
+  );
+}
+
+const SOCIAL_ORDER: [keyof NonNullable<SignatureContext['socialLinks']>, string][] = [
+  ['linkedin', 'social-linkedin'],
+  ['x', 'social-x'],
+  ['instagram', 'social-instagram'],
+  ['facebook', 'social-facebook'],
+  ['youtube', 'social-youtube'],
+];
+
+/** Botones de redes como iconos hosteados (glifo blanco sobre cuadrado de acento). */
+function socialButtons(ctx: SignatureContext, size = 26): string {
+  const base = assetBase(ctx);
+  const s = ctx.socialLinks ?? {};
+  const items: string[] = [];
+  for (const [key, iconName] of SOCIAL_ORDER) {
+    const href = safeUrl(s[key]);
+    if (!href || !base) continue;
+    items.push(
+      `<a href="${href}" style="text-decoration:none;margin-right:6px;display:inline-block">` +
+        `<img src="${base}/sig-icons/${iconName}.png" width="${String(size)}" height="${String(size)}" alt="${esc(key)}" style="border:0;display:inline-block" /></a>`
+    );
+  }
+  return items.length ? `<div style="margin-top:8px">${items.join('')}</div>` : '';
+}
+
+/** Línea "cargo · departamento". */
 function role(ctx: SignatureContext): string {
   return [ctx.jobTitle, ctx.department]
     .filter((x): x is string => Boolean(x))
@@ -98,139 +152,77 @@ function role(ctx: SignatureContext): string {
     .join(' · ');
 }
 
-const FONT = 'font-family:Arial,Helvetica,sans-serif';
-
-// ────────────────────────────── Templates v1 (4-5) ──────────────────────────────
-
-/** 1) Horizontal clásico: foto/logo a la izquierda, datos con barra de acento a la derecha. */
-function horizontal(ctx: SignatureContext): string {
-  const ac = color(ctx.accentColor);
-  const media =
-    img(
-      ctx.photoUrl,
-      ctx.displayName,
-      'width:64px;height:64px;border-radius:50%;object-fit:cover'
-    ) ||
-    img(
-      ctx.logoUrl,
-      ctx.companyName ?? '',
-      `width:${String(ctx.logoWidthPx ?? 120)}px;height:auto`
-    );
-  const left = media ? `<td style="padding-right:16px;vertical-align:top">${media}</td>` : '';
-  return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};font-size:13px;color:#1c2128"><tr>${left}` +
-    `<td style="border-left:3px solid ${ac};padding-left:14px;vertical-align:top">` +
-    `<div style="font-size:16px;font-weight:bold">${esc(ctx.displayName)}</div>` +
-    (role(ctx) ? `<div style="color:#5a6472">${role(ctx)}</div>` : '') +
-    (ctx.companyName
-      ? `<div style="font-weight:bold;color:${ac}">${esc(ctx.companyName)}</div>`
-      : '') +
-    `<div style="margin-top:6px;color:#5a6472">` +
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
-    (ctx.personalPhone || ctx.companyPhone
-      ? ` · ${link(`tel:${ctx.personalPhone ?? ctx.companyPhone ?? ''}`, ctx.personalPhone ?? ctx.companyPhone ?? '', 'color:#5a6472;text-decoration:none')}`
-      : '') +
-    (ctx.domainUrl
-      ? ` · ${link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)}`
-      : '') +
-    `</div>` +
-    (socialRow(ctx)
-      ? `<div style="margin-top:4px;font-size:12px;color:#95a0b2">${socialRow(ctx)}</div>`
-      : '') +
-    `</td></tr></table>`
-  );
-}
-
-/** 2) Vertical minimal: datos apilados con barra de acento lateral, sin foto. */
-function vertical(ctx: SignatureContext): string {
-  const ac = color(ctx.accentColor);
-  const logo = img(
-    ctx.logoUrl,
-    ctx.companyName ?? '',
-    `width:${String(ctx.logoWidthPx ?? 110)}px;height:auto;margin-bottom:8px`
-  );
-  return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};font-size:13px;color:#1c2128"><tr>` +
-    `<td style="border-left:3px solid ${ac};padding-left:14px">` +
-    (logo ? `<div>${logo}</div>` : '') +
-    `<div style="font-size:16px;font-weight:bold">${esc(ctx.displayName)}</div>` +
-    (role(ctx) ? `<div style="color:#5a6472">${role(ctx)}</div>` : '') +
-    (ctx.companyName
-      ? `<div style="color:${ac};font-weight:bold">${esc(ctx.companyName)}</div>`
-      : '') +
-    (ctx.tagline ? `<div style="color:#95a0b2;font-style:italic">${esc(ctx.tagline)}</div>` : '') +
-    `<div style="margin-top:6px;color:#5a6472">${link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`)}</div>` +
-    (ctx.domainUrl
-      ? `<div>${link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)}</div>`
-      : '') +
-    (socialRow(ctx)
-      ? `<div style="margin-top:4px;font-size:12px;color:#95a0b2">${socialRow(ctx)}</div>`
-      : '') +
-    `</td></tr></table>`
-  );
-}
-
-/** 3) Foto circular (estilo Cleverty): foto redonda + datos + teléfono/WhatsApp. */
-function photoRound(ctx: SignatureContext): string {
-  const ac = color(ctx.accentColor);
-  const photo = img(
-    ctx.photoUrl,
-    ctx.displayName,
-    'width:72px;height:72px;border-radius:50%;object-fit:cover'
-  );
+/** Bloque de contacto (filas con icono) reutilizable. */
+function contactTable(ctx: SignatureContext): string {
   const phone = ctx.personalPhone ?? ctx.companyPhone;
-  return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};font-size:13px;color:#1c2128"><tr>` +
-    (photo ? `<td style="padding-right:16px;vertical-align:middle">${photo}</td>` : '') +
-    `<td style="vertical-align:middle">` +
-    `<div style="font-size:17px;font-weight:bold;color:${ac}">${esc(ctx.displayName)}</div>` +
-    (role(ctx) ? `<div style="color:#5a6472">${role(ctx)}</div>` : '') +
-    (ctx.companyName ? `<div style="font-weight:bold">${esc(ctx.companyName)}</div>` : '') +
-    `<div style="margin-top:6px;color:#5a6472">` +
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
-    (phone ? `<br/>${link(`tel:${phone}`, phone, 'color:#5a6472;text-decoration:none')}` : '') +
-    `</div>` +
-    (socialRow(ctx)
-      ? `<div style="margin-top:4px;font-size:12px;color:#95a0b2">${socialRow(ctx)}</div>`
-      : '') +
-    `</td></tr></table>`
-  );
+  const rows =
+    contactRow(ctx, 'icon-phone', phone ?? '', phone ? `tel:${phone}` : undefined) +
+    contactRow(ctx, 'icon-mail', ctx.email, `mailto:${ctx.email}`) +
+    contactRow(ctx, 'icon-web', ctx.domainUrl ? cleanHost(ctx.domainUrl) : '', ctx.domainUrl) +
+    contactRow(ctx, 'icon-location', ctx.address ?? '');
+  return rows
+    ? `<table cellpadding="0" cellspacing="0" style="margin-top:8px">${rows}</table>`
+    : '';
 }
 
-/** 4) Corporativo con logo arriba + fila de redes. */
-function corporate(ctx: SignatureContext): string {
-  const ac = color(ctx.accentColor);
-  const logo = img(
+function nameBlock(ctx: SignatureContext, ac: string): string {
+  return (
+    `<div style="font-size:17px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>` +
+    (role(ctx)
+      ? `<div style="color:${ac};font-weight:bold;font-size:13px">${role(ctx)}</div>`
+      : '') +
+    (ctx.companyName
+      ? `<div style="color:${MUTED};font-size:13px">${esc(ctx.companyName)}</div>`
+      : '')
+  );
+}
+function quote(ctx: SignatureContext): string {
+  return ctx.tagline
+    ? `<div style="margin-top:8px;color:${FAINT};font-style:italic;font-size:12px">“${esc(ctx.tagline)}”</div>`
+    : '';
+}
+function logo(ctx: SignatureContext, w?: number): string {
+  return img(
     ctx.logoUrl,
     ctx.companyName ?? '',
-    `width:${String(ctx.logoWidthPx ?? 140)}px;height:auto`
+    `width:${String(w ?? ctx.logoWidthPx ?? 130)}px;height:auto;display:block`
   );
+}
+function cleanHost(url: string | undefined): string {
+  try {
+    return new URL((url ?? '').trim()).host.replace(/^www\./, '');
+  } catch {
+    return '';
+  }
+}
+
+// ────────────────────────────── Templates (nombres del diseño) ──────────────────────────────
+
+/** 1) Clásica — avatar a la izquierda, datos con filas-icono + redes (el default del diseño). */
+function clasica(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};font-size:13px;color:#1c2128">` +
-    (logo ? `<tr><td style="padding-bottom:10px">${logo}</td></tr>` : '') +
-    `<tr><td style="border-top:2px solid ${ac};padding-top:10px">` +
-    `<div style="font-size:16px;font-weight:bold">${esc(ctx.displayName)}</div>` +
-    (role(ctx) ? `<div style="color:#5a6472">${role(ctx)}</div>` : '') +
-    (ctx.companyName
-      ? `<div style="font-weight:bold;color:${ac}">${esc(ctx.companyName)}</div>`
-      : '') +
-    `<div style="margin-top:6px;color:#5a6472">` +
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
-    (ctx.companyPhone ? ` · ${esc(ctx.companyPhone)}` : '') +
-    (ctx.address ? `<br/>${esc(ctx.address)}` : '') +
-    (ctx.domainUrl
-      ? `<br/>${link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)}`
-      : '') +
-    `</div>` +
-    (socialRow(ctx)
-      ? `<div style="margin-top:6px;font-size:12px;color:#95a0b2">${socialRow(ctx)}</div>`
-      : '') +
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<td style="padding-right:18px;vertical-align:top">${avatar(ctx, ac, 72)}</td>` +
+    `<td style="vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${quote(ctx)}${socialButtons(ctx)}</td>` +
+    `</tr></table>`
+  );
+}
+
+/** 2) Moderna — barra de acento lateral, tipografía aireada, sin foto. */
+function moderna(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<td style="border-left:3px solid ${ac};padding-left:16px;vertical-align:top">` +
+    (logo(ctx, 120) ? `<div style="margin-bottom:8px">${logo(ctx, 120)}</div>` : '') +
+    `${nameBlock(ctx, ac)}${contactTable(ctx)}${quote(ctx)}${socialButtons(ctx)}` +
     `</td></tr></table>`
   );
 }
 
-/** 5) Minimal texto: una sola línea, sin imágenes (máxima compatibilidad). */
-function minimal(ctx: SignatureContext): string {
+/** 3) Minimalista — una línea de datos, sin imágenes ni redes (máxima compatibilidad). */
+function minimalista(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const parts = [
     `<strong>${esc(ctx.displayName)}</strong>`,
@@ -243,24 +235,68 @@ function minimal(ctx: SignatureContext): string {
       ? link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)
       : '',
   ].filter(Boolean);
-  return `<div style="${FONT};font-size:13px;color:#1c2128">${parts.join(esc(' · '))}</div>`;
+  return `<div style="${FONT};font-size:13px;color:${INK}">${parts.join(esc(' · '))}</div>`;
 }
 
-/** Host legible de una URL (para mostrar "aulion.app" en vez de la URL completa). Devuelve '' si inválida. */
-function cleanHost(url: string | undefined): string {
-  try {
-    return new URL((url ?? '').trim()).host.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
+/** 4) Tarjeta — bloque con borde y fondo suave, avatar + datos + redes. */
+function tarjeta(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px;background:#fafbfc"><tr>` +
+    `<td style="padding:16px 18px;vertical-align:top">${avatar(ctx, ac, 56)}</td>` +
+    `<td style="padding:16px 18px 16px 0;vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    `</tr></table>`
+  );
+}
+
+/** 5) Centrada — avatar arriba, todo centrado. */
+function centrada(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const social = socialButtons(ctx);
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};text-align:center"><tr><td align="center">` +
+    `<div>${avatar(ctx, ac, 64)}</div>` +
+    `<div style="margin-top:8px">${nameBlock(ctx, ac)}</div>` +
+    `<div style="margin-top:6px;color:${MUTED};font-size:13px">` +
+    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
+    (ctx.domainUrl
+      ? ` · ${link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)}`
+      : '') +
+    `</div>` +
+    (social ? `<div align="center">${social}</div>` : '') +
+    `</td></tr></table>`
+  );
+}
+
+/** 6) Corporativa — dos columnas: datos + (logo/empresa) a la derecha con divisor. */
+function corporativa(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const right =
+    (logo(ctx, 140) ? `<div style="margin-bottom:6px">${logo(ctx, 140)}</div>` : '') +
+    (ctx.companyName && !logo(ctx, 140)
+      ? `<div style="font-weight:bold;color:${ac};font-size:15px">${esc(ctx.companyName)}</div>`
+      : '') +
+    (ctx.tagline
+      ? `<div style="color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:1px">${esc(ctx.tagline)}</div>`
+      : '');
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<td style="padding-right:18px;vertical-align:top">${avatar(ctx, ac, 72)}</td>` +
+    `<td style="vertical-align:top;padding-right:20px">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    (right
+      ? `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:20px;text-align:right">${right}</td>`
+      : '') +
+    `</tr></table>`
+  );
 }
 
 export const SIGNATURE_TEMPLATES = [
-  { id: 'horizontal', nameKey: 'settings.signatureTpl.horizontal', render: horizontal },
-  { id: 'vertical', nameKey: 'settings.signatureTpl.vertical', render: vertical },
-  { id: 'photo-round', nameKey: 'settings.signatureTpl.photoRound', render: photoRound },
-  { id: 'corporate', nameKey: 'settings.signatureTpl.corporate', render: corporate },
-  { id: 'minimal', nameKey: 'settings.signatureTpl.minimal', render: minimal },
+  { id: 'clasica', nameKey: 'settings.signatureTpl.clasica', render: clasica },
+  { id: 'moderna', nameKey: 'settings.signatureTpl.moderna', render: moderna },
+  { id: 'minimalista', nameKey: 'settings.signatureTpl.minimalista', render: minimalista },
+  { id: 'tarjeta', nameKey: 'settings.signatureTpl.tarjeta', render: tarjeta },
+  { id: 'centrada', nameKey: 'settings.signatureTpl.centrada', render: centrada },
+  { id: 'corporativa', nameKey: 'settings.signatureTpl.corporativa', render: corporativa },
 ] as const satisfies readonly SignatureTemplate[];
 
 export type SignatureTemplateId = (typeof SIGNATURE_TEMPLATES)[number]['id'];
@@ -271,23 +307,16 @@ export function isValidTemplateId(id: string): id is SignatureTemplateId {
   return BY_ID.has(id);
 }
 
-/**
- * Rendiza la firma del template `id` con el contexto. Si el id no existe, cae al primero del catálogo.
- * El HTML ya trae todo texto escapado + URLs validadas; el caller igual debe pasarlo por
- * `sanitizeEmailHtml` como backstop antes de enviar.
- */
+/** Rendiza la firma del template `id`. Si el id no existe, cae al primero. */
 export function renderSignature(id: string, ctx: SignatureContext): string {
   const tpl = BY_ID.get(id) ?? SIGNATURE_TEMPLATES[0];
   return tpl.render(ctx);
 }
 
-/**
- * Fallback determinístico en TEXTO PLANO cuando el render falla y la firma es obligatoria
- * (`enforceSignature`) — nunca imágenes, nunca romper el envío (review firmas fail-open).
- */
+/** Fallback determinístico en TEXTO PLANO (firma mínima si el render falla y es obligatoria). */
 export function minimalPlainSignature(ctx: SignatureContext): string {
   const parts = [ctx.displayName, ctx.companyName, ctx.email]
     .filter(Boolean)
     .map((s) => esc(s ?? ''));
-  return `<div style="${FONT};font-size:13px;color:#1c2128">${parts.join(' · ')}</div>`;
+  return `<div style="${FONT};font-size:13px;color:${INK}">${parts.join(' · ')}</div>`;
 }

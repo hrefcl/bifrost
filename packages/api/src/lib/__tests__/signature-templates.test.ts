@@ -107,7 +107,7 @@ describe('signature-templates (F2)', () => {
       domainUrl: undefined,
       socialLinks: {},
     };
-    const html = renderSignature('photo-round', ctx);
+    const html = renderSignature('clasica', ctx);
     const sanitized = sanitizeEmailHtml(html);
     expect(sanitized).toContain('href="tel:+56 9 1234 5678"');
   });
@@ -127,10 +127,10 @@ describe('signature-templates (F2)', () => {
 
   it('photoUrl sólo se usa si es http/https/interna (esquemas peligrosos se omiten)', () => {
     const evil = { ...base, photoUrl: 'javascript:alert(1)' };
-    const html = renderSignature('photo-round', evil);
+    const html = renderSignature('clasica', evil);
     expect(html).not.toContain('javascript:');
     // Con photoUrl válida (interna) sí aparece el <img>.
-    const ok = renderSignature('photo-round', {
+    const ok = renderSignature('clasica', {
       ...base,
       photoUrl: '/api/signature-images/0123456789abcdef01234567',
     });
@@ -139,7 +139,7 @@ describe('signature-templates (F2)', () => {
 
   it('accentColor no-hex se ignora (no rompe el atributo style)', () => {
     const evil = { ...base, accentColor: 'red;position:absolute;left:0' };
-    const html = renderSignature('vertical', evil);
+    const html = renderSignature('moderna', evil);
     expect(html).not.toContain('position:absolute');
     expect(html).toContain('#1b66ff'); // cae al default
   });
