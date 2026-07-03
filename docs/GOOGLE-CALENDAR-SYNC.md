@@ -241,3 +241,36 @@ Arquitectura APROBADA (servicios Google desacoplados, cola+reconciler, cifrado r
 self-hosted, recomendación bidireccional). Con §Hardening incorporado (state single-use+PKCE, googleEventId
 por _id, delete con tombstone, conexión por-usuario, worker re-verifica ownership) se cierran los HIGH/MED
 de D. Sugerido: re-check de D sobre v2 antes de G1.
+
+---
+
+## §As-built (implementación G1–G6) — desviaciones vs. el diseño y su justificación
+
+Todo lo del diseño + §Hardening se implementó, con estos ajustes deliberados:
+
+- **Callback PÚBLICO basado en `state`, NO autenticado por sesión (cambia MED8).** La cookie de sesión es
+  `SameSite=strict` (`routes/auth.ts`), así que NO viaja en el redirect top-level cross-site que hace Google
+  hacia `/callback`. Exigir sesión ahí rompería el flujo en producción. La identidad recae —como es el patrón
+  OAuth estándar— en el `state`: firmado con HMAC (infalsificable), atado al `userId` que inició, con TTL 10min
+  y **single-use** en Redis. Un atacante no puede fabricar un state para otra víctima ni reusar uno ajeno, así
+  que se cierra CSRF/confusión de cuentas SIN la cookie. `consumeState()` devuelve el `userId` de confianza.
+- **`googleEventId = 'bif' + sha256(String(_id)).hex` (afina la idempotencia HIGH).** Se deriva del `_id`
+  (único, evita colisión multi-cuenta y normalización de `uid`), y se usa **hex** en vez de base32hex porque el
+  hex `0-9a-f` ya cae dentro del regex válido de Google `[a-v0-9]{5,1024}` — mismo resultado, sin encoder extra.
+- **Sync sólo de eventos MANUALES en v1.** Los bloques `source:'booking'` (agenda) NO se sincronizan todavía:
+  evita tocar la lógica transaccional del booking. Follow-up documentado.
+- **Backstop en el reconciler (nuevo pass 4).** Re-encola eventos `googleSyncStatus ∈ {pending,error,deleting}`
+  más viejos que el grace — recupera enqueues perdidos (Redis caído) o reintentos agotados. Idempotente.
+- **Sin endpoint `/resync` por-evento en v1.** El reconciler reintenta solo los errores por-evento; la UI
+  "Reintentar" resuelve el error a nivel conexión (refresh revocado) reconectando. Simplicidad.
+- **Tombstone oculto del GET.** El delete de un evento ya sincronizado deja `status:'cancelled' +
+  googleSyncStatus:'deleting'`, excluido del `GET /calendar` (`$ne:'deleting'`), y el sync lo borra en Google y
+  recién ahí elimina el doc local (sin huérfanos). Si el dueño ya no tiene Google, el tombstone se limpia local.
+- **Config del operador (open source):** `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` (+ `_FILE` docker-secret),
+  `GOOGLE_REDIRECT_URI` (= `https://<host>/api/calendar/google/callback`). Sin ellas, la feature responde 503 y
+  la UI oculta la sección. Scope mínimo `calendar.events`.
+
+**Cobertura de tests:** `google-connection` (4, cifrado/unicidad/no-exposición), `oauth` (4, state single-use/
+anti-forgería/PKCE), `connection` (5, refresh+lock/invalid_grant/disconnect), `sync` (4, upsert/tombstone/
+skipped/error-retry), `google-calendar` endpoints (5, gate/401/callback-público/idempotencia). Suite existente
+281/281 sin regresiones.
