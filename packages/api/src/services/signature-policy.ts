@@ -49,18 +49,38 @@ export async function getSignaturePolicy(): Promise<SignaturePolicy> {
   };
 }
 
-export async function setSignaturePolicy(
+/**
+ * Mergea + sanitiza + VALIDA el invariante SIN escribir. Lanza `SignaturePolicyError` (400) si viola
+ * `lockTemplate ⇒ ≥1 template válido`. Permite validar la política ANTES de escribir el branding en el
+ * endpoint combinado (review B/C/D M1: evita persistir branding y que luego falle la política → estado
+ * inconsistente).
+ */
+export async function resolveSignaturePolicy(
   patch: Partial<SignaturePolicy>
 ): Promise<SignaturePolicy> {
   const next: SignaturePolicy = { ...(await getSignaturePolicy()), ...patch };
   const ids = Array.isArray(next.allowedTemplateIds) ? next.allowedTemplateIds : [];
   next.allowedTemplateIds = [...new Set(ids.filter(isValidTemplateId))];
-  // Invariante (review firmas): lockTemplate exige ≥1 template permitido válido.
   if (next.lockTemplate && next.allowedTemplateIds.length === 0) {
     throw new SignaturePolicyError('lockTemplate requiere al menos un template permitido válido.');
   }
-  await SystemConfig.findOneAndUpdate({ key: KEY }, { $set: { value: next } }, { upsert: true });
   return next;
+}
+
+/** Persiste una política YA resuelta (sin re-validar). */
+export async function writeSignaturePolicy(resolved: SignaturePolicy): Promise<SignaturePolicy> {
+  await SystemConfig.findOneAndUpdate(
+    { key: KEY },
+    { $set: { value: resolved } },
+    { upsert: true }
+  );
+  return resolved;
+}
+
+export async function setSignaturePolicy(
+  patch: Partial<SignaturePolicy>
+): Promise<SignaturePolicy> {
+  return writeSignaturePolicy(await resolveSignaturePolicy(patch));
 }
 
 /** Resuelve el template EFECTIVO para un usuario según la política (siempre devuelve un id válido). */

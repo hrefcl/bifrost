@@ -38,6 +38,8 @@ import { getStorageDefaults, setStorageDefaults } from '../services/storage-defa
 import {
   getSignaturePolicy,
   setSignaturePolicy,
+  resolveSignaturePolicy,
+  writeSignaturePolicy,
   SignaturePolicyError,
 } from '../services/signature-policy.js';
 import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
@@ -732,8 +734,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
       accentColor: z.string().regex(HEX, 'color inválido').optional(),
       companyName: z.string().trim().max(60).optional(),
       tagline: z.string().trim().max(80).optional(),
-      logoDataUrl: z.union([logoDataUrl, z.literal('')]).optional(),
-      logoVerticalDataUrl: z.union([logoDataUrl, z.literal('')]).optional(),
+      // Acepta '' o null para limpiar (consistente con brandingSchema — review D-008).
+      logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+      logoVerticalDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
     })
     .strict();
   fastify.post(
@@ -747,9 +750,13 @@ export default function adminRoutes(fastify: FastifyInstance) {
         ...(b.accentColor !== undefined ? { accentColor: b.accentColor } : {}),
         ...(b.companyName !== undefined ? { companyName: b.companyName } : {}),
         ...(b.tagline !== undefined ? { tagline: b.tagline } : {}),
+        // `''`/null → undefined (limpia el logo en el preview); un data URL válido lo fija. NO usar `??`:
+        // `'' ?? undefined` devolvería `''` (no limpia); acá el falsy DEBE colapsar a undefined.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
         ...(b.logoDataUrl !== undefined ? { logoDataUrl: b.logoDataUrl || undefined } : {}),
         ...(b.logoVerticalDataUrl !== undefined
-          ? { logoVerticalDataUrl: b.logoVerticalDataUrl || undefined }
+          ? // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+            { logoVerticalDataUrl: b.logoVerticalDataUrl || undefined }
           : {}),
       };
       return { html: await renderDraftPreview(user, b.templateId, draft, env.FRONTEND_URL) };
@@ -771,6 +778,35 @@ export default function adminRoutes(fastify: FastifyInstance) {
         }
         throw e;
       }
+    }
+  );
+
+  // Guardado COMBINADO del editor de firmas (branding + política) — atómico-first (review B/C/D M1):
+  // valida el invariante de política ANTES de escribir el branding. Si la política es inválida, no se
+  // escribe NADA (evita el estado inconsistente "branding aplicado + política falló"). El residuo
+  // (branding OK y luego falla la escritura de política por infra) es raro e idempotente al re-guardar.
+  const signatureSettingsSchema = z
+    .object({ branding: brandingSchema, policy: signaturePolicySchema })
+    .strict();
+  fastify.put(
+    '/config/signature-settings',
+    { config: { permission: 'branding.manage' } },
+    async (request, reply) => {
+      const body = signatureSettingsSchema.parse(request.body);
+      let resolved;
+      try {
+        resolved = await resolveSignaturePolicy(body.policy); // valida, NO escribe
+      } catch (e) {
+        if (e instanceof SignaturePolicyError) {
+          return reply
+            .code(400)
+            .send({ statusCode: 400, error: 'Bad Request', message: e.message });
+        }
+        throw e;
+      }
+      const branding = await setBranding(body.branding, request.user.userId); // escribe branding
+      await writeSignaturePolicy(resolved); // escribe política (ya validada)
+      return { branding: toPublicBranding(branding), policy: resolved };
     }
   );
 

@@ -281,6 +281,7 @@ export default {
       modeChooseHint: 'Check the designs the team can use. None checked = all.',
       modeStandard: 'Single standard for the whole company',
       modeStandardHint: 'Pick ONE design; everyone uses it (users cannot change it).',
+      pickStandardHint: 'Pick a template as the standard to be able to save.',
       badgeStandard: 'Standard',
       badgeOn: 'Enabled',
       tabTemplate: 'Template',

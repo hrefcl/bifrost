@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue';
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { AxiosError } from 'axios';
 import { api } from '@/lib/http';
@@ -115,24 +115,40 @@ function onLogoPick(e: Event, kind: 'h' | 'v') {
     error.value = t('admin.branding.errType');
     return;
   }
+  // Validar el tamaño REAL ANTES de leer (review B: un archivo grande congelaba la pestaña leyéndolo
+  // entero; review D-005: usar file.size evita la discrepancia de cálculo cliente/servidor).
+  if (file.size > LOGO_MAX) {
+    error.value = t('admin.branding.errSize');
+    return;
+  }
   const reader = new FileReader();
+  reader.onerror = () => {
+    error.value = t('admin.branding.errType'); // review D-010: feedback si la lectura falla
+  };
   reader.onload = () => {
     const dataUrl = typeof reader.result === 'string' ? reader.result : '';
     if (!dataUrl) return;
-    if (dataUrl.length * 0.75 > LOGO_MAX) {
-      error.value = t('admin.branding.errSize');
-      return;
-    }
     if (kind === 'h') estilo.value.logoDataUrl = dataUrl;
     else estilo.value.logoVerticalDataUrl = dataUrl;
   };
   reader.readAsDataURL(file);
 }
 
+/** Quita un logo y marca cambios pendientes (review B-LOW: quitar no marcaba saved=false). */
+function clearLogo(kind: 'h' | 'v') {
+  saved.value = false;
+  if (kind === 'h') estilo.value.logoDataUrl = '';
+  else estilo.value.logoVerticalDataUrl = '';
+}
+
 // Preview grande EN VIVO (debounced): rendiza el template seleccionado con el estilo sin guardar.
 let previewTimer: ReturnType<typeof setTimeout> | undefined;
+// Contador monotónico: sólo aplica la respuesta de la petición MÁS reciente → una respuesta vieja no
+// pisa una nueva (review B/C/D: race de preview sin cancelación).
+let previewSeq = 0;
 async function refreshPreview() {
   if (!selectedId.value) return;
+  const seq = ++previewSeq;
   try {
     const { data } = await api.post<{ html: string }>('/admin/config/signature-preview', {
       templateId: selectedId.value,
@@ -142,7 +158,7 @@ async function refreshPreview() {
       logoDataUrl: estilo.value.logoDataUrl,
       logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
     });
-    previewHtml.value = data.html;
+    if (seq === previewSeq) previewHtml.value = data.html; // ignora respuestas stale
   } catch {
     /* preview best-effort */
   }
@@ -155,26 +171,50 @@ watch(
   },
   { deep: true }
 );
+// Limpieza al desmontar (review B-LOW: el debounce podía disparar una request tardía).
+onBeforeUnmount(() => {
+  clearTimeout(previewTimer);
+  previewSeq++; // invalida cualquier respuesta en vuelo
+});
 
 const canSave = computed(
   () => !policy.value.lockTemplate || policy.value.allowedTemplateIds.length > 0
 );
+
+/** Re-carga las miniaturas con el branding recién guardado (review C-L2/D-007: galería quedaba stale). */
+async function reloadPreviews() {
+  try {
+    const { data } = await api.get<{ previews: Tpl[] }>('/admin/config/signature-previews');
+    const htmlById = new Map(data.previews.map((p) => [p.id, p.html]));
+    templates.value = templates.value.map((tp) => ({
+      ...tp,
+      html: htmlById.get(tp.id) ?? tp.html,
+    }));
+  } catch {
+    /* best-effort */
+  }
+}
 
 async function save() {
   saving.value = true;
   saved.value = false;
   error.value = '';
   try {
-    await api.put('/admin/config/branding', {
-      accentColor: estilo.value.accentColor,
-      companyName: estilo.value.companyName,
-      tagline: estilo.value.tagline,
-      logoDataUrl: estilo.value.logoDataUrl, // '' limpia
-      logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
+    // Guardado COMBINADO atómico-first (review B/C/D M1): un solo endpoint valida la política ANTES de
+    // escribir el branding → si algo falla, no queda branding aplicado con la política sin guardar.
+    const { data } = await api.put<{ policy: Policy }>('/admin/config/signature-settings', {
+      branding: {
+        accentColor: estilo.value.accentColor,
+        companyName: estilo.value.companyName,
+        tagline: estilo.value.tagline,
+        logoDataUrl: estilo.value.logoDataUrl, // '' limpia
+        logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
+      },
+      policy: policy.value,
     });
-    const { data } = await api.put<Policy>('/admin/config/signature-policy', policy.value);
-    policy.value = data;
+    policy.value = data.policy;
     saved.value = true;
+    await reloadPreviews();
   } catch (e) {
     error.value =
       e instanceof AxiosError && e.response?.status === 400
@@ -208,13 +248,23 @@ onMounted(load);
           <div class="modebar">
             <label class="mode" :class="{ on: !policy.lockTemplate }">
               <input type="radio" :checked="!policy.lockTemplate" @change="setLock(false)" />
-              <strong>{{ t('admin.signatures.modeChoose') }}</strong>
+              <span>
+                <strong>{{ t('admin.signatures.modeChoose') }}</strong>
+                <span class="hint">{{ t('admin.signatures.modeChooseHint') }}</span>
+              </span>
             </label>
             <label class="mode" :class="{ on: policy.lockTemplate }">
               <input type="radio" :checked="policy.lockTemplate" @change="setLock(true)" />
-              <strong>{{ t('admin.signatures.modeStandard') }}</strong>
+              <span>
+                <strong>{{ t('admin.signatures.modeStandard') }}</strong>
+                <span class="hint">{{ t('admin.signatures.modeStandardHint') }}</span>
+              </span>
             </label>
           </div>
+          <!-- Aclara la semántica de allowedTemplateIds vacío (review B-MEDIUM v2). -->
+          <p v-if="policy.lockTemplate && policy.allowedTemplateIds.length === 0" class="hint warn">
+            {{ t('admin.signatures.pickStandardHint') }}
+          </p>
           <div class="gallery">
             <button
               v-for="tpl in templates"
@@ -280,7 +330,7 @@ onMounted(load);
                 >{{ t('admin.branding.pickLogo') }}
                 <input type="file" accept="image/*" hidden @change="onLogoPick($event, 'h')"
               /></label>
-              <button v-if="estilo.logoDataUrl" class="lnk" @click="estilo.logoDataUrl = ''">
+              <button v-if="estilo.logoDataUrl" class="lnk" @click="clearLogo('h')">
                 {{ t('admin.branding.removeLogo') }}
               </button>
             </div>
@@ -297,11 +347,7 @@ onMounted(load);
                 >{{ t('admin.branding.pickLogo') }}
                 <input type="file" accept="image/*" hidden @change="onLogoPick($event, 'v')"
               /></label>
-              <button
-                v-if="estilo.logoVerticalDataUrl"
-                class="lnk"
-                @click="estilo.logoVerticalDataUrl = ''"
-              >
+              <button v-if="estilo.logoVerticalDataUrl" class="lnk" @click="clearLogo('v')">
                 {{ t('admin.branding.removeLogo') }}
               </button>
             </div>
@@ -403,6 +449,10 @@ onMounted(load);
   overflow: hidden;
   cursor: pointer;
   font: inherit;
+}
+/* Habilitada (elegible por el equipo) vs. seleccionada/activa (la que se previsualiza) — review D-006. */
+.card.on {
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 .card.active {
   border-color: var(--accent);
@@ -523,6 +573,16 @@ onMounted(load);
 .hint {
   font-size: 12px;
   color: var(--text-3);
+}
+.hint.warn {
+  color: var(--danger);
+  margin-top: 8px;
+}
+.mode {
+  align-items: flex-start;
+}
+.mode strong {
+  display: block;
 }
 .actions {
   display: flex;
