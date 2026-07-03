@@ -43,6 +43,9 @@ class NullMailboxProvider implements MailboxProvider {
   setAliases(): Promise<void> {
     return Promise.reject(new ProvisioningDisabledError());
   }
+  buildAccountLine(): string {
+    throw new ProvisioningDisabledError();
+  }
 }
 
 /** Provider de provisioning ACTIVO según la config del admin/seed. Nunca devuelve undefined. */

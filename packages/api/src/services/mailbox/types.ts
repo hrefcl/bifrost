@@ -28,8 +28,12 @@ export interface MailboxProvider {
   addRawLine(rawLine: string): Promise<void>;
   /** Aliases que apuntan a `email`. */
   getAliases(email: string): Promise<string[]>;
-  /** Reemplaza el set de aliases que apuntan a `email`. */
+  /** Reemplaza el set de aliases que apuntan a `email`. Lanza `AliasConflictError` si un alias ya
+   *  pertenece a OTRO buzón (unicidad global; Bifrost es la autoridad). */
   setAliases(email: string, aliases: string[]): Promise<void>;
+  /** Construye la línea cruda `email|hash` para `password` (sin escribir). Para reescribir el hash
+   *  guardado de un buzón suspendido. Lanza si el provider no puede crear buzones. */
+  buildAccountLine(email: string, password: string): string;
 }
 
 /** El provider activo no puede crear buzones (providerType='none' o no configurado). */
@@ -45,5 +49,13 @@ export class MailboxExistsError extends Error {
   constructor(email: string) {
     super(`El buzón ${email} ya existe.`);
     this.name = 'MailboxExistsError';
+  }
+}
+
+/** Un alias solicitado ya pertenece a otro buzón (postfix-virtual.cf exige destino único por alias). */
+export class AliasConflictError extends Error {
+  constructor(alias: string) {
+    super(`El alias ${alias} ya está en uso por otro buzón.`);
+    this.name = 'AliasConflictError';
   }
 }

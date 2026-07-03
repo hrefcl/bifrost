@@ -18,6 +18,8 @@ import {
   buildTestApp,
 } from '../../../test/integration-helper.js';
 import { setMailboxConfig } from '../../services/mailbox/index.js';
+import { DockerMailserverProvider } from '../../services/mailbox/docker-mailserver.js';
+import { Account } from '../../models/Account.js';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -236,5 +238,90 @@ describe('provision CRUD', () => {
     });
     expect(retry.statusCode).toBe(201);
     expect(retry.json().password).toBe(pw);
+  });
+
+  // ── Regresiones de la revisión B/C/D del CRUD ──
+
+  it('HIGH-1: si deleteMailbox falla al suspender, el hash queda a salvo y el retry completa la suspensión', async () => {
+    await create('hi@cleverty.info', { password: 'orig' });
+    // Falla el borrado de la línea DESPUÉS de haber persistido el hash en Mongo.
+    const spy = vi
+      .spyOn(DockerMailserverProvider.prototype, 'deleteMailbox')
+      .mockRejectedValueOnce(new Error('mailserver down'));
+    const susp = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/hi%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    expect(susp.statusCode).toBe(502);
+    // El hash quedó guardado (reintento seguro) y la línea sigue viva (el delete falló) → NO se perdió nada.
+    const acc = await Account.findOne({ email: 'hi@cleverty.info' });
+    expect(acc?.provisionSuspendedLine).toContain('hi@cleverty.info|{BLF-CRYPT}');
+    expect(await fs.readFile(accountsFile, 'utf8')).toContain('hi@cleverty.info');
+    spy.mockRestore();
+    // Retry: converge a suspendido (borra la línea) sin pedir de nuevo el hash.
+    const retry = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/hi%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    expect(retry.statusCode).toBe(200);
+    expect(retry.json().status).toBe('suspended');
+    expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('hi@cleverty.info|');
+  });
+
+  it('MED-5: un alias que ya pertenece a otro buzón → 409 (unicidad global)', async () => {
+    await create('uno@cleverty.info');
+    await create('dos@cleverty.info');
+    // uno se queda con ventas@
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/uno%40cleverty.info',
+      headers: H(),
+      payload: { aliases: ['ventas@cleverty.info'] },
+    });
+    // dos intenta el MISMO alias → conflicto
+    const res = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/dos%40cleverty.info',
+      headers: H(),
+      payload: { aliases: ['ventas@cleverty.info'] },
+    });
+    expect(res.statusCode).toBe(409);
+    // virtual.cf no quedó con el alias duplicado apuntando a dos
+    const virt = await fs.readFile(path.join(dir, 'postfix-virtual.cf'), 'utf8');
+    expect(virt).not.toContain('ventas@cleverty.info dos@cleverty.info');
+  });
+
+  it('MED-6: cambiar la password de un buzón SUSPENDIDO → 200 y aplica al reactivar (no 502 engañoso)', async () => {
+    await create('sp@cleverty.info', { password: 'vieja' });
+    const hOld = (await fs.readFile(accountsFile, 'utf8')).match(/sp@cleverty\.info\|(\S+)/)?.[1];
+    // suspender
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/sp%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    // cambiar password estando suspendido → debe ser 200 (el buzón existe), no 502
+    const pw = await app.inject({
+      method: 'PUT',
+      url: '/api/provision/mailboxes/sp%40cleverty.info/password',
+      headers: H(),
+      payload: { password: 'nueva-clave-abc' },
+    });
+    expect(pw.statusCode).toBe(200);
+    // reactivar → la línea vuelve con el hash NUEVO (no el viejo)
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/sp%40cleverty.info',
+      headers: H(),
+      payload: { active: true },
+    });
+    const hNew = (await fs.readFile(accountsFile, 'utf8')).match(/sp@cleverty\.info\|(\S+)/)?.[1];
+    expect(hNew).toBeTruthy();
+    expect(hNew).not.toBe(hOld);
   });
 });
