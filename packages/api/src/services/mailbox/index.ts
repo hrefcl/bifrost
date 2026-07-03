@@ -25,6 +25,24 @@ class NullMailboxProvider implements MailboxProvider {
   mailboxExists(): Promise<boolean> {
     return Promise.resolve(false);
   }
+  listMailboxes(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  getRawLine(): Promise<string | null> {
+    return Promise.resolve(null);
+  }
+  setPassword(): Promise<void> {
+    return Promise.reject(new ProvisioningDisabledError());
+  }
+  addRawLine(): Promise<void> {
+    return Promise.reject(new ProvisioningDisabledError());
+  }
+  getAliases(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+  setAliases(): Promise<void> {
+    return Promise.reject(new ProvisioningDisabledError());
+  }
 }
 
 /** Provider de provisioning ACTIVO según la config del admin/seed. Nunca devuelve undefined. */

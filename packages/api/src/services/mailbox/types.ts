@@ -18,6 +18,18 @@ export interface MailboxProvider {
   deleteMailbox(email: string, opts?: { purgeMaildir?: boolean }): Promise<void>;
   /** ¿Existe el buzón en el sistema de correo? (case-insensitive) */
   mailboxExists(email: string): Promise<boolean>;
+  /** Lista los emails de todos los buzones ACTIVOS. */
+  listMailboxes(): Promise<string[]>;
+  /** Línea cruda `email|hash` del buzón (para suspender/restaurar sin perder la password), o null. */
+  getRawLine(email: string): Promise<string | null>;
+  /** Cambia la contraseña de un buzón EXISTENTE. Lanza si no existe. */
+  setPassword(email: string, password: string): Promise<void>;
+  /** Restaura una línea cruda `email|hash` (reactivar un buzón suspendido). Idempotente. */
+  addRawLine(rawLine: string): Promise<void>;
+  /** Aliases que apuntan a `email`. */
+  getAliases(email: string): Promise<string[]>;
+  /** Reemplaza el set de aliases que apuntan a `email`. */
+  setAliases(email: string, aliases: string[]): Promise<void>;
 }
 
 /** El provider activo no puede crear buzones (providerType='none' o no configurado). */
