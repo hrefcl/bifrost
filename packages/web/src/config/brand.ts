@@ -3,7 +3,7 @@ import { reactive } from 'vue';
 /** Estilos de trazo de los iconos (weights de Phosphor). El admin elige uno app-wide. */
 export const ICON_WEIGHTS = ['thin', 'light', 'regular', 'bold', 'fill', 'duotone'] as const;
 export type IconWeight = (typeof ICON_WEIGHTS)[number];
-const DEFAULT_ICON_WEIGHT: IconWeight = 'light';
+export const DEFAULT_ICON_WEIGHT: IconWeight = 'light';
 function asIconWeight(v: unknown): IconWeight | null {
   return typeof v === 'string' && (ICON_WEIGHTS as readonly string[]).includes(v)
     ? (v as IconWeight)

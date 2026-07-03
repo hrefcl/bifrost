@@ -13,7 +13,13 @@ import AdminRoles from '@/components/admin/AdminRoles.vue';
 import AdminSignaturePolicy from '@/components/admin/AdminSignaturePolicy.vue';
 import AdminProvisioning from '@/components/admin/AdminProvisioning.vue';
 import { api } from '@/lib/http';
-import { brand, applyBrand, ICON_WEIGHTS, type IconWeight } from '@/config/brand';
+import {
+  brand,
+  applyBrand,
+  ICON_WEIGHTS,
+  DEFAULT_ICON_WEIGHT,
+  type IconWeight,
+} from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
 import { useAuthStore } from '@/stores/auth';
 import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adminStorage';
@@ -487,7 +493,7 @@ const brandForm = ref({
   youtube: '',
   logoWidthPx: 120,
   lockAccentColor: false,
-  iconWeight: 'light',
+  iconWeight: DEFAULT_ICON_WEIGHT,
 });
 const brandLoading = ref(true);
 const brandSaving = ref(false);
