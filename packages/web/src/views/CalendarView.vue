@@ -17,6 +17,8 @@ import type {
 import AppLayout from '@/layouts/AppLayout.vue';
 import AppIcon from '@/components/AppIcon.vue';
 import { useCalendarStore } from '@/stores/calendar';
+import { useGoogleCalendarStore } from '@/stores/googleCalendar';
+import { useRoute, useRouter } from 'vue-router';
 import { api } from '@/lib/http';
 import { colorFor } from '@/lib/people';
 import { normalizeAllDayRange } from '@/lib/calendar-dates';
@@ -24,6 +26,11 @@ import type { Account, CalendarEvent } from '@webmail6/shared';
 
 const { t, locale } = useI18n();
 const store = useCalendarStore();
+const gcal = useGoogleCalendarStore();
+const route = useRoute();
+const router = useRouter();
+// Banner de resultado del flujo OAuth (vuelta del callback con ?google=connected|error).
+const gcalBanner = ref<'connected' | 'error' | null>(null);
 const calendarRef = ref<InstanceType<typeof FullCalendar> | null>(null);
 const accounts = ref<Account[]>([]);
 const periodTitle = ref('');
@@ -314,12 +321,32 @@ const calendarOptions = computed<CalendarOptions>(() => ({
   },
 }));
 
+/** Desconecta Google y refresca el estado. */
+async function disconnectGoogle(): Promise<void> {
+  await gcal.disconnect();
+}
+
+/** El error a nivel conexión (refresh revocado/expirado) se resuelve reconectando con Google.
+ *  Los errores de sync por-evento los reintenta solo el reconciler del backend (cada 2 min). */
+async function retryGoogleSync(): Promise<void> {
+  await gcal.connect();
+}
+
 onMounted(async () => {
   try {
     const { data } = await api.get<Account[]>('/accounts');
     accounts.value = data;
   } catch {
     // sin cuentas: crear lo valida igual (accountId requerido por el backend)
+  }
+  // Estado de Google Calendar para el panel lateral.
+  void gcal.fetchStatus();
+  // Vuelta del callback OAuth: mostrar resultado y limpiar el query de la URL.
+  const g = route.query.google;
+  if (g === 'connected' || g === 'error') {
+    gcalBanner.value = g;
+    void router.replace({ query: { ...route.query, google: undefined, reason: undefined } });
+    if (g === 'connected') void gcal.fetchStatus();
   }
 });
 </script>
@@ -411,6 +438,54 @@ onMounted(async () => {
             <RouterLink :to="{ name: 'scheduling' }" class="cal-link">
               <AppIcon name="calendarClock" :size="16" />{{ t('calendar.manageAgenda') }}
             </RouterLink>
+          </div>
+
+          <!-- Google Calendar (sólo si el operador configuró la integración) -->
+          <div v-if="gcal.status.configured" class="cal-section">
+            <h3 class="cal-section-title">{{ t('calendar.google.title') }}</h3>
+
+            <p
+              v-if="gcalBanner"
+              class="gcal-banner"
+              :class="gcalBanner === 'connected' ? 'ok' : 'err'"
+            >
+              {{
+                gcalBanner === 'connected'
+                  ? t('calendar.google.okConnected')
+                  : t('calendar.google.errConnect')
+              }}
+            </p>
+
+            <template v-if="gcal.status.connected">
+              <p class="gcal-line">
+                <AppIcon name="check" :size="15" class="gcal-ok" />
+                <span>{{
+                  gcal.status.email
+                    ? t('calendar.google.connectedAs', { email: gcal.status.email })
+                    : t('calendar.google.connected')
+                }}</span>
+              </p>
+              <button class="gcal-btn ghost" @click="disconnectGoogle">
+                <AppIcon name="x" :size="15" />{{ t('calendar.google.disconnect') }}
+              </button>
+            </template>
+
+            <template v-else>
+              <p class="gcal-intro">{{ t('calendar.google.intro') }}</p>
+              <button class="gcal-btn" :disabled="gcal.connecting" @click="gcal.connect()">
+                <AppIcon name="link" :size="15" />
+                {{
+                  gcal.connecting ? t('calendar.google.connecting') : t('calendar.google.connect')
+                }}
+              </button>
+            </template>
+
+            <div v-if="gcal.status.status === 'error'" class="gcal-error">
+              <span>{{ t('calendar.google.syncError') }}</span>
+              <button class="gcal-btn ghost sm" @click="retryGoogleSync">
+                <AppIcon name="refresh" :size="14" />{{ t('calendar.google.retry') }}
+              </button>
+            </div>
           </div>
         </aside>
 
@@ -752,6 +827,81 @@ onMounted(async () => {
 }
 .cal-link:hover {
   text-decoration: underline;
+}
+
+/* ---- Google Calendar (panel lateral) ---- */
+.gcal-intro,
+.gcal-line {
+  font-size: 12.5px;
+  color: var(--text-2);
+  margin: 0 0 8px;
+  line-height: 1.4;
+}
+.gcal-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--text-1);
+}
+.gcal-ok {
+  color: var(--success, #16a34a);
+}
+.gcal-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.gcal-btn:hover {
+  background: var(--accent-700);
+}
+.gcal-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.gcal-btn.ghost {
+  background: var(--surface);
+  color: var(--text-1);
+}
+.gcal-btn.ghost:hover {
+  background: var(--hover);
+}
+.gcal-btn.sm {
+  padding: 4px 9px;
+  font-size: 12px;
+}
+.gcal-error {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+}
+.gcal-banner {
+  font-size: 12.5px;
+  margin: 0 0 8px;
+  padding: 7px 9px;
+  border-radius: 8px;
+}
+.gcal-banner.ok {
+  color: var(--success, #16a34a);
+  background: color-mix(in srgb, var(--success, #16a34a) 10%, var(--surface));
+}
+.gcal-banner.err {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
 }
 @media (max-width: 820px) {
   .cal-sidebar {
