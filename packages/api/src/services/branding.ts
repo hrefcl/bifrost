@@ -17,6 +17,14 @@ export interface SocialLinks {
 }
 export const SOCIAL_KEYS = ['linkedin', 'instagram', 'x', 'facebook', 'youtube'] as const;
 
+/**
+ * Weight (estilo de trazo) del set de iconos Phosphor, elegido por el admin para TODA la plataforma
+ * (white-label: la interfaz tiene el estilo que el admin quiere para sus empleados). Default `light`.
+ */
+export const ICON_WEIGHTS = ['thin', 'light', 'regular', 'bold', 'fill', 'duotone'] as const;
+export type IconWeight = (typeof ICON_WEIGHTS)[number];
+export const DEFAULT_ICON_WEIGHT: IconWeight = 'light';
+
 /** Entrada de redes desde el admin (cada subcampo `''`/null LIMPIA ese link). */
 export type SocialLinksInput = Partial<Record<(typeof SOCIAL_KEYS)[number], string | null>>;
 
@@ -33,6 +41,8 @@ export interface BrandingConfig {
   logoWidthPx?: number; // ancho del logo en la firma (px); default de render = 120
   /** Política: si el admin bloquea el color, el cliente ignora el accent personal (app-wide). */
   lockAccentColor?: boolean;
+  /** Estilo de iconos app-wide (weight de Phosphor). Default `light`. */
+  iconWeight?: IconWeight;
   updatedBy?: string;
   updatedAt?: string;
 }
@@ -49,6 +59,7 @@ export interface BrandingInput {
   socialLinks?: SocialLinksInput | null;
   logoWidthPx?: number | null;
   lockAccentColor?: boolean;
+  iconWeight?: IconWeight;
 }
 
 /** Vista pública servida al cliente (sin metadatos de auditoría). */
@@ -63,6 +74,7 @@ export interface PublicBranding {
   socialLinks: SocialLinks | null;
   logoWidthPx: number | null;
   lockAccentColor: boolean;
+  iconWeight: IconWeight;
 }
 
 const KEY = 'branding';
@@ -91,6 +103,7 @@ export function toPublicBranding(cfg: BrandingConfig): PublicBranding {
       cfg.socialLinks && Object.keys(cfg.socialLinks).length > 0 ? cfg.socialLinks : null,
     logoWidthPx: cfg.logoWidthPx ?? null,
     lockAccentColor: cfg.lockAccentColor ?? false,
+    iconWeight: cfg.iconWeight ?? DEFAULT_ICON_WEIGHT,
   };
 }
 
@@ -124,6 +137,7 @@ export async function setBranding(
   if (input.socialLinks !== undefined) value.socialLinks = cleanSocials(input.socialLinks);
   if (input.logoWidthPx !== undefined) value.logoWidthPx = input.logoWidthPx ?? undefined;
   if (input.lockAccentColor !== undefined) value.lockAccentColor = input.lockAccentColor;
+  if (input.iconWeight !== undefined) value.iconWeight = input.iconWeight;
   value.updatedBy = updatedBy;
   value.updatedAt = new Date().toISOString();
   await SystemConfig.findOneAndUpdate({ key: KEY }, { $set: { value } }, { upsert: true });

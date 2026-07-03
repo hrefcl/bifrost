@@ -5,7 +5,7 @@ import { Role, serializeRole } from '../models/Role.js';
 import { PERMISSIONS, sanitizePermissions } from '../lib/permissions.js';
 import { getStorageConfigPublic, setStorageConfig } from '../services/storage/index.js';
 import { isSafeS3Endpoint, verifyS3Connection } from '../services/storage/s3.js';
-import { getBranding, setBranding, toPublicBranding } from '../services/branding.js';
+import { getBranding, setBranding, toPublicBranding, ICON_WEIGHTS } from '../services/branding.js';
 import { loginOrRegister } from '../services/auth.js';
 import {
   provisioningEnabled,
@@ -96,6 +96,8 @@ const brandingSchema = z
       .optional(),
     logoWidthPx: z.union([z.number().int().min(40).max(400), z.null()]).optional(),
     lockAccentColor: z.boolean().optional(),
+    // Estilo de iconos app-wide (weight de Phosphor). Enum cerrado → rechaza valores inválidos.
+    iconWeight: z.enum(ICON_WEIGHTS).optional(),
   })
   .strict();
 

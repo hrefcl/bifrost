@@ -1,5 +1,15 @@
 import { reactive } from 'vue';
 
+/** Estilos de trazo de los iconos (weights de Phosphor). El admin elige uno app-wide. */
+export const ICON_WEIGHTS = ['thin', 'light', 'regular', 'bold', 'fill', 'duotone'] as const;
+export type IconWeight = (typeof ICON_WEIGHTS)[number];
+export const DEFAULT_ICON_WEIGHT: IconWeight = 'light';
+function asIconWeight(v: unknown): IconWeight | null {
+  return typeof v === 'string' && (ICON_WEIGHTS as readonly string[]).includes(v)
+    ? (v as IconWeight)
+    : null;
+}
+
 /**
  * Identidad de marca PARAMETRIZABLE (white-label), en DOS capas:
  *
@@ -21,6 +31,8 @@ export interface Brand {
   logoUrl: string | null;
   /** Firmas F6: si el admin bloquea el color, el usuario NO puede elegir accent (toda la app usa la marca). */
   lockAccentColor: boolean;
+  /** Estilo de iconos app-wide (weight de Phosphor), elegido por el admin. Default `light`. */
+  iconWeight: IconWeight;
 }
 
 /** Devuelve el valor de entorno si tiene contenido tras trim, o el default. */
@@ -45,6 +57,7 @@ const defaults: Brand = {
   tagline: envOr(import.meta.env.VITE_BRAND_TAGLINE, 'IMAP & JMAP'),
   logoUrl: null,
   lockAccentColor: false,
+  iconWeight: DEFAULT_ICON_WEIGHT,
 };
 
 export const brand: Brand = reactive({ ...defaults });
@@ -55,6 +68,7 @@ interface RemoteBranding {
   accentColor: string | null;
   logoDataUrl: string | null;
   lockAccentColor?: boolean;
+  iconWeight?: string | null;
 }
 
 /**
@@ -84,6 +98,7 @@ export async function loadRemoteBrand(): Promise<void> {
     if (b.accentColor && isHex(b.accentColor)) brand.accent = b.accentColor;
     brand.logoUrl = b.logoDataUrl ?? null;
     brand.lockAccentColor = b.lockAccentColor ?? false;
+    brand.iconWeight = asIconWeight(b.iconWeight) ?? DEFAULT_ICON_WEIGHT;
     applyBrand();
   } catch {
     // Sin branding remoto → queda el default por env (no es un error fatal del arranque).

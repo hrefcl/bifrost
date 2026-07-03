@@ -545,8 +545,13 @@ necesario). TDs residuales:
   (ruido que enmascara errores reales) + fallback de la icon-font. Fix: `font-src 'self' data:` en
   `nginx.conf` (2 headers). `data:` en font-src es seguro (las fuentes no ejecutan código, a diferencia
   de `data:` en script-src). NO relacionado con FA duotone (que es SVG inline, sin webfont).
-- **TD-FA-PRO-REGISTRY-SUPPLY-CHAIN (LOW-MED — decisión pendiente)**: hallado en re-audit ronda "operador
-  3AM". El build de la imagen web ahora **depende de un registry pago externo** (`npm.fontawesome.com`) con
+- **TD-FA-PRO-REGISTRY-SUPPLY-CHAIN — RESUELTO** (jul 2026, rama `feat/phosphor-duotone-icons`): se
+  migró de FontAwesome Pro a **Phosphor Icons (weight duotone, MIT)**. Elimina de raíz los 4 riesgos:
+  registry pago, token/secret, fallo de build en forks, y el riesgo de licencia OSS. `AppIcon` pasó a
+  `<component :is>` (sin `v-html` ni hack CSP de svg-core). La API `name`/`size` y las 17 vistas no
+  cambian. Detalle histórico del problema original abajo. ↓
+- **TD-FA-PRO-REGISTRY-SUPPLY-CHAIN (histórico)**: hallado en re-audit ronda "operador
+  3AM". El build de la imagen web **dependía de un registry pago externo** (`npm.fontawesome.com`) con
   un token. Riesgos: (a) si el token expira/se revoca o FA está caído, TODO build de `web` falla → no se
   puede shippear un hotfix; (b) PRs desde **forks** (proyecto OSS) no reciben el secret → su build de imagen
   web falla. **⚠ CORRECCIÓN (review externo D/kimi, jul 2026):** la mitigación de "vendorizar los SVG Pro"

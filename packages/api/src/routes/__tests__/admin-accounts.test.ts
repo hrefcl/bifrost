@@ -282,6 +282,36 @@ describe('admin: gestión de cuentas + branding (PM-03/PM-04)', () => {
     await app.close();
   });
 
+  it('branding: iconWeight — default light, persiste un weight válido y rechaza uno inválido', async () => {
+    const app = await buildTestApp();
+    const { headers } = await seedAdmin(app);
+
+    // Default sin configurar: la vista pública expone 'light'.
+    const pub0 = await app.inject({ method: 'GET', url: '/api/branding' });
+    expect((JSON.parse(pub0.body) as { iconWeight: string }).iconWeight).toBe('light');
+
+    // Guarda un weight válido → se expone.
+    const ok = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { iconWeight: 'duotone' },
+    });
+    expect(ok.statusCode).toBe(200);
+    const pub = await app.inject({ method: 'GET', url: '/api/branding' });
+    expect((JSON.parse(pub.body) as { iconWeight: string }).iconWeight).toBe('duotone');
+
+    // Un weight fuera del enum → 400 (anti valor arbitrario).
+    const bad = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/branding',
+      headers,
+      payload: { iconWeight: 'sparkles' },
+    });
+    expect(bad.statusCode).toBe(400);
+    await app.close();
+  });
+
   it('branding extendido (F1): guarda domainUrl/phone/socials/logoWidthPx/lockAccentColor y los expone', async () => {
     const app = await buildTestApp();
     const { headers } = await seedAdmin(app);

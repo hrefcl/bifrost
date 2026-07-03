@@ -13,7 +13,13 @@ import AdminRoles from '@/components/admin/AdminRoles.vue';
 import AdminSignaturePolicy from '@/components/admin/AdminSignaturePolicy.vue';
 import AdminProvisioning from '@/components/admin/AdminProvisioning.vue';
 import { api } from '@/lib/http';
-import { brand, applyBrand } from '@/config/brand';
+import {
+  brand,
+  applyBrand,
+  ICON_WEIGHTS,
+  DEFAULT_ICON_WEIGHT,
+  type IconWeight,
+} from '@/config/brand';
 import { BUILD_INFO } from '@/lib/buildInfo';
 import { useAuthStore } from '@/stores/auth';
 import { s3FormFromConfig, s3Incomplete as computeS3Incomplete } from '@/lib/adminStorage';
@@ -487,6 +493,7 @@ const brandForm = ref({
   youtube: '',
   logoWidthPx: 120,
   lockAccentColor: false,
+  iconWeight: DEFAULT_ICON_WEIGHT,
 });
 const brandLoading = ref(true);
 const brandSaving = ref(false);
@@ -507,6 +514,7 @@ async function loadBranding() {
       socialLinks?: Record<string, string> | null;
       logoWidthPx?: number | null;
       lockAccentColor?: boolean;
+      iconWeight?: IconWeight;
     }>('/admin/config/branding');
     brandForm.value.companyName = data.companyName ?? '';
     brandForm.value.tagline = data.tagline ?? '';
@@ -522,6 +530,7 @@ async function loadBranding() {
     brandForm.value.youtube = data.socialLinks?.youtube ?? '';
     brandForm.value.logoWidthPx = data.logoWidthPx ?? 120;
     brandForm.value.lockAccentColor = data.lockAccentColor ?? false;
+    brandForm.value.iconWeight = data.iconWeight ?? 'light';
   } catch {
     brandError.value = t('admin.branding.errLoad');
   } finally {
@@ -583,6 +592,7 @@ async function saveBranding() {
       },
       logoWidthPx: f.logoWidthPx,
       lockAccentColor: f.lockAccentColor,
+      iconWeight: f.iconWeight,
     };
     await api.put('/admin/config/branding', payload);
     // Aplicar en vivo (sin recargar): la marca es reactiva y la consume toda la UI.
@@ -591,6 +601,7 @@ async function saveBranding() {
     brand.accent = payload.accentColor;
     brand.logoUrl = payload.logoDataUrl || null;
     brand.lockAccentColor = payload.lockAccentColor;
+    brand.iconWeight = payload.iconWeight; // live: los iconos cambian de estilo al instante
     applyBrand();
     brandSaved.value = true;
   } catch (err) {
@@ -1315,6 +1326,27 @@ async function save() {
                 </span>
               </label>
               <label class="fld"
+                ><span>{{ t('admin.branding.iconStyle') }}</span>
+                <select
+                  v-model="brandForm.iconWeight"
+                  class="adminput"
+                  @change="brand.iconWeight = brandForm.iconWeight"
+                >
+                  <option v-for="w in ICON_WEIGHTS" :key="w" :value="w">
+                    {{ t('admin.branding.iconWeights.' + w) }}
+                  </option>
+                </select>
+                <span class="icon-style-preview" aria-hidden="true">
+                  <AppIcon name="inbox" :size="22" />
+                  <AppIcon name="star" :size="22" />
+                  <AppIcon name="send" :size="22" />
+                  <AppIcon name="calendar" :size="22" />
+                  <AppIcon name="settings" :size="22" />
+                  <AppIcon name="user" :size="22" />
+                </span>
+                <p class="hint">{{ t('admin.branding.iconStyleHint') }}</p>
+              </label>
+              <label class="fld"
                 ><span>{{ t('admin.branding.logo') }}</span>
                 <div class="logo-row">
                   <div class="logo-preview" :class="{ empty: !brandForm.logoDataUrl }">
@@ -1958,6 +1990,14 @@ async function save() {
   font-size: 12px;
   color: var(--text-3);
   margin: 8px 0 0;
+}
+/* Preview del estilo de iconos: muestra en vivo el weight elegido (usa el color de acento). */
+.icon-style-preview {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  color: var(--accent);
+  margin-top: 8px;
 }
 .options {
   display: flex;
