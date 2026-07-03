@@ -333,8 +333,23 @@ export default function authRoutes(fastify: FastifyInstance) {
   // Guarda la elección de firma del usuario (firmas F4). $set dirigido de paths anidados.
   fastify.patch('/me/signature', async (request, reply) => {
     const body = signaturePrefSchema.parse(request.body);
+    // La política se consulta una vez si hace falta validar source/templateId contra ella.
+    const policy =
+      body.source === 'custom' || body.templateId !== undefined ? await getSignaturePolicy() : null;
     const set: Record<string, unknown> = {};
-    if (body.source !== undefined) set['preferences.signature.source'] = body.source;
+    if (body.source !== undefined) {
+      // Rechazar 'custom' si la política lo prohíbe (consistente con la rama de templateId). Sin esto
+      // se persistía una preferencia inconsistente; `buildUserSignature` igual la ignora al enviar
+      // (allowCustomHtml=false → cae a template), pero no debe guardarse (review A, L1).
+      if (body.source === 'custom' && policy && !policy.allowCustomHtml) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Firma personalizada no permitida por la política.',
+        });
+      }
+      set['preferences.signature.source'] = body.source;
+    }
     if (body.templateId !== undefined) {
       if (!isValidTemplateId(body.templateId)) {
         return reply
@@ -343,8 +358,8 @@ export default function authRoutes(fastify: FastifyInstance) {
       }
       // Debe estar HABILITADO por la política ([] = todos). `buildUserSignature` igual lo acota al
       // enviar, pero rechazar acá evita persistir una preferencia inconsistente (review D, LOW).
-      const policy = await getSignaturePolicy();
       if (
+        policy &&
         policy.allowedTemplateIds.length > 0 &&
         !policy.allowedTemplateIds.includes(body.templateId)
       ) {

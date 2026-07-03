@@ -66,6 +66,40 @@ describe('signature-templates (F2)', () => {
     }
   });
 
+  it('XSS: escapa TODOS los campos de texto interpolados (regresión por-campo)', () => {
+    const XSS = '<script>alert(1)</script>"><img src=x onerror=alert(1)>';
+    const textFields: (keyof SignatureContext)[] = [
+      'displayName',
+      'jobTitle',
+      'department',
+      'companyName',
+      'tagline',
+      'address',
+      'personalPhone',
+      'companyPhone',
+      'email',
+    ];
+    for (const f of textFields) {
+      const ctx = { ...base, [f]: XSS } as SignatureContext;
+      for (const t of SIGNATURE_TEMPLATES) {
+        const html = renderSignature(t.id, ctx);
+        expect(html, `${t.id}/${f}: <script>`).not.toContain('<script>');
+        expect(html, `${t.id}/${f}: <img`).not.toContain('<img src=x');
+        expect(html, `${t.id}/${f}: onerror`).not.toMatch(/onerror=alert\(1\)>/);
+      }
+    }
+    // socialLinks con esquema peligroso → cae a nada (link() valida el esquema); sin vectores en el HTML.
+    const socialEvil = {
+      ...base,
+      socialLinks: { linkedin: 'javascript:alert(1)', x: 'data:text/html,<script>x</script>' },
+    } as SignatureContext;
+    for (const t of SIGNATURE_TEMPLATES) {
+      const html = renderSignature(t.id, socialEvil);
+      expect(html, `${t.id}: no javascript:`).not.toContain('javascript:');
+      expect(html, `${t.id}: no data:text/html`).not.toContain('data:text/html');
+    }
+  });
+
   it('tel: en teléfono sobrevive al sanitizer (esquema permitido)', () => {
     const ctx: SignatureContext = {
       ...base,

@@ -97,7 +97,9 @@ export const defaultOptions: sanitize.IOptions = {
   ]),
   allowedAttributes: {
     ...sanitize.defaults.allowedAttributes,
-    '*': ['style', 'align', 'dir'],
+    // `data-bifrost-sig-sep`: marcador INERTE del separador de firma (drafts.ts) — se preserva para
+    // poder identificar/quitar la firma en el futuro (reply/quote). Un data-* no ejecuta ni navega.
+    '*': ['style', 'align', 'dir', 'data-bifrost-sig-sep'],
     img: ['src', 'alt', 'width', 'height', 'style'],
     a: ['href', 'target', 'rel', 'style'],
     table: EMAIL_LAYOUT_ATTRS,
