@@ -17,7 +17,12 @@ const FILE_BACKED_VARS = [...CRITICAL_VARS, 'COMPLIANCE_HMAC_SECRET'] as const;
  * LIVEKIT_* cuando la feature está activa; con Meet OFF estos no existen y el boot debe seguir OK
  * (review D-H5). Se resuelven con el MISMO mecanismo de docker-secrets que los críticos.
  */
-const OPTIONAL_FILE_VARS = ['LIVEKIT_API_KEY', 'LIVEKIT_API_SECRET', 'PROVISION_API_KEY'] as const;
+const OPTIONAL_FILE_VARS = [
+  'LIVEKIT_API_KEY',
+  'LIVEKIT_API_SECRET',
+  'PROVISION_API_KEY',
+  'GOOGLE_CLIENT_SECRET',
+] as const;
 
 /**
  * Soporte de docker-secrets (`<VAR>_FILE`): si está seteado `<VAR>_FILE` y `<VAR>` está vacío, lee
@@ -89,6 +94,12 @@ const envSchema = z.object({
   LIVEKIT_API_URL: z.string().optional(),
   // Base pública de los links de unión (`https://webmail.<dom>`).
   MEET_PUBLIC_BASE_URL: z.string().optional(),
+  // --- Google Calendar sync (open source: cada operador registra su propio proyecto Google Cloud) ---
+  // Si no están, la integración queda DESHABILITADA (googleConfigured() → false; feature-gate). El
+  // secret también admite `GOOGLE_CLIENT_SECRET_FILE` (docker-secret, ver OPTIONAL_FILE_VARS).
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional(),
+  GOOGLE_REDIRECT_URI: z.string().url().optional(),
   // --- Provisioning de buzones (Bifrost como autoridad de cuentas de correo) ---
   // Ruta al postfix-accounts.cf de docker-mailserver, montado en el contenedor api (volumen compartido).
   // Ausente = provisioning deshabilitado (el alta desde admin sólo verifica buzones existentes).
@@ -137,6 +148,15 @@ export function getPartialEnv(): PartialEnv {
 }
 
 export const env = isSetupMode() ? (getPartialEnv() as Env) : validateEnv();
+
+/**
+ * Feature-gate de la integración Google Calendar (open source): sólo está disponible si el operador
+ * configuró SU proyecto Google (client id + secret + redirect). Sin esto, los endpoints /google/* se
+ * apagan y la UI muestra "no disponible" — nunca rompe el calendario.
+ */
+export function googleConfigured(): boolean {
+  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI);
+}
 
 /**
  * TTL del access token en segundos, derivado de JWT_ACCESS_TTL (formato '15m'/'3s'/'2h'…),

@@ -28,6 +28,11 @@ export interface ICalendarEvent extends Document {
   bookingId?: mongoose.Types.ObjectId;
   meetRoomId?: mongoose.Types.ObjectId;
   meetUrl?: string;
+  // ── Sync con Google Calendar (F-gcal, v1). Todos OPCIONALES → no rompen eventos existentes. ──
+  googleEventId?: string; // id del evento en Google (relación evento↔Google; derivado del _id, ver diseño)
+  googleSyncStatus?: 'pending' | 'synced' | 'error' | 'skipped' | 'deleting' | 'deleted';
+  googleSyncError?: string; // último error de sync de ESTE evento
+  googleLastSyncedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -71,6 +76,14 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
     bookingId: { type: Schema.Types.ObjectId },
     meetRoomId: { type: Schema.Types.ObjectId },
     meetUrl: { type: String, maxlength: 2048 },
+    // Sync con Google Calendar (F-gcal). `googleEventId` indexado sparse para lookups por id de Google.
+    googleEventId: { type: String, index: { sparse: true } },
+    googleSyncStatus: {
+      type: String,
+      enum: ['pending', 'synced', 'error', 'skipped', 'deleting', 'deleted'],
+    },
+    googleSyncError: { type: String },
+    googleLastSyncedAt: { type: Date },
   },
   { timestamps: true }
 );
@@ -115,6 +128,10 @@ export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
     bookingId: doc.bookingId?.toString(),
     meetRoomId: doc.meetRoomId?.toString(),
     meetUrl: doc.meetUrl,
+    // Estado de sync con Google (para que la UI muestre badge/errores). NO expone tokens.
+    googleSyncStatus: doc.googleSyncStatus,
+    googleSyncError: doc.googleSyncError,
+    googleLastSyncedAt: doc.googleLastSyncedAt ? doc.googleLastSyncedAt.toISOString() : undefined,
     createdAt: doc.createdAt.toISOString(),
     updatedAt: doc.updatedAt.toISOString(),
   };
