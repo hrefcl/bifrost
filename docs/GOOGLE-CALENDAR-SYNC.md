@@ -1,6 +1,8 @@
-# Integración Google Calendar — sincronización de eventos (diseño v1)
+# Integración Google Calendar — sincronización de eventos (diseño v2)
 
-**Estado:** DISEÑO (pendiente gate B/C/D). Worktree `google-calendar-sync`. 2026-07-03.
+**Estado:** DISEÑO v2 — endurecido tras gate B/D (D 6.5–7 NO-APPROVE, HIGH de OAuth+idempotencia; B
+alineado). Los HIGH/MED están incorporados en **§Hardening (obligatorio)** al final. Worktree
+`google-calendar-sync`. 2026-07-03.
 
 ## Objetivo y alcance
 Cada usuario conecta su cuenta de Google (OAuth 2.0) y los eventos que crea/edita/elimina en el
@@ -177,3 +179,65 @@ construir (fase 2 separada con su propio gate B/C/D).
 - **Cuota / rate-limit** de la Google Calendar API (backoff ya en la cola).
 - **TOCTOU/race:** dos ediciones concurrentes del mismo evento → el job idempotente (upsert) + `withLock`
   por `eventId` evita pisadas.
+
+## §Hardening (obligatorio — cierra el gate B/D)
+
+### OAuth (HIGH)
+- **`state` de un solo uso, no predecible (H1).** NO `hmacToken(userId)` (determinístico). Formato:
+  `state = base64url(nonce | userId | ts | HMAC(nonce|userId|ts))` con `nonce` aleatorio (16B). Se guarda
+  el `nonce` en Redis con TTL 10 min (`SETEX`, patrón de la cola). Validación en callback: HMAC OK **y**
+  `ts ≤ 10min` **y** `state.userId === request.user.userId` (usuario autenticado) **y** `nonce` presente en
+  Redis (consumir/borrar → single-use). Cierra CSRF + confusión de cuentas.
+- **PKCE obligatorio (H2).** `code_verifier` aleatorio → `code_challenge = S256(verifier)`; el verifier se
+  guarda junto al nonce (Redis, TTL). No opcional.
+- **Callback autenticado (MED8).** El endpoint `/google/callback` exige sesión (JWT); si el `state.userId`
+  no coincide con el usuario logueado → 403. `redirect_uri` exacto (match con el registrado).
+
+### Idempotencia / anti-duplicados (HIGH)
+- **`googleEventId` derivado del `_id` del evento, no del `uid` (H3 + MED5).** El id de evento de Google
+  debe ser base32hex (`[a-v0-9]`, 5–1024). El `uid` iCal puede traer mayúsculas/`-`/`:` → NO sirve directo,
+  y dos accounts del mismo user podrían compartir uid (colisión). Se usa un id determinístico y único por
+  evento: `gid = 'bif' + base32hex(sha256(String(event._id)))[0..40]`. Único (ObjectId) + formato válido →
+  `insert` con id fijo es idempotente (409 = ya existe → tratar como sincronizado, guardar `googleEventId`).
+- **jobId por evento (MED9).** El job se encola con `jobId = 'gcal:' + eventId` → una edición nueva
+  **supersede** la pendiente (BullMQ dedup), evita pilas de syncs viejos del mismo evento.
+
+### Delete sin huérfanos (HIGH4)
+- El DELETE actual es hard. Para eventos con Google (`googleEventId` presente) el DELETE pasa a ser **SOFT
+  con tombstone**: `status:'cancelled'` + `googleSyncStatus:'deleting'` (NO se borra el doc). Se encola el
+  job de delete con el `googleEventId`. El worker borra en Google → al confirmar, marca `'deleted'` (el
+  tombstone puede quedar o purgarse por un GC posterior). Si el enqueue/worker falla, el reconciler ve
+  `'deleting'` y reintenta → **nunca queda un evento huérfano en Google** ni se pierde el borrado.
+  (Eventos sin Google: hard delete como hoy.)
+
+### Modelo / decisiones
+- **Conexión POR USUARIO, no por account (MED5).** Un usuario Bifrost puede tener varias cuentas de correo,
+  pero UNA identidad Google → una `GoogleConnection` por `userId`, calendario destino `primary`. El
+  `googleEventId` deriva del `_id` (único global) → sin colisión entre accounts del mismo user.
+- **`syncToken` opcional desde ya (LOW10).** `GoogleConnection.syncToken?: string` (para la fase 2 de
+  polling bidireccional; en v1 no se usa) — forward-compatible sin costo.
+- **env `GOOGLE_*` (MED6).** Agregar a `config/env.ts` (plantilla `LIVEKIT_*` opcional):
+  `GOOGLE_CLIENT_ID?`, `GOOGLE_CLIENT_SECRET?` (+ `_FILE` docker-secret), `GOOGLE_REDIRECT_URI?`.
+  Helper `googleConfigured()` → gate de la feature.
+
+### Sync robusto
+- **Worker re-verifica ownership (MED7, defensa en profundidad).** El job trae `eventId`+`userId`; el
+  worker re-lee `CalendarEvent.findOne({_id, userId})` y la `GoogleConnection` del mismo `userId` — nunca
+  cruza usuarios aunque el payload venga mal.
+- **`withLock('gcal:'+eventId)` con timeout (LOW12).** Serializa ediciones concurrentes del mismo evento;
+  timeout acotado (p.ej. 15s) para no colgar el worker si Google tarda; ante timeout → reintento por la cola.
+- **Access token revocado ≠ refresh revocado.** Si una llamada da 401 → intentar refresh; si el refresh da
+  `invalid_grant` → `status:'error'`, la UI pide reconectar (no reintentar en loop).
+
+### UI / backfill (LOW11)
+- Estados explícitos: **cargando** (spinner), **no disponible** (operador no configuró Google), **desconectado**
+  (botón Conectar), **conectado** (email + últimos sync), **error** (mensaje + Reconectar/Reintentar).
+- **Backfill:** v1 sincroniza eventos **de ahí en adelante** (al crear/editar). Los eventos previos NO se
+  empujan automáticamente al conectar (evita una avalancha + sorpresas). Opción explícita "Sincronizar
+  eventos existentes" = fase posterior / acción manual acotada. Documentado como limitación conocida.
+
+## §Estado del gate
+Arquitectura APROBADA (servicios Google desacoplados, cola+reconciler, cifrado reutilizado, feature-gate
+self-hosted, recomendación bidireccional). Con §Hardening incorporado (state single-use+PKCE, googleEventId
+por _id, delete con tombstone, conexión por-usuario, worker re-verifica ownership) se cierran los HIGH/MED
+de D. Sugerido: re-check de D sobre v2 antes de G1.
