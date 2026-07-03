@@ -5,6 +5,7 @@ import {
   renderSignature,
   minimalPlainSignature,
   SIGNATURE_TEMPLATES,
+  isValidTemplateId,
   type SignatureContext,
 } from '../lib/signature-templates.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
@@ -92,6 +93,7 @@ function signatureContext(
     companyName: branding.companyName,
     tagline: branding.tagline,
     logoUrl: branding.logoDataUrl,
+    logoVerticalUrl: branding.logoVerticalDataUrl,
     logoWidthPx: branding.logoWidthPx,
     domainUrl: branding.domainUrl,
     companyPhone: branding.phone,
@@ -130,6 +132,28 @@ export async function renderAllTemplates(
       return { id: t.id, nameKey: t.nameKey, html };
     })
   );
+}
+
+/**
+ * Preview EN VIVO del editor del admin: rendiza `templateId` con el branding guardado MÁS overrides sin
+ * persistir (color, logos, tagline, empresa) para ver los cambios mientras se editan. NO externaliza las
+ * imágenes (el logo data: se muestra inline en el browser del admin; sólo el envío las hostea) → sin
+ * crear imágenes por cada tecla. Fail-open a ''.
+ */
+export async function renderDraftPreview(
+  user: SignatureUser,
+  templateId: string,
+  draft: Partial<BrandingConfig>,
+  baseUrl: string
+): Promise<string> {
+  const branding = { ...(await getBranding()), ...draft };
+  const id = isValidTemplateId(templateId) ? templateId : SIGNATURE_TEMPLATES[0].id;
+  try {
+    const ctx = signatureContext(user, branding, true, baseUrl);
+    return sanitizeEmailHtml(renderSignature(id, ctx));
+  } catch {
+    return '';
+  }
 }
 
 export async function renderPreview(

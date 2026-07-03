@@ -41,7 +41,7 @@ import {
   SignaturePolicyError,
 } from '../services/signature-policy.js';
 import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
-import { renderAllTemplates } from '../services/user-signature.js';
+import { renderAllTemplates, renderDraftPreview } from '../services/user-signature.js';
 import { env } from '../config/env.js';
 import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
@@ -81,6 +81,7 @@ const brandingSchema = z
     accentColor: z.string().regex(HEX, 'color inválido').optional(),
     // '' o null LIMPIAN el logo; un data URL válido lo fija; ausente = no tocar.
     logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+    logoVerticalDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
     // ── Branding extendido (F1) — alimenta los templates de firma ──
     domainUrl: httpUrlOrClear,
     phone: z.union([z.string().trim().max(40), z.null()]).optional(),
@@ -720,6 +721,38 @@ export default function adminRoutes(fastify: FastifyInstance) {
       const user = await User.findById(request.user.userId).lean();
       if (!user) return { previews: [] };
       return { previews: await renderAllTemplates(user, env.FRONTEND_URL) };
+    }
+  );
+
+  // Preview EN VIVO del editor: rendiza un template con overrides de branding SIN guardar (para ver
+  // color/logo/tagline mientras se editan). Devuelve `{ html }` saneado.
+  const signaturePreviewSchema = z
+    .object({
+      templateId: z.string().max(60),
+      accentColor: z.string().regex(HEX, 'color inválido').optional(),
+      companyName: z.string().trim().max(60).optional(),
+      tagline: z.string().trim().max(80).optional(),
+      logoDataUrl: z.union([logoDataUrl, z.literal('')]).optional(),
+      logoVerticalDataUrl: z.union([logoDataUrl, z.literal('')]).optional(),
+    })
+    .strict();
+  fastify.post(
+    '/config/signature-preview',
+    { config: { permission: 'branding.manage' } },
+    async (request) => {
+      const b = signaturePreviewSchema.parse(request.body);
+      const user = await User.findById(request.user.userId).lean();
+      if (!user) return { html: '' };
+      const draft = {
+        ...(b.accentColor !== undefined ? { accentColor: b.accentColor } : {}),
+        ...(b.companyName !== undefined ? { companyName: b.companyName } : {}),
+        ...(b.tagline !== undefined ? { tagline: b.tagline } : {}),
+        ...(b.logoDataUrl !== undefined ? { logoDataUrl: b.logoDataUrl || undefined } : {}),
+        ...(b.logoVerticalDataUrl !== undefined
+          ? { logoVerticalDataUrl: b.logoVerticalDataUrl || undefined }
+          : {}),
+      };
+      return { html: await renderDraftPreview(user, b.templateId, draft, env.FRONTEND_URL) };
     }
   );
 

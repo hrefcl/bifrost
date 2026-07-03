@@ -32,7 +32,8 @@ export interface BrandingConfig {
   companyName?: string;
   tagline?: string;
   accentColor?: string;
-  logoDataUrl?: string;
+  logoDataUrl?: string; // logo HORIZONTAL (data URL). El principal para firmas y login.
+  logoVerticalDataUrl?: string; // logo VERTICAL (data URL). Para layouts apilados/centrados.
   // ── Branding extendido (F1, alimenta los templates de firma white-label) ──
   domainUrl?: string; // URL http(s) del sitio (CTA de la firma)
   phone?: string; // teléfono corporativo
@@ -53,6 +54,7 @@ export interface BrandingInput {
   tagline?: string;
   accentColor?: string;
   logoDataUrl?: string | null;
+  logoVerticalDataUrl?: string | null;
   domainUrl?: string | null;
   phone?: string | null;
   address?: string | null;
@@ -68,6 +70,7 @@ export interface PublicBranding {
   tagline: string | null;
   accentColor: string | null;
   logoDataUrl: string | null;
+  logoVerticalDataUrl: string | null;
   domainUrl: string | null;
   phone: string | null;
   address: string | null;
@@ -96,6 +99,7 @@ export function toPublicBranding(cfg: BrandingConfig): PublicBranding {
     tagline: cfg.tagline ?? null,
     accentColor: cfg.accentColor ?? null,
     logoDataUrl: cfg.logoDataUrl ?? null,
+    logoVerticalDataUrl: cfg.logoVerticalDataUrl ?? null,
     domainUrl: cfg.domainUrl ?? null,
     phone: cfg.phone ?? null,
     address: cfg.address ?? null,
@@ -131,6 +135,8 @@ export async function setBranding(
   if (input.tagline !== undefined) value.tagline = nonEmpty(input.tagline);
   if (input.accentColor !== undefined) value.accentColor = nonEmpty(input.accentColor);
   if (input.logoDataUrl !== undefined) value.logoDataUrl = nonEmpty(input.logoDataUrl);
+  if (input.logoVerticalDataUrl !== undefined)
+    value.logoVerticalDataUrl = nonEmpty(input.logoVerticalDataUrl);
   if (input.domainUrl !== undefined) value.domainUrl = nonEmpty(input.domainUrl);
   if (input.phone !== undefined) value.phone = nonEmpty(input.phone);
   if (input.address !== undefined) value.address = nonEmpty(input.address);
