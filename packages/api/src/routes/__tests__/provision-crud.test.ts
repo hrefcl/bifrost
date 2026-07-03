@@ -272,6 +272,61 @@ describe('provision CRUD', () => {
     expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('hi@cleverty.info|');
   });
 
+  it('HIGH-2 (B): partial-suspend → cambiar password → reactivar aplica el hash NUEVO (no el viejo vivo)', async () => {
+    await create('cv@cleverty.info', { password: 'vieja' });
+    const hOld = (await fs.readFile(accountsFile, 'utf8')).match(/cv@cleverty\.info\|(\S+)/)?.[1];
+    // suspend con delete fallido → la línea vieja sigue VIVA y provisionSuspendedLine queda seteado.
+    const spy = vi
+      .spyOn(DockerMailserverProvider.prototype, 'deleteMailbox')
+      .mockRejectedValueOnce(new Error('down'));
+    const s = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/cv%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    expect(s.statusCode).toBe(502);
+    spy.mockRestore();
+    // cambiar password en ese estado parcial → reescribe el hash guardado (200, no 502).
+    const pw = await app.inject({
+      method: 'PUT',
+      url: '/api/provision/mailboxes/cv%40cleverty.info/password',
+      headers: H(),
+      payload: { password: 'nueva-clave-xyz' },
+    });
+    expect(pw.statusCode).toBe(200);
+    // reactivar → addRawLine debe REEMPLAZAR la línea vieja por el hash nuevo (convergencia real).
+    const r = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/cv%40cleverty.info',
+      headers: H(),
+      payload: { active: true },
+    });
+    expect(r.statusCode).toBe(200);
+    const hNew = (await fs.readFile(accountsFile, 'utf8')).match(/cv@cleverty\.info\|(\S+)/)?.[1];
+    expect(hNew).toBeTruthy();
+    expect(hNew).not.toBe(hOld); // la password VIEJA no quedó vigente
+  });
+
+  it('doble suspend es idempotente (segundo PATCH active:false → 200, sigue suspendido)', async () => {
+    await create('ds@cleverty.info');
+    await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/ds%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    const second = await app.inject({
+      method: 'PATCH',
+      url: '/api/provision/mailboxes/ds%40cleverty.info',
+      headers: H(),
+      payload: { active: false },
+    });
+    expect(second.statusCode).toBe(200);
+    expect(second.json().status).toBe('suspended');
+    expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('ds@cleverty.info|');
+  });
+
   it('MED-5: un alias que ya pertenece a otro buzón → 409 (unicidad global)', async () => {
     await create('uno@cleverty.info');
     await create('dos@cleverty.info');

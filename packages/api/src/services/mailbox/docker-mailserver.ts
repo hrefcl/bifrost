@@ -122,13 +122,21 @@ export class DockerMailserverProvider implements MailboxProvider {
     return `${email.trim().toLowerCase()}|${hashPassword(password)}`;
   }
 
-  /** Restaura una línea cruda `email|hash` (para reactivar un buzón suspendido sin perder la password). */
+  /** Asegura que la línea cruda `email|hash` EXACTA esté presente (reactivar un buzón suspendido sin
+   *  perder la password). Si ya hay una línea para ese email con distinto hash, la REEMPLAZA: la línea
+   *  guardada es la fuente de verdad al reactivar (Bifrost es la autoridad). Idempotente por línea exacta. */
   async addRawLine(rawLine: string): Promise<void> {
     const target = emailOf(rawLine);
+    const clean = rawLine.trim();
     await this.withLock(async () => {
       const lines = await this.readLines();
-      if (lines.some((l) => emailOf(l) === target)) return; // ya activo, idempotente
-      lines.push(rawLine.trim());
+      const idx = lines.findIndex((l) => emailOf(l) === target);
+      if (idx >= 0) {
+        if (lines[idx] === clean) return; // ya exacta → no reescribir
+        lines[idx] = clean; // reemplaza el hash viejo por el guardado (convergencia real)
+      } else {
+        lines.push(clean);
+      }
       await this.writeLines(lines);
     });
   }
