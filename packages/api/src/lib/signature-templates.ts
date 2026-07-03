@@ -22,6 +22,7 @@ export interface SignatureContext {
   companyName?: string;
   tagline?: string;
   logoUrl?: string;
+  logoVerticalUrl?: string;
   logoWidthPx?: number;
   domainUrl?: string;
   companyPhone?: string;
@@ -188,6 +189,14 @@ function logo(ctx: SignatureContext, w?: number): string {
     `width:${String(w ?? ctx.logoWidthPx ?? 130)}px;height:auto;display:block`
   );
 }
+/** Logo VERTICAL (para layouts apilados/centrados); cae al horizontal si no hay vertical. */
+function logoV(ctx: SignatureContext, w?: number): string {
+  return img(
+    ctx.logoVerticalUrl ?? ctx.logoUrl,
+    ctx.companyName ?? '',
+    `width:${String(w ?? 90)}px;height:auto;display:block;margin:0 auto`
+  );
+}
 function cleanHost(url: string | undefined): string {
   try {
     return new URL((url ?? '').trim()).host.replace(/^www\./, '');
@@ -253,8 +262,10 @@ function tarjeta(ctx: SignatureContext): string {
 function centrada(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const social = socialButtons(ctx);
+  const vlogo = logoV(ctx, 90);
   return (
     `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};text-align:center"><tr><td align="center">` +
+    (vlogo ? `<div style="margin-bottom:8px">${vlogo}</div>` : '') +
     `<div>${avatar(ctx, ac, 64)}</div>` +
     `<div style="margin-top:8px">${nameBlock(ctx, ac)}</div>` +
     `<div style="margin-top:6px;color:${MUTED};font-size:13px">` +
