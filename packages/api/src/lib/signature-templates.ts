@@ -104,6 +104,14 @@ export interface SignatureStyle {
   order?: SignatureFieldKey[];
   /** Redes como iconos (true) o sin iconos/texto (false). Default true. */
   socialAsIcons?: boolean;
+  /** Ancho del logo en px (override del default por template). */
+  logoWidthPx?: number;
+  /** Alineación horizontal del logo dentro de su celda. */
+  logoAlign?: 'left' | 'center' | 'right';
+  /** Padding (margen) alrededor del logo en px. */
+  logoPaddingPx?: number;
+  /** Padding (margen) alrededor de la foto/avatar en px. */
+  photoPaddingPx?: number;
 }
 
 export interface SignatureTemplate {
@@ -163,6 +171,24 @@ function photoSize(ctx: SignatureContext, deflt: number): number {
   return typeof n === 'number' && Number.isFinite(n) && n > 0
     ? Math.min(Math.max(Math.round(n), 24), 160)
     : deflt;
+}
+/** Ancho del logo en px: style.logoWidthPx > ctx.logoWidthPx > default (acotado 40–400). */
+function logoWidthOf(ctx: SignatureContext, deflt: number): number {
+  const w = styleOf(ctx).logoWidthPx ?? ctx.logoWidthPx;
+  return typeof w === 'number' && Number.isFinite(w) && w > 0
+    ? Math.min(Math.max(Math.round(w), 40), 400)
+    : deflt;
+}
+/** Fragmento CSS `padding:Npx;` acotado 0–60 (o '' si no aplica). */
+function padCss(px: number | undefined): string {
+  return typeof px === 'number' && Number.isFinite(px) && px > 0
+    ? `padding:${String(Math.min(Math.round(px), 60))}px;`
+    : '';
+}
+/** Envuelve la foto/avatar en un contenedor con padding si el estilo lo pide. */
+function withPhotoPad(ctx: SignatureContext, html: string): string {
+  const pad = padCss(styleOf(ctx).photoPaddingPx);
+  return pad && html ? `<div style="${pad}display:inline-block">${html}</div>` : html;
 }
 /** Orden de la columna de datos según el drag-and-drop; los no listados van al final en orden natural. */
 function orderedStack(ctx: SignatureContext): StackField[] {
@@ -248,11 +274,12 @@ function avatar(ctx: SignatureContext, ac: string, size = 72): string {
     ctx.displayName,
     `width:${s}px;height:${s}px;border-radius:50%;object-fit:cover;display:block`
   );
-  if (photo) return photo;
+  if (photo) return withPhotoPad(ctx, photo);
   const ini = esc(initials(ctx.displayName));
-  return (
+  return withPhotoPad(
+    ctx,
     `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:${ac}">` +
-    `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${ini}</td></tr></table>`
+      `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${ini}</td></tr></table>`
   );
 }
 
@@ -274,9 +301,10 @@ function ringedAvatar(ctx: SignatureContext, ac: string, size = 76): string {
     photo ||
     `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:#eef1f6">` +
       `<tr><td align="center" valign="middle" style="color:#8a94a6;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${esc(initials(ctx.displayName))}</td></tr></table>`;
-  return (
+  return withPhotoPad(
+    ctx,
     `<table cellpadding="0" cellspacing="0" style="border-radius:50%;background-color:${ac}">` +
-    `<tr><td style="padding:3px"><table cellpadding="0" cellspacing="0" style="border-radius:50%;background:#fff"><tr><td style="padding:2px">${inner}</td></tr></table></td></tr></table>`
+      `<tr><td style="padding:3px"><table cellpadding="0" cellspacing="0" style="border-radius:50%;background:#fff"><tr><td style="padding:2px">${inner}</td></tr></table></td></tr></table>`
   );
 }
 
@@ -424,26 +452,30 @@ function fieldStack(ctx: SignatureContext, ac: string, opts?: StackOpts): string
   // Alineación: centra el stack (los contactBlock ya se auto-centran con margin:0 auto).
   return styleOf(ctx).align === 'center' ? `<div style="text-align:center">${html}</div>` : html;
 }
-/** Ancho en px SEGURO: entero acotado 1–1000. Si el valor no es un número finito (llamada directa fuera
- *  del schema Zod del admin), cae al default → nunca produce `width:130pxpx` ni rompe el atributo. */
-function pxWidth(v: unknown, fallback: number): number {
-  const n = typeof v === 'number' ? v : Number(v);
-  return Number.isFinite(n) && n > 0 ? Math.min(Math.round(n), 1000) : fallback;
-}
 function logo(ctx: SignatureContext, w?: number): string {
-  return img(
+  const im = img(
     ctx.logoUrl,
     ctx.companyName ?? '',
-    `width:${String(pxWidth(w ?? ctx.logoWidthPx, 130))}px;height:auto;display:block`
+    `width:${String(logoWidthOf(ctx, w ?? 130))}px;height:auto;display:inline-block;border:0`
   );
+  if (!im) return '';
+  const align = styleOf(ctx).logoAlign;
+  const pad = padCss(styleOf(ctx).logoPaddingPx);
+  return align || pad
+    ? `<div style="line-height:0;${align ? `text-align:${align};` : ''}${pad}">${im}</div>`
+    : im;
 }
 /** Logo VERTICAL (para layouts apilados/centrados); cae al horizontal si no hay vertical. */
 function logoV(ctx: SignatureContext, w?: number): string {
-  return img(
+  const im = img(
     ctx.logoVerticalUrl ?? ctx.logoUrl,
     ctx.companyName ?? '',
-    `width:${String(pxWidth(w, 90))}px;height:auto;display:block;margin:0 auto`
+    `width:${String(logoWidthOf(ctx, w ?? 90))}px;height:auto;display:inline-block;border:0`
   );
+  if (!im) return '';
+  const align = styleOf(ctx).logoAlign ?? 'center';
+  const pad = padCss(styleOf(ctx).logoPaddingPx);
+  return `<div style="line-height:0;text-align:${align};${pad}">${im}</div>`;
 }
 function cleanHost(url: string | undefined): string {
   try {

@@ -101,6 +101,10 @@ const signatureStyleSchema = z
     hidden: z.array(z.enum(SIG_FIELD_KEYS)).max(10).optional(),
     order: z.array(z.enum(SIG_FIELD_KEYS)).max(10).optional(),
     socialAsIcons: z.boolean().optional(),
+    logoWidthPx: z.number().int().min(40).max(400).optional(),
+    logoAlign: z.enum(['left', 'center', 'right']).optional(),
+    logoPaddingPx: z.number().int().min(0).max(60).optional(),
+    photoPaddingPx: z.number().int().min(0).max(60).optional(),
   })
   .strict();
 

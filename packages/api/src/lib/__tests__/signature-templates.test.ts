@@ -233,6 +233,26 @@ describe('signature-templates (F2)', () => {
     }
   });
 
+  it('controles de logo (tamaño/alineación/padding) y padding de foto se aplican', () => {
+    const html = renderSignature('corporativa', {
+      ...base,
+      logoUrl: '/api/signature-images/0123456789abcdef01234567',
+      style: { logoWidthPx: 210, logoAlign: 'right', logoPaddingPx: 12, photoPaddingPx: 9 },
+    });
+    expect(html).toContain('width:210px'); // tamaño del logo override
+    expect(html).toContain('text-align:right'); // alineación del logo
+    expect(html).toContain('padding:12px'); // padding del logo
+    expect(html).toContain('padding:9px'); // padding de la foto/avatar
+    // acotados: valores fuera de rango caen al clamp
+    const clamped = renderSignature('corporativa', {
+      ...base,
+      logoUrl: '/api/signature-images/0123456789abcdef01234567',
+      style: { logoWidthPx: 9999, logoPaddingPx: 999 },
+    });
+    expect(clamped).toContain('width:400px'); // 40–400
+    expect(clamped).toContain('padding:60px'); // 0–60
+  });
+
   it('order duplicado no rinde el campo dos veces (dedup)', () => {
     const html = renderSignature('clasica', {
       ...base,

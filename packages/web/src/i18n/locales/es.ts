@@ -309,6 +309,11 @@ export default {
       styleAlign: 'Alineación',
       alignLeft: 'Izquierda',
       alignCenter: 'Centro',
+      alignRight: 'Derecha',
+      stylePhotoPad: 'Padding de foto',
+      styleLogoSize: 'Tamaño de logo',
+      styleLogoAlign: 'Alineación de logo',
+      styleLogoPad: 'Padding de logo',
       styleSep: 'Separador',
       styleFields: 'Mostrar y ordenar campos',
       styleFieldsHint:

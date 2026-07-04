@@ -80,6 +80,10 @@ const sig = ref<{
   hidden: FieldKey[];
   order: FieldKey[];
   socialAsIcons: boolean;
+  logoWidthPx: number;
+  logoAlign: 'left' | 'center' | 'right';
+  logoPaddingPx: number;
+  photoPaddingPx: number;
 }>({
   fontFamily: 'Arial',
   photoSizePx: 68,
@@ -88,7 +92,15 @@ const sig = ref<{
   hidden: [],
   order: [...STACK_DEFAULT],
   socialAsIcons: true,
+  logoWidthPx: 130,
+  logoAlign: 'left',
+  logoPaddingPx: 0,
+  photoPaddingPx: 0,
 });
+function setLogoAlign(a: 'left' | 'center' | 'right') {
+  saved.value = false;
+  sig.value.logoAlign = a;
+}
 
 const isFieldOn = (f: FieldKey) => !sig.value.hidden.includes(f);
 function toggleField(f: FieldKey) {
@@ -168,6 +180,10 @@ async function load() {
           hidden?: FieldKey[];
           order?: FieldKey[];
           socialAsIcons?: boolean;
+          logoWidthPx?: number;
+          logoAlign?: 'left' | 'center' | 'right';
+          logoPaddingPx?: number;
+          photoPaddingPx?: number;
         } | null;
       }>('/admin/config/branding'),
     ]);
@@ -197,6 +213,10 @@ async function load() {
         hidden: (st.hidden ?? []).filter((k) => !ALWAYS_ON.includes(k)),
         order,
         socialAsIcons: st.socialAsIcons ?? true,
+        logoWidthPx: Math.min(Math.max(st.logoWidthPx ?? 130, 40), 400),
+        logoAlign: st.logoAlign ?? 'left',
+        logoPaddingPx: Math.min(Math.max(st.logoPaddingPx ?? 0, 0), 60),
+        photoPaddingPx: Math.min(Math.max(st.photoPaddingPx ?? 0, 0), 60),
       };
     }
     selectedId.value = policy.value.allowedTemplateIds.at(0) ?? templates.value.at(0)?.id ?? '';
@@ -479,6 +499,67 @@ onMounted(load);
               type="range"
               min="24"
               max="160"
+              class="range"
+              @input="saved = false"
+            />
+          </div>
+
+          <!-- PADDING DE FOTO -->
+          <div class="ctl">
+            <span class="ctl-h"
+              >{{ t('admin.signatures.stylePhotoPad') }}
+              <b class="val">{{ sig.photoPaddingPx }} px</b></span
+            >
+            <input
+              v-model.number="sig.photoPaddingPx"
+              type="range"
+              min="0"
+              max="60"
+              class="range"
+              @input="saved = false"
+            />
+          </div>
+
+          <!-- LOGO: tamaño, alineación, padding -->
+          <div class="ctl">
+            <span class="ctl-h"
+              >{{ t('admin.signatures.styleLogoSize') }}
+              <b class="val">{{ sig.logoWidthPx }} px</b></span
+            >
+            <input
+              v-model.number="sig.logoWidthPx"
+              type="range"
+              min="40"
+              max="400"
+              class="range"
+              @input="saved = false"
+            />
+          </div>
+          <div class="ctl">
+            <span class="ctl-h">{{ t('admin.signatures.styleLogoAlign') }}</span>
+            <div class="chips">
+              <button
+                v-for="a in ['left', 'center', 'right'] as const"
+                :key="a"
+                type="button"
+                class="chip"
+                :class="{ on: sig.logoAlign === a }"
+                @click="setLogoAlign(a)"
+              >
+                {{ t('admin.signatures.align' + a[0].toUpperCase() + a.slice(1)) }}
+              </button>
+            </div>
+          </div>
+          <div class="ctl">
+            <span class="ctl-h"
+              >{{ t('admin.signatures.styleLogoPad') }}
+              <b class="val">{{ sig.logoPaddingPx }} px</b></span
+            >
+            <input
+              v-model.number="sig.logoPaddingPx"
+              type="range"
+              min="0"
+              max="60"
               class="range"
               @input="saved = false"
             />
