@@ -17,9 +17,18 @@ import {
   resetState,
   buildTestApp,
 } from '../../../test/integration-helper.js';
+import bcrypt from 'bcryptjs';
 import { setMailboxConfig } from '../../services/mailbox/index.js';
 import { DockerMailserverProvider } from '../../services/mailbox/docker-mailserver.js';
 import { Account } from '../../models/Account.js';
+
+/** Verifica que `password` autentica contra la línea `email|{BLF-CRYPT}$2y$...` del accounts.cf. */
+function passwordMatches(accountsContent: string, email: string, password: string): boolean {
+  const raw = accountsContent.match(new RegExp(`${email.replace('.', '\\.')}\\|(\\S+)`))?.[1];
+  if (!raw) return false;
+  const hash = raw.replace('{BLF-CRYPT}', '').replace(/^\$2y\$/, '$2a$');
+  return bcrypt.compareSync(password, hash);
+}
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -303,9 +312,13 @@ describe('provision CRUD', () => {
       payload: { active: true },
     });
     expect(r.statusCode).toBe(200);
-    const hNew = (await fs.readFile(accountsFile, 'utf8')).match(/cv@cleverty\.info\|(\S+)/)?.[1];
+    const acct = await fs.readFile(accountsFile, 'utf8');
+    const hNew = acct.match(/cv@cleverty\.info\|(\S+)/)?.[1];
     expect(hNew).toBeTruthy();
-    expect(hNew).not.toBe(hOld); // la password VIEJA no quedó vigente
+    expect(hNew).not.toBe(hOld);
+    // La password NUEVA autentica y la VIEJA ya no (no basta con que el hash cambie).
+    expect(passwordMatches(acct, 'cv@cleverty.info', 'nueva-clave-xyz')).toBe(true);
+    expect(passwordMatches(acct, 'cv@cleverty.info', 'vieja')).toBe(false);
   });
 
   it('doble suspend es idempotente (segundo PATCH active:false → 200, sigue suspendido)', async () => {
