@@ -100,6 +100,8 @@ function signatureContext(
     address: branding.address,
     accentColor: branding.accentColor,
     socialLinks: branding.socialLinks,
+    appStoreUrl: branding.appStoreUrl,
+    googlePlayUrl: branding.googlePlayUrl,
     // Base para los iconos hosteados (`/sig-icons/*.png`). En email deben ser URLs absolutas.
     assetBase: baseUrl,
   };

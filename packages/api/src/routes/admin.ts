@@ -102,6 +102,8 @@ const brandingSchema = z
       .strict()
       .nullable()
       .optional(),
+    appStoreUrl: httpUrlOrClear,
+    googlePlayUrl: httpUrlOrClear,
     logoWidthPx: z.union([z.number().int().min(40).max(400), z.null()]).optional(),
     lockAccentColor: z.boolean().optional(),
     // Estilo de iconos app-wide (weight de Phosphor). Enum cerrado → rechaza valores inválidos.

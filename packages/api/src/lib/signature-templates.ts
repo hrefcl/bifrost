@@ -28,6 +28,9 @@ export interface SignatureContext {
   companyPhone?: string;
   address?: string;
   accentColor?: string;
+  /** Links a las apps móviles de la empresa (badges App Store / Google Play en el template Cleverty). */
+  appStoreUrl?: string;
+  googlePlayUrl?: string;
   socialLinks?: {
     linkedin?: string;
     instagram?: string;
@@ -101,13 +104,22 @@ function icon(ctx: SignatureContext, name: string, size = 15): string {
   return `<img src="${base}/sig-icons/${name}.png" width="${String(size)}" height="${String(size)}" alt="" style="display:inline-block;vertical-align:middle;border:0" />`;
 }
 
-/** Fila de contacto: icono + texto (linkable). Devuelve '' si no hay valor. */
-function contactRow(ctx: SignatureContext, iconName: string, value: string, href?: string): string {
+/** Fila de contacto: icono + texto (linkable). Devuelve '' si no hay valor. `bold` = texto oscuro en
+ *  negrita (estilo Cleverty) en vez del gris atenuado por defecto. */
+function contactRow(
+  ctx: SignatureContext,
+  iconName: string,
+  value: string,
+  href?: string,
+  opts?: { bold?: boolean }
+): string {
   if (!value) return '';
   const ic = icon(ctx, iconName);
-  const cell = ic ? `<td style="padding:2px 8px 2px 0;line-height:1">${ic}</td>` : '';
-  const text = link(href, value, `color:${MUTED};text-decoration:none`);
-  return `<tr>${cell}<td style="padding:2px 0;color:${MUTED};font-size:13px;line-height:1.4">${text}</td></tr>`;
+  const cell = ic ? `<td style="padding:3px 8px 3px 0;line-height:1">${ic}</td>` : '';
+  const col = opts?.bold ? INK : MUTED;
+  const weight = opts?.bold ? 'font-weight:bold;' : '';
+  const text = link(href, value, `color:${col};text-decoration:none;${weight}`);
+  return `<tr>${cell}<td style="padding:3px 0;color:${col};font-size:13px;line-height:1.4;${weight}">${text}</td></tr>`;
 }
 
 /** Iniciales del nombre: primera + última (ej. "Valentina Ríos" → "VR"); una sola si es un solo nombre. */
@@ -133,6 +145,45 @@ function avatar(ctx: SignatureContext, ac: string, size = 72): string {
     `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:${ac}">` +
     `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${ini}</td></tr></table>`
   );
+}
+
+/** Avatar con ANILLO de acento (estilo Cleverty): foto/iniciales en círculo gris claro, dentro de un
+ *  anillo con gradiente acento→violeta. Adaptación email-safe: Gmail ignora `linear-gradient` en el borde,
+ *  así que el anillo usa `background-color:${ac}` (sólido de acento) de fallback + `background-image` con
+ *  el gradiente para los clientes que lo soportan. */
+function ringedAvatar(ctx: SignatureContext, ac: string, size = 76): string {
+  const s = String(size);
+  const photo = img(
+    ctx.photoUrl,
+    ctx.displayName,
+    `width:${s}px;height:${s}px;border-radius:50%;object-fit:cover;display:block`
+  );
+  const inner =
+    photo ||
+    `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:#eef1f6">` +
+      `<tr><td align="center" valign="middle" style="color:#8a94a6;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${esc(initials(ctx.displayName))}</td></tr></table>`;
+  return (
+    `<table cellpadding="0" cellspacing="0" style="border-radius:50%;background-color:${ac};background-image:linear-gradient(135deg,${ac},#7c3aed)">` +
+    `<tr><td style="padding:3px"><table cellpadding="0" cellspacing="0" style="border-radius:50%;background:#fff"><tr><td style="padding:2px">${inner}</td></tr></table></td></tr></table>`
+  );
+}
+
+/** Badges App Store / Google Play (template Cleverty): glifo hosteado + texto, linkeado. '' si no hay URLs. */
+function appBadges(ctx: SignatureContext): string {
+  const base = assetBase(ctx);
+  if (!base) return '';
+  const badge = (url: string | undefined, iconName: string, label: string): string => {
+    const href = safeUrl(url);
+    if (!href) return '';
+    return (
+      `<tr><td style="padding:3px 0"><a href="${href}" style="text-decoration:none;color:${INK};font-size:12px;font-weight:bold">` +
+      `<img src="${base}/sig-icons/${iconName}.png" width="14" height="14" alt="" style="border:0;vertical-align:middle;margin-right:6px" />${esc(label)}</a></td></tr>`
+    );
+  };
+  const rows =
+    badge(ctx.appStoreUrl, 'badge-apple', 'App Store') +
+    badge(ctx.googlePlayUrl, 'badge-googleplay', 'Google Play');
+  return rows ? `<table cellpadding="0" cellspacing="0">${rows}</table>` : '';
 }
 
 const SOCIAL_ORDER: [keyof NonNullable<SignatureContext['socialLinks']>, string][] = [
@@ -170,14 +221,20 @@ function role(ctx: SignatureContext): string {
     .join(' · ');
 }
 
-/** Bloque de contacto (filas con icono) reutilizable. */
-function contactTable(ctx: SignatureContext): string {
+/** Bloque de contacto (filas con icono) reutilizable. `bold` = texto oscuro (estilo Cleverty). */
+function contactTable(ctx: SignatureContext, opts?: { bold?: boolean }): string {
   const phone = ctx.personalPhone ?? ctx.companyPhone;
   const rows =
-    contactRow(ctx, 'icon-phone', phone ?? '', phone ? `tel:${phone}` : undefined) +
-    contactRow(ctx, 'icon-mail', ctx.email, `mailto:${ctx.email}`) +
-    contactRow(ctx, 'icon-web', ctx.domainUrl ? cleanHost(ctx.domainUrl) : '', ctx.domainUrl) +
-    contactRow(ctx, 'icon-location', ctx.address ?? '');
+    contactRow(ctx, 'icon-phone', phone ?? '', phone ? `tel:${phone}` : undefined, opts) +
+    contactRow(ctx, 'icon-mail', ctx.email, `mailto:${ctx.email}`, opts) +
+    contactRow(
+      ctx,
+      'icon-web',
+      ctx.domainUrl ? cleanHost(ctx.domainUrl) : '',
+      ctx.domainUrl,
+      opts
+    ) +
+    contactRow(ctx, 'icon-location', ctx.address ?? '', undefined, opts);
   return rows
     ? `<table cellpadding="0" cellspacing="0" style="margin-top:8px">${rows}</table>`
     : '';
@@ -334,6 +391,41 @@ function corporativa(ctx: SignatureContext): string {
   );
 }
 
+/** 7) Cleverty — avatar con anillo de acento + divisor, datos en negrita, y columna de marca a la
+ *  derecha (logo/empresa + tagline en versalitas + badges App Store/Google Play). Fiel a la firma de
+ *  referencia de Cleverty; el logo/tagline/URLs de apps salen del branding del admin. */
+function cleverty(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const lg = logo(ctx, 130);
+  const brand =
+    (lg ||
+      (ctx.companyName
+        ? `<div style="font-size:18px;font-weight:bold;color:${ac}">${esc(ctx.companyName)}</div>`
+        : '')) +
+    (ctx.tagline
+      ? `<div style="color:${FAINT};font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-top:4px">${esc(ctx.tagline)}</div>`
+      : '');
+  const badges = appBadges(ctx);
+  const rightCol =
+    brand || badges
+      ? `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:18px">${brand}${badges ? `<div style="margin-top:12px">${badges}</div>` : ''}</td>`
+      : '';
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<td style="padding-right:18px;vertical-align:middle">${ringedAvatar(ctx, ac, 76)}</td>` +
+    `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:18px;padding-right:18px">` +
+    `<div style="font-size:18px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>` +
+    (role(ctx)
+      ? `<div style="color:${MUTED};font-weight:bold;font-size:13px">${role(ctx)}</div>`
+      : '') +
+    contactTable(ctx, { bold: true }) +
+    socialButtons(ctx) +
+    `</td>` +
+    rightCol +
+    `</tr></table>`
+  );
+}
+
 export const SIGNATURE_TEMPLATES = [
   { id: 'clasica', nameKey: 'settings.signatureTpl.clasica', render: clasica },
   { id: 'moderna', nameKey: 'settings.signatureTpl.moderna', render: moderna },
@@ -341,6 +433,7 @@ export const SIGNATURE_TEMPLATES = [
   { id: 'tarjeta', nameKey: 'settings.signatureTpl.tarjeta', render: tarjeta },
   { id: 'centrada', nameKey: 'settings.signatureTpl.centrada', render: centrada },
   { id: 'corporativa', nameKey: 'settings.signatureTpl.corporativa', render: corporativa },
+  { id: 'cleverty', nameKey: 'settings.signatureTpl.cleverty', render: cleverty },
 ] as const satisfies readonly SignatureTemplate[];
 
 export type SignatureTemplateId = (typeof SIGNATURE_TEMPLATES)[number]['id'];

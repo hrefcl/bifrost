@@ -181,6 +181,34 @@ describe('signature-templates (F2)', () => {
     expect(one).toContain('>C<');
   });
 
+  it('cleverty: badges App Store/Google Play sólo con URLs válidas; sin URLs no aparecen', () => {
+    const withApps = renderSignature('cleverty', {
+      ...base,
+      assetBase: 'https://cdn.test',
+      appStoreUrl: 'https://apps.apple.com/app',
+      googlePlayUrl: 'https://play.google.com/app',
+    });
+    expect(withApps).toContain('/sig-icons/badge-apple.png');
+    expect(withApps).toContain('/sig-icons/badge-googleplay.png');
+    expect(withApps).toContain('App Store');
+    expect(withApps).toContain('Google Play');
+    // esquema peligroso → el badge no se renderiza (safeUrl)
+    const evil = renderSignature('cleverty', {
+      ...base,
+      assetBase: 'https://cdn.test',
+      appStoreUrl: 'javascript:alert(1)',
+    });
+    expect(evil).not.toContain('javascript:');
+    expect(evil).not.toContain('badge-apple.png'); // safeUrl rechazó → sin badge
+  });
+
+  it('cleverty está en el catálogo y rinde con las 2 iniciales', () => {
+    expect(SIGNATURE_TEMPLATE_IDS).toContain('cleverty');
+    const html = renderSignature('cleverty', { ...base, photoUrl: undefined });
+    expect(html).toContain('>AP<');
+    expect(sanitizeEmailHtml(html).length).toBeGreaterThan(50);
+  });
+
   it('corporativa: el tagline se muestra tanto con logo como sin logo (no se cae)', () => {
     // con logo (base tiene logoUrl) → tagline bajo el logo
     const withLogo = renderSignature('corporativa', { ...base, assetBase: 'https://cdn.test' });

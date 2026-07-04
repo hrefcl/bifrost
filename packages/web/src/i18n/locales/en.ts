@@ -552,6 +552,7 @@ export default {
       tarjeta: 'Card',
       centrada: 'Centered',
       corporativa: 'Corporate',
+      cleverty: 'Cleverty',
     },
     security: {
       title: 'Security',

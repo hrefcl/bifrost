@@ -494,6 +494,8 @@ const brandForm = ref({
   github: '',
   whatsapp: '',
   website: '',
+  appStoreUrl: '',
+  googlePlayUrl: '',
   logoWidthPx: 120,
   lockAccentColor: false,
   iconWeight: DEFAULT_ICON_WEIGHT,
@@ -515,6 +517,8 @@ async function loadBranding() {
       phone?: string | null;
       address?: string | null;
       socialLinks?: Record<string, string> | null;
+      appStoreUrl?: string | null;
+      googlePlayUrl?: string | null;
       logoWidthPx?: number | null;
       lockAccentColor?: boolean;
       iconWeight?: IconWeight;
@@ -534,6 +538,8 @@ async function loadBranding() {
     brandForm.value.github = data.socialLinks?.github ?? '';
     brandForm.value.whatsapp = data.socialLinks?.whatsapp ?? '';
     brandForm.value.website = data.socialLinks?.website ?? '';
+    brandForm.value.appStoreUrl = data.appStoreUrl ?? '';
+    brandForm.value.googlePlayUrl = data.googlePlayUrl ?? '';
     brandForm.value.logoWidthPx = data.logoWidthPx ?? 120;
     brandForm.value.lockAccentColor = data.lockAccentColor ?? false;
     brandForm.value.iconWeight = data.iconWeight ?? 'light';
@@ -589,6 +595,8 @@ async function saveBranding() {
       domainUrl: f.domainUrl.trim(),
       phone: f.phone.trim(),
       address: f.address.trim(),
+      appStoreUrl: f.appStoreUrl.trim(),
+      googlePlayUrl: f.googlePlayUrl.trim(),
       socialLinks: {
         linkedin: f.linkedin.trim(),
         instagram: f.instagram.trim(),
@@ -1455,6 +1463,22 @@ async function save() {
                     class="adminput"
                     type="url"
                     placeholder="https://…"
+                /></label>
+                <label class="fld"
+                  ><span>App Store (firma Cleverty)</span
+                  ><input
+                    v-model="brandForm.appStoreUrl"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://apps.apple.com/…"
+                /></label>
+                <label class="fld"
+                  ><span>Google Play (firma Cleverty)</span
+                  ><input
+                    v-model="brandForm.googlePlayUrl"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://play.google.com/…"
                 /></label>
               </div>
               <label class="fld check2">
