@@ -43,6 +43,67 @@ export interface SignatureContext {
   };
   /** Base pública para los assets de icono (`${assetBase}/sig-icons/*.png`). La setea el send-hook. */
   assetBase?: string;
+  /** Estilo componible elegido por el admin (qué campos, en qué orden, tipografía, foto, etc.). */
+  style?: SignatureStyle;
+}
+
+/** Campos que el admin puede mostrar/ocultar y/o reordenar en el editor de Estilo. `photo` sólo se
+ *  oculta (no va en el stack); `name`/`title` sólo se reordenan (no se ocultan); el resto ambas cosas. */
+export type SignatureFieldKey =
+  | 'photo'
+  | 'name'
+  | 'title'
+  | 'company'
+  | 'phone'
+  | 'email'
+  | 'website'
+  | 'address'
+  | 'tagline'
+  | 'social';
+
+/** Orden por default de la columna de datos (el drag-and-drop lo reordena). */
+export const STACK_FIELDS = [
+  'name',
+  'title',
+  'company',
+  'phone',
+  'email',
+  'website',
+  'address',
+  'tagline',
+  'social',
+] as const;
+export type StackField = (typeof STACK_FIELDS)[number];
+
+/** Fuentes email-safe ofrecidas por el editor → stack CSS con fallbacks. */
+export const FONT_STACKS: Record<string, string> = {
+  Arial: 'Arial, Helvetica, sans-serif',
+  Helvetica: 'Helvetica, Arial, sans-serif',
+  Georgia: 'Georgia, "Times New Roman", serif',
+  Verdana: 'Verdana, Geneva, sans-serif',
+  Trebuchet: '"Trebuchet MS", Helvetica, sans-serif',
+  Tahoma: 'Tahoma, Geneva, sans-serif',
+};
+
+/** Separadores permitidos (el editor ofrece · | – y "ninguno"). */
+export const SEPARATORS = ['·', '|', '–', ''] as const;
+
+/** Estilo componible de la firma (nivel empresa; lo setea el admin). Todo opcional → defaults sanos. */
+export interface SignatureStyle {
+  /** Clave de `FONT_STACKS` (Arial por default). */
+  fontFamily?: string;
+  /** Tamaño de la foto/avatar en px (default por template). */
+  photoSizePx?: number;
+  /** Alineación general del bloque. */
+  align?: 'left' | 'center';
+  /** Separador inline (uno de `SEPARATORS`; '·' por default, '' = ninguno). */
+  separator?: string;
+  /** Campos ocultos (toggles apagados en "MOSTRAR CAMPOS"). */
+  hidden?: SignatureFieldKey[];
+  /** Orden de los campos de CONTACTO (drag-and-drop). Los ausentes van al final en su orden natural. */
+  order?: SignatureFieldKey[];
+  /** Redes como iconos (true) o sin iconos/texto (false). Default true. */
+  socialAsIcons?: boolean;
 }
 
 export interface SignatureTemplate {
@@ -67,6 +128,49 @@ function assetBase(ctx: SignatureContext): string {
   // Escape-at-origin al 100%: aunque `assetBase` es server-trusted (lo setea el send-hook), se interpola
   // en atributos `src` → escaparlo cierra el principio sin excepciones (review B/C/D del render, LOW).
   return esc((ctx.assetBase ?? '').replace(/\/+$/, ''));
+}
+
+// ── estilo componible (editor de Estilo) ──
+function styleOf(ctx: SignatureContext): SignatureStyle {
+  return ctx.style ?? {};
+}
+/** ¿El campo está oculto por el toggle del admin? */
+function isHidden(ctx: SignatureContext, key: SignatureFieldKey): boolean {
+  return styleOf(ctx).hidden?.includes(key) ?? false;
+}
+/** Declaración `font-family:…` resuelta desde el estilo (fallback Arial); se pone en la tabla raíz. */
+function fontDecl(ctx: SignatureContext): string {
+  const key = styleOf(ctx).fontFamily;
+  const stack = (key ? FONT_STACKS[key] : undefined) ?? FONT_STACKS.Arial;
+  return `font-family:${stack}`;
+}
+/** Separador inline elegido (default '·'); '' = ninguno (se usa un espacio). */
+function sepChar(ctx: SignatureContext): string {
+  return styleOf(ctx).separator ?? '·';
+}
+/** Texto del separador ya escapado para intercalar (con espacios); si es '', sólo un espacio. */
+function sepText(ctx: SignatureContext): string {
+  const s = sepChar(ctx);
+  return s ? esc(` ${s} `) : ' ';
+}
+/** ¿Mostrar redes como iconos? (default sí). */
+function socialAsIcons(ctx: SignatureContext): boolean {
+  return styleOf(ctx).socialAsIcons ?? true;
+}
+/** Tamaño de foto/avatar en px: el del estilo (acotado 24–160) o el default del template. */
+function photoSize(ctx: SignatureContext, deflt: number): number {
+  const n = styleOf(ctx).photoSizePx;
+  return typeof n === 'number' && Number.isFinite(n) && n > 0
+    ? Math.min(Math.max(Math.round(n), 24), 160)
+    : deflt;
+}
+/** Orden de la columna de datos según el drag-and-drop; los no listados van al final en orden natural. */
+function orderedStack(ctx: SignatureContext): StackField[] {
+  const isStack = (k: SignatureFieldKey): k is StackField =>
+    (STACK_FIELDS as readonly SignatureFieldKey[]).includes(k);
+  const wanted = (styleOf(ctx).order ?? []).filter(isStack);
+  const seen = new Set<StackField>(wanted);
+  return [...wanted, ...STACK_FIELDS.filter((k) => !seen.has(k))];
 }
 
 /** `<a>` con URL validada; si el esquema no es seguro, cae a texto escapado (sin link). */
@@ -135,6 +239,8 @@ function initials(name: string): string {
 
 /** Avatar circular: foto si hay; si no, círculo con las iniciales (sin imagen, table-safe). */
 function avatar(ctx: SignatureContext, ac: string, size = 72): string {
+  if (isHidden(ctx, 'photo')) return '';
+  size = photoSize(ctx, size);
   const s = String(size);
   const photo = img(
     ctx.photoUrl,
@@ -155,6 +261,8 @@ function avatar(ctx: SignatureContext, ac: string, size = 72): string {
  *  `linear-gradient` se elimina antes de llegar al cliente. Por eso el anillo es un SÓLIDO de acento (lo
  *  más fiel que sobrevive el pipeline de email). */
 function ringedAvatar(ctx: SignatureContext, ac: string, size = 76): string {
+  if (isHidden(ctx, 'photo')) return '';
+  size = photoSize(ctx, size);
   const s = String(size);
   const photo = img(
     ctx.photoUrl,
@@ -200,64 +308,117 @@ const SOCIAL_ORDER: [keyof NonNullable<SignatureContext['socialLinks']>, string]
   ['website', 'social-web'],
 ];
 
-/** Botones de redes como iconos hosteados (glifo blanco sobre cuadrado de acento). */
+/** Botones de redes: iconos hosteados si `socialAsIcons`, o links de texto si no. Oculto si el toggle
+ *  "Redes sociales" está apagado. */
 function socialButtons(ctx: SignatureContext, size = 26): string {
+  if (isHidden(ctx, 'social')) return '';
   const base = assetBase(ctx);
   const s = ctx.socialLinks ?? {};
+  const asIcons = socialAsIcons(ctx);
+  const ac = color(ctx.accentColor);
   const items: string[] = [];
   for (const [key, iconName] of SOCIAL_ORDER) {
     const href = safeUrl(s[key]);
-    if (!href || !base) continue;
-    items.push(
-      `<a href="${href}" style="text-decoration:none;margin-right:6px;display:inline-block">` +
-        `<img src="${base}/sig-icons/${iconName}.png" width="${String(size)}" height="${String(size)}" alt="${esc(key)}" style="border:0;display:inline-block" /></a>`
-    );
+    if (!href) continue;
+    if (asIcons) {
+      if (!base) continue; // sin assetBase no hay icono hosteado
+      items.push(
+        `<a href="${href}" style="text-decoration:none;margin-right:6px;display:inline-block">` +
+          `<img src="${base}/sig-icons/${iconName}.png" width="${String(size)}" height="${String(size)}" alt="${esc(key)}" style="border:0;display:inline-block" /></a>`
+      );
+    } else {
+      // Sin iconos: links de texto con el nombre de la red.
+      items.push(
+        `<a href="${href}" style="color:${ac};text-decoration:none;font-size:12px;margin-right:10px">${esc(key)}</a>`
+      );
+    }
   }
   return items.length ? `<div style="margin-top:8px">${items.join('')}</div>` : '';
 }
 
-/** Línea "cargo · departamento". */
+/** Línea "cargo · departamento" (usa el separador elegido). */
 function role(ctx: SignatureContext): string {
   return [ctx.jobTitle, ctx.department]
     .filter((x): x is string => Boolean(x))
     .map(esc)
-    .join(' · ');
+    .join(sepText(ctx));
 }
 
-/** Bloque de contacto (filas con icono) reutilizable. `bold` = texto oscuro (estilo Cleverty). */
-function contactTable(ctx: SignatureContext, opts?: { bold?: boolean }): string {
-  const phone = ctx.personalPhone ?? ctx.companyPhone;
-  const rows =
-    contactRow(ctx, 'icon-phone', phone ?? '', phone ? `tel:${phone}` : undefined, opts) +
-    contactRow(ctx, 'icon-mail', ctx.email, `mailto:${ctx.email}`, opts) +
-    contactRow(
-      ctx,
-      'icon-web',
-      ctx.domainUrl ? cleanHost(ctx.domainUrl) : '',
-      ctx.domainUrl,
-      opts
-    ) +
-    contactRow(ctx, 'icon-location', ctx.address ?? '', undefined, opts);
-  return rows
-    ? `<table cellpadding="0" cellspacing="0" style="margin-top:8px">${rows}</table>`
-    : '';
+/** Un campo de contacto como bloque autónomo (icono + texto), para el stack ordenable. '' si no hay valor. */
+function contactBlock(
+  ctx: SignatureContext,
+  iconName: string,
+  value: string,
+  href?: string,
+  opts?: StackOpts
+): string {
+  if (!value) return '';
+  const r = contactRow(ctx, iconName, value, href, opts);
+  return r ? `<table cellpadding="0" cellspacing="0">${r}</table>` : '';
 }
 
-function nameBlock(ctx: SignatureContext, ac: string, opts?: { hideCompany?: boolean }): string {
-  return (
-    `<div style="font-size:17px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>` +
-    (role(ctx)
-      ? `<div style="color:${ac};font-weight:bold;font-size:13px">${role(ctx)}</div>`
-      : '') +
-    (!opts?.hideCompany && ctx.companyName
-      ? `<div style="color:${MUTED};font-size:13px">${esc(ctx.companyName)}</div>`
-      : '')
-  );
-}
 function quote(ctx: SignatureContext): string {
-  return ctx.tagline
+  return ctx.tagline && !isHidden(ctx, 'tagline')
     ? `<div style="margin-top:8px;color:${FAINT};font-style:italic;font-size:12px">“${esc(ctx.tagline)}”</div>`
     : '';
+}
+
+interface StackOpts {
+  bold?: boolean; // contacto en negrita oscura (Cleverty)
+  hideCompany?: boolean; // empresa mostrada en otra parte (letterhead / columna de marca)
+  nameSize?: number; // tamaño del nombre
+  titleColor?: string; // color del cargo
+  exclude?: StackField[]; // campos que este template rinde en su "chrome" (banda, header, etc.)
+}
+
+/** Rindió UN campo de la columna de datos, respetando visibilidad y estilo. */
+function renderField(ctx: SignatureContext, key: StackField, ac: string, opts?: StackOpts): string {
+  switch (key) {
+    case 'name':
+      return `<div style="font-size:${String(opts?.nameSize ?? 17)}px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>`;
+    case 'title':
+      return role(ctx)
+        ? `<div style="color:${opts?.titleColor ?? ac};font-weight:bold;font-size:13px">${role(ctx)}</div>`
+        : '';
+    case 'company':
+      return !isHidden(ctx, 'company') && !opts?.hideCompany && ctx.companyName
+        ? `<div style="color:${MUTED};font-size:13px">${esc(ctx.companyName)}</div>`
+        : '';
+    case 'phone': {
+      const p = ctx.personalPhone ?? ctx.companyPhone;
+      return isHidden(ctx, 'phone') || !p
+        ? ''
+        : contactBlock(ctx, 'icon-phone', p, `tel:${p}`, opts);
+    }
+    case 'email':
+      return isHidden(ctx, 'email')
+        ? ''
+        : contactBlock(ctx, 'icon-mail', ctx.email, `mailto:${ctx.email}`, opts);
+    case 'website':
+      return isHidden(ctx, 'website') || !ctx.domainUrl
+        ? ''
+        : contactBlock(ctx, 'icon-web', cleanHost(ctx.domainUrl), ctx.domainUrl, opts);
+    case 'address':
+      return isHidden(ctx, 'address') || !ctx.address
+        ? ''
+        : contactBlock(ctx, 'icon-location', ctx.address, undefined, opts);
+    case 'tagline':
+      return quote(ctx);
+    case 'social':
+      return socialButtons(ctx);
+    default:
+      return '';
+  }
+}
+
+/** Columna de datos COMPONIBLE: rinde los campos en el orden del admin (drag-and-drop), respetando los
+ *  toggles de visibilidad. Reemplaza la vieja composición fija nombre+contacto+eslogan+redes. */
+function fieldStack(ctx: SignatureContext, ac: string, opts?: StackOpts): string {
+  const ex = new Set(opts?.exclude ?? []);
+  return orderedStack(ctx)
+    .filter((k) => !ex.has(k))
+    .map((k) => renderField(ctx, k, ac, opts))
+    .join('');
 }
 /** Ancho en px SEGURO: entero acotado 1–1000. Si el valor no es un número finito (llamada directa fuera
  *  del schema Zod del admin), cae al default → nunca produce `width:130pxpx` ni rompe el atributo. */
@@ -294,9 +455,9 @@ function cleanHost(url: string | undefined): string {
 function clasica(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}"><tr>` +
     `<td style="padding-right:18px;vertical-align:top">${avatar(ctx, ac, 72)}</td>` +
-    `<td style="vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${quote(ctx)}${socialButtons(ctx)}</td>` +
+    `<td style="vertical-align:top">${fieldStack(ctx, ac)}</td>` +
     `</tr></table>`
   );
 }
@@ -305,10 +466,10 @@ function clasica(ctx: SignatureContext): string {
 function moderna(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}"><tr>` +
     `<td style="border-left:3px solid ${ac};padding-left:16px;vertical-align:top">` +
     (logo(ctx, 120) ? `<div style="margin-bottom:8px">${logo(ctx, 120)}</div>` : '') +
-    `${nameBlock(ctx, ac)}${contactTable(ctx)}${quote(ctx)}${socialButtons(ctx)}` +
+    fieldStack(ctx, ac) +
     `</td></tr></table>`
   );
 }
@@ -319,24 +480,26 @@ function minimalista(ctx: SignatureContext): string {
   const parts = [
     `<strong>${esc(ctx.displayName)}</strong>`,
     role(ctx),
-    ctx.companyName
+    !isHidden(ctx, 'company') && ctx.companyName
       ? `<span style="color:${ac};font-weight:bold">${esc(ctx.companyName)}</span>`
       : '',
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
-    ctx.domainUrl
+    isHidden(ctx, 'email')
+      ? ''
+      : link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
+    !isHidden(ctx, 'website') && ctx.domainUrl
       ? link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)
       : '',
   ].filter(Boolean);
-  return `<div style="${FONT};font-size:13px;color:${INK}">${parts.join(esc(' · '))}</div>`;
+  return `<div style="${fontDecl(ctx)};font-size:13px;color:${INK}">${parts.join(sepText(ctx))}</div>`;
 }
 
 /** 4) Tarjeta — bloque con borde y fondo suave, avatar + datos + redes. */
 function tarjeta(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px;background:#fafbfc"><tr>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK};border:1px solid #e5e7eb;border-radius:10px;background:#fafbfc"><tr>` +
     `<td style="padding:16px 18px;vertical-align:top">${avatar(ctx, ac, 56)}</td>` +
-    `<td style="padding:16px 18px 16px 0;vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    `<td style="padding:16px 18px 16px 0;vertical-align:top">${fieldStack(ctx, ac)}</td>` +
     `</tr></table>`
   );
 }
@@ -347,10 +510,10 @@ function centrada(ctx: SignatureContext): string {
   const social = socialButtons(ctx);
   const vlogo = logoV(ctx, 90);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};text-align:center"><tr><td align="center">` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK};text-align:center"><tr><td align="center">` +
     (vlogo ? `<div style="margin-bottom:8px">${vlogo}</div>` : '') +
     `<div>${avatar(ctx, ac, 64)}</div>` +
-    `<div style="margin-top:8px">${nameBlock(ctx, ac)}</div>` +
+    `<div style="margin-top:8px">${renderField(ctx, 'name', ac)}${renderField(ctx, 'title', ac)}${renderField(ctx, 'company', ac)}</div>` +
     `<div style="margin-top:6px;color:${MUTED};font-size:13px">` +
     link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
     (ctx.domainUrl
@@ -384,12 +547,12 @@ function corporativa(ctx: SignatureContext): string {
         `</td></tr>`
       : '';
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}">` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}">` +
     header +
     `<tr><td style="padding-top:14px">` +
     `<table cellpadding="0" cellspacing="0"><tr>` +
     `<td style="padding-right:16px;vertical-align:top">${avatar(ctx, ac, 60)}</td>` +
-    `<td style="vertical-align:top">${nameBlock(ctx, ac, { hideCompany: companyInHeader })}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    `<td style="vertical-align:top">${fieldStack(ctx, ac, { hideCompany: companyInHeader })}</td>` +
     `</tr></table></td></tr></table>`
   );
 }
@@ -414,15 +577,16 @@ function cleverty(ctx: SignatureContext): string {
       ? `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:18px">${brand}${badges ? `<div style="margin-top:12px">${badges}</div>` : ''}</td>`
       : '';
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}"><tr>` +
     `<td style="padding-right:18px;vertical-align:middle">${ringedAvatar(ctx, ac, 76)}</td>` +
     `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:18px;padding-right:18px">` +
     `<div style="font-size:18px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>` +
     (role(ctx)
       ? `<div style="color:${MUTED};font-weight:bold;font-size:13px">${role(ctx)}</div>`
       : '') +
-    contactTable(ctx, { bold: true }) +
-    socialButtons(ctx) +
+    // Contactos (en negrita) + redes, en el orden del admin. Nombre/cargo van arriba; empresa/tagline
+    // viven en la columna de marca de la derecha, por eso se excluyen del stack.
+    fieldStack(ctx, ac, { bold: true, exclude: ['name', 'title', 'company', 'tagline'] }) +
     `</td>` +
     rightCol +
     `</tr></table>`
@@ -436,12 +600,13 @@ function banner(ctx: SignatureContext): string {
   return (
     // Sin overflow:hidden (el sanitizer lo descarta): la banda redondea sus PROPIAS esquinas superiores,
     // así el redondeo es robusto aunque el clip del contenedor no exista.
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px">` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK};border:1px solid #e5e7eb;border-radius:10px">` +
     `<tr><td style="background-color:${ac};padding:14px 20px;border-radius:9px 9px 0 0">` +
     `<div style="font-size:18px;font-weight:bold;color:#ffffff">${esc(ctx.displayName)}</div>` +
     (sub ? `<div style="color:#ffffff;font-size:13px">${sub}</div>` : '') +
     `</td></tr>` +
-    `<tr><td style="padding:14px 20px">${contactTable(ctx)}${socialButtons(ctx)}</td></tr>` +
+    // Nombre/cargo/empresa van en la banda; el cuerpo rinde contactos + eslogan + redes en orden del admin.
+    `<tr><td style="padding:14px 20px">${fieldStack(ctx, ac, { exclude: ['name', 'title', 'company'] })}</td></tr>` +
     `</table>`
   );
 }
@@ -451,20 +616,20 @@ function ejecutiva(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const sub = [
     role(ctx),
-    ctx.companyName
+    !isHidden(ctx, 'company') && ctx.companyName
       ? `<span style="color:${ac};font-weight:bold">${esc(ctx.companyName)}</span>`
       : '',
   ]
     .filter(Boolean)
-    .join(' · ');
+    .join(sepText(ctx));
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr><td>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}"><tr><td>` +
     `<div style="font-size:19px;font-weight:bold;color:${INK};letter-spacing:.3px">${esc(ctx.displayName)}</div>` +
     // Regla de acento sobre un <td> (no <div>): Outlook rinde bordes en celdas, no en div (como corporativa).
     `<table cellpadding="0" cellspacing="0" style="margin:7px 0"><tr><td style="border-top:2px solid ${ac};width:36px;font-size:0;line-height:0">&nbsp;</td></tr></table>` +
     (sub ? `<div style="color:${MUTED};font-size:13px">${sub}</div>` : '') +
-    contactTable(ctx) +
-    socialButtons(ctx) +
+    // Nombre/cargo/empresa arriba; el cuerpo rinde contactos + eslogan + redes en el orden del admin.
+    fieldStack(ctx, ac, { exclude: ['name', 'title', 'company'] }) +
     `</td></tr></table>`
   );
 }
@@ -474,23 +639,28 @@ function compacta(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const rol = role(ctx);
   const phone = ctx.personalPhone ?? ctx.companyPhone;
+  const av = avatar(ctx, ac, 46);
   const parts = [
-    phone ? link(`tel:${phone}`, phone, `color:${MUTED};text-decoration:none`) : '',
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
-    ctx.domainUrl
-      ? link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)
-      : '',
+    isHidden(ctx, 'phone') || !phone
+      ? ''
+      : link(`tel:${phone}`, phone, `color:${MUTED};text-decoration:none`),
+    isHidden(ctx, 'email')
+      ? ''
+      : link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
+    isHidden(ctx, 'website') || !ctx.domainUrl
+      ? ''
+      : link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`),
   ].filter(Boolean);
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
-    `<td style="padding-right:14px;vertical-align:middle">${avatar(ctx, ac, 46)}</td>` +
+    `<table cellpadding="0" cellspacing="0" style="${fontDecl(ctx)};color:${INK}"><tr>` +
+    (av ? `<td style="padding-right:14px;vertical-align:middle">${av}</td>` : '') +
     `<td style="vertical-align:middle">` +
-    `<div style="font-size:15px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}${rol ? `<span style="color:${MUTED};font-weight:normal"> · ${rol}</span>` : ''}</div>` +
-    (ctx.companyName
+    `<div style="font-size:15px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}${rol ? `<span style="color:${MUTED};font-weight:normal">${sepText(ctx)}${rol}</span>` : ''}</div>` +
+    (!isHidden(ctx, 'company') && ctx.companyName
       ? `<div style="color:${ac};font-weight:bold;font-size:12px">${esc(ctx.companyName)}</div>`
       : '') +
     (parts.length
-      ? `<div style="margin-top:4px;color:${MUTED};font-size:12px">${parts.join(esc(' · '))}</div>`
+      ? `<div style="margin-top:4px;color:${MUTED};font-size:12px">${parts.join(sepText(ctx))}</div>`
       : '') +
     socialButtons(ctx, 22) +
     `</td></tr></table>`
@@ -529,5 +699,5 @@ export function minimalPlainSignature(ctx: SignatureContext): string {
   const parts = [ctx.displayName, ctx.companyName, ctx.email]
     .filter(Boolean)
     .map((s) => esc(s ?? ''));
-  return `<div style="${FONT};font-size:13px;color:${INK}">${parts.join(' · ')}</div>`;
+  return `<div style="${fontDecl(ctx)};font-size:13px;color:${INK}">${parts.join(' · ')}</div>`;
 }
