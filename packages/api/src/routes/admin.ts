@@ -742,6 +742,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
       // Acepta '' o null para limpiar (consistente con brandingSchema — review D-008).
       logoDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
       logoVerticalDataUrl: z.union([logoDataUrl, z.literal(''), z.null()]).optional(),
+      // Badges del template Cleverty: el admin debe poder previsualizarlos antes de guardar (review D, HIGH).
+      appStoreUrl: httpUrlOrClear,
+      googlePlayUrl: httpUrlOrClear,
     })
     .strict();
   fastify.post(
@@ -762,6 +765,12 @@ export default function adminRoutes(fastify: FastifyInstance) {
         ...(b.logoVerticalDataUrl !== undefined
           ? // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
             { logoVerticalDataUrl: b.logoVerticalDataUrl || undefined }
+          : {}),
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        ...(b.appStoreUrl !== undefined ? { appStoreUrl: b.appStoreUrl || undefined } : {}),
+        ...(b.googlePlayUrl !== undefined
+          ? // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+            { googlePlayUrl: b.googlePlayUrl || undefined }
           : {}),
       };
       return { html: await renderDraftPreview(user, b.templateId, draft, env.FRONTEND_URL) };

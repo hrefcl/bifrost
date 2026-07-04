@@ -202,6 +202,20 @@ describe('signature-templates (F2)', () => {
     expect(evil).not.toContain('badge-apple.png'); // safeUrl rechazó → sin badge
   });
 
+  it('cleverty: badge parcial — solo App Store válido (Google Play con esquema malo) → solo el válido', () => {
+    const html = renderSignature('cleverty', {
+      ...base,
+      assetBase: 'https://cdn.test',
+      appStoreUrl: 'https://apps.apple.com/app',
+      googlePlayUrl: 'javascript:alert(1)',
+    });
+    expect(html).toContain('/sig-icons/badge-apple.png');
+    expect(html).not.toContain('/sig-icons/badge-googleplay.png'); // safeUrl rechazó el malo
+    expect(html).not.toContain('javascript:');
+    // Con badges presentes, el HTML sobrevive el sanitizer intacto en los enlaces válidos.
+    expect(sanitizeEmailHtml(html)).toContain('App Store');
+  });
+
   it('cleverty está en el catálogo y rinde con las 2 iniciales', () => {
     expect(SIGNATURE_TEMPLATE_IDS).toContain('cleverty');
     const html = renderSignature('cleverty', { ...base, photoUrl: undefined });

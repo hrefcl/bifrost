@@ -91,6 +91,23 @@ describe('admin: editor de firmas (settings combinado + preview + logo vertical)
     expect(pub.json().companyName).not.toBe('PreviewCo');
   });
 
+  it('preview: acepta appStoreUrl/googlePlayUrl para previsualizar los badges del template Cleverty (HIGH de D)', async () => {
+    const headers = await seedAdmin();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/signature-preview',
+      headers,
+      payload: {
+        templateId: 'cleverty',
+        appStoreUrl: 'https://apps.apple.com/app',
+        googlePlayUrl: 'https://play.google.com/store/app',
+      },
+    });
+    expect(res.statusCode).toBe(200); // antes: 400 por schema .strict() sin esos campos
+    expect(res.json().html).toContain('App Store');
+    expect(res.json().html).toContain('Google Play');
+  });
+
   it('preview: acepta null para limpiar el logo (consistencia con branding)', async () => {
     const headers = await seedAdmin();
     const res = await app.inject({
