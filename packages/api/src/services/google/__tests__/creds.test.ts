@@ -1,7 +1,8 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, teardownTestDb, resetState } from '../../../../test/integration-helper.js';
 import { env } from '../../../config/env.js';
 import { SystemConfig } from '../../../models/SystemConfig.js';
+import * as settings from '../settings.js';
 import { setGoogleConfig } from '../settings.js';
 import {
   googleEnabled,
@@ -95,6 +96,13 @@ describe('resolveGoogleCreds / googleEnabled — DB-o-env, fail-closed (F-gcal a
     expect((await googleCredsStatus()).source).toBe('error');
     expect(await googleEnabled()).toBe(false); // fail-closed
     await expect(resolveGoogleCreds()).rejects.toThrow();
+  });
+
+  it('googleEnabled NUNCA lanza (fail-soft): si la config no se puede leer → false, no rompe el calendario', async () => {
+    invalidateGoogleCredsCache();
+    const spy = vi.spyOn(settings, 'getRawGoogleConfig').mockRejectedValueOnce(new Error('DB down'));
+    await expect(googleEnabled()).resolves.toBe(false); // NO propaga el throw
+    spy.mockRestore();
   });
 
   it('cache: un cambio de config no se ve hasta invalidar', async () => {

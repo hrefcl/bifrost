@@ -84,10 +84,22 @@ export async function googleCredsStatus(): Promise<{
   return { source: c.source, clientId: c.clientId, redirectUri: c.redirectUri };
 }
 
-/** `true` sólo si las credenciales son USABLES (db o env). Fail-closed: `error`/`none` → `false`. */
+/**
+ * `true` sólo si las credenciales son USABLES (db o env). Fail-closed: `error`/`none` → `false`.
+ * NUNCA lanza: se usa como gate en el hot-path del calendario (crear/editar/borrar evento) y en el worker;
+ * un fallo al resolver la config (DB caída, doc corrupto, etc.) debe apagar el sync, JAMÁS romper el
+ * calendario. Ante cualquier error → `false` (fail-soft) — el evento se crea igual, sólo no se sincroniza.
+ */
 export async function googleEnabled(): Promise<boolean> {
-  const c = await loadCache();
-  return c.source === 'db' || c.source === 'env';
+  try {
+    const c = await loadCache();
+    return c.source === 'db' || c.source === 'env';
+  } catch (err) {
+    // Fail-soft, pero NO silencioso: se loguea para que una caída de DB no quede invisible como "sync
+    // apagado" (review B). El calendario sigue funcionando; sólo el sync queda temporalmente off.
+    console.warn('[gcal] no se pudo resolver la config de Google → sync desactivado temporalmente', err);
+    return false;
+  }
 }
 
 /**
