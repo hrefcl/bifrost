@@ -491,6 +491,9 @@ const brandForm = ref({
   x: '',
   facebook: '',
   youtube: '',
+  github: '',
+  whatsapp: '',
+  website: '',
   logoWidthPx: 120,
   lockAccentColor: false,
   iconWeight: DEFAULT_ICON_WEIGHT,
@@ -528,6 +531,9 @@ async function loadBranding() {
     brandForm.value.x = data.socialLinks?.x ?? '';
     brandForm.value.facebook = data.socialLinks?.facebook ?? '';
     brandForm.value.youtube = data.socialLinks?.youtube ?? '';
+    brandForm.value.github = data.socialLinks?.github ?? '';
+    brandForm.value.whatsapp = data.socialLinks?.whatsapp ?? '';
+    brandForm.value.website = data.socialLinks?.website ?? '';
     brandForm.value.logoWidthPx = data.logoWidthPx ?? 120;
     brandForm.value.lockAccentColor = data.lockAccentColor ?? false;
     brandForm.value.iconWeight = data.iconWeight ?? 'light';
@@ -589,6 +595,9 @@ async function saveBranding() {
         x: f.x.trim(),
         facebook: f.facebook.trim(),
         youtube: f.youtube.trim(),
+        github: f.github.trim(),
+        whatsapp: f.whatsapp.trim(),
+        website: f.website.trim(),
       },
       logoWidthPx: f.logoWidthPx,
       lockAccentColor: f.lockAccentColor,
@@ -1422,6 +1431,30 @@ async function save() {
                 <label class="fld"
                   ><span>YouTube</span
                   ><input v-model="brandForm.youtube" class="adminput" type="url"
+                /></label>
+                <label class="fld"
+                  ><span>GitHub</span
+                  ><input
+                    v-model="brandForm.github"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://github.com/…"
+                /></label>
+                <label class="fld"
+                  ><span>WhatsApp</span
+                  ><input
+                    v-model="brandForm.whatsapp"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://wa.me/569…"
+                /></label>
+                <label class="fld"
+                  ><span>Sitio web</span
+                  ><input
+                    v-model="brandForm.website"
+                    class="adminput"
+                    type="url"
+                    placeholder="https://…"
                 /></label>
               </div>
               <label class="fld check2">

@@ -14,8 +14,20 @@ export interface SocialLinks {
   x?: string;
   facebook?: string;
   youtube?: string;
+  github?: string;
+  whatsapp?: string;
+  website?: string;
 }
-export const SOCIAL_KEYS = ['linkedin', 'instagram', 'x', 'facebook', 'youtube'] as const;
+export const SOCIAL_KEYS = [
+  'linkedin',
+  'instagram',
+  'x',
+  'facebook',
+  'youtube',
+  'github',
+  'whatsapp',
+  'website',
+] as const;
 
 /**
  * Weight (estilo de trazo) del set de iconos Phosphor, elegido por el admin para TODA la plataforma

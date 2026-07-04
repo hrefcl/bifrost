@@ -173,6 +173,29 @@ describe('signature-templates (F2)', () => {
     expect(html).not.toContain('"><script'); // el `"` quedó escapado, no rompió el atributo
   });
 
+  it('avatar usa 2 iniciales (primera + última del nombre)', () => {
+    const html = renderSignature('clasica', { ...base, photoUrl: undefined });
+    expect(html).toContain('>AP<'); // "Ana Pérez" → AP
+    // un solo nombre → una inicial
+    const one = renderSignature('clasica', { displayName: 'Cleverty', email: 'x@y.com' });
+    expect(one).toContain('>C<');
+  });
+
+  it('redes: github/whatsapp/website se renderizan si están presentes', () => {
+    const html = renderSignature('clasica', {
+      ...base,
+      assetBase: 'https://cdn.test',
+      socialLinks: {
+        github: 'https://github.com/acme',
+        whatsapp: 'https://wa.me/569',
+        website: 'https://acme.io',
+      },
+    });
+    expect(html).toContain('/sig-icons/social-github.png');
+    expect(html).toContain('/sig-icons/social-whatsapp.png');
+    expect(html).toContain('/sig-icons/social-web.png');
+  });
+
   it('logoWidthPx no-numérico (llamada fuera de Zod) → ningún template filtra la inyección; todo width es numérico', () => {
     const evil = {
       ...base,

@@ -95,6 +95,9 @@ const brandingSchema = z
         x: httpUrlOrClear,
         facebook: httpUrlOrClear,
         youtube: httpUrlOrClear,
+        github: httpUrlOrClear,
+        whatsapp: httpUrlOrClear,
+        website: httpUrlOrClear,
       })
       .strict()
       .nullable()

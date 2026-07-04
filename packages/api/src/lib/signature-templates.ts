@@ -34,6 +34,9 @@ export interface SignatureContext {
     x?: string;
     facebook?: string;
     youtube?: string;
+    github?: string;
+    whatsapp?: string;
+    website?: string;
   };
   /** Base pública para los assets de icono (`${assetBase}/sig-icons/*.png`). La setea el send-hook. */
   assetBase?: string;
@@ -107,7 +110,16 @@ function contactRow(ctx: SignatureContext, iconName: string, value: string, href
   return `<tr>${cell}<td style="padding:2px 0;color:${MUTED};font-size:13px;line-height:1.4">${text}</td></tr>`;
 }
 
-/** Avatar circular: foto si hay; si no, círculo con la inicial (sin imagen, table-safe). */
+/** Iniciales del nombre: primera + última (ej. "Valentina Ríos" → "VR"); una sola si es un solo nombre. */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '?';
+  const first = parts[0].charAt(0);
+  const last = parts.length > 1 ? parts[parts.length - 1].charAt(0) : '';
+  return (first + last).toUpperCase();
+}
+
+/** Avatar circular: foto si hay; si no, círculo con las iniciales (sin imagen, table-safe). */
 function avatar(ctx: SignatureContext, ac: string, size = 72): string {
   const s = String(size);
   const photo = img(
@@ -116,10 +128,10 @@ function avatar(ctx: SignatureContext, ac: string, size = 72): string {
     `width:${s}px;height:${s}px;border-radius:50%;object-fit:cover;display:block`
   );
   if (photo) return photo;
-  const initial = esc((ctx.displayName.trim().charAt(0) || '?').toUpperCase());
+  const ini = esc(initials(ctx.displayName));
   return (
     `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:${ac}">` +
-    `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.4))}px;font-weight:bold;${FONT}">${initial}</td></tr></table>`
+    `<tr><td align="center" valign="middle" style="color:#fff;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${ini}</td></tr></table>`
   );
 }
 
@@ -129,6 +141,9 @@ const SOCIAL_ORDER: [keyof NonNullable<SignatureContext['socialLinks']>, string]
   ['instagram', 'social-instagram'],
   ['facebook', 'social-facebook'],
   ['youtube', 'social-youtube'],
+  ['github', 'social-github'],
+  ['whatsapp', 'social-whatsapp'],
+  ['website', 'social-web'],
 ];
 
 /** Botones de redes como iconos hosteados (glifo blanco sobre cuadrado de acento). */
@@ -287,25 +302,28 @@ function centrada(ctx: SignatureContext): string {
   );
 }
 
-/** 6) Corporativa — dos columnas: datos + (logo/empresa) a la derecha con divisor. */
+/** 6) Corporativa — letterhead: cabecera con logo/empresa + línea de acento, luego avatar + datos. */
 function corporativa(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
-  const right =
-    (logo(ctx, 140) ? `<div style="margin-bottom:6px">${logo(ctx, 140)}</div>` : '') +
-    (ctx.companyName && !logo(ctx, 140)
-      ? `<div style="font-weight:bold;color:${ac};font-size:15px">${esc(ctx.companyName)}</div>`
-      : '') +
-    (ctx.tagline
-      ? `<div style="color:${FAINT};font-size:11px;text-transform:uppercase;letter-spacing:1px">${esc(ctx.tagline)}</div>`
-      : '');
+  const lg = logo(ctx, 150);
+  const header = lg
+    ? `<tr><td style="padding-bottom:12px;border-bottom:2px solid ${ac}">${lg}</td></tr>`
+    : ctx.companyName
+      ? `<tr><td style="padding-bottom:10px;border-bottom:2px solid ${ac}">` +
+        `<span style="font-size:16px;font-weight:bold;color:${ac}">${esc(ctx.companyName)}</span>` +
+        (ctx.tagline
+          ? `<span style="color:${FAINT};font-size:12px"> — ${esc(ctx.tagline)}</span>`
+          : '') +
+        `</td></tr>`
+      : '';
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
-    `<td style="padding-right:18px;vertical-align:top">${avatar(ctx, ac, 72)}</td>` +
-    `<td style="vertical-align:top;padding-right:20px">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
-    (right
-      ? `<td style="vertical-align:top;border-left:1px solid #e5e7eb;padding-left:20px;text-align:right">${right}</td>`
-      : '') +
-    `</tr></table>`
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}">` +
+    header +
+    `<tr><td style="padding-top:14px">` +
+    `<table cellpadding="0" cellspacing="0"><tr>` +
+    `<td style="padding-right:16px;vertical-align:top">${avatar(ctx, ac, 60)}</td>` +
+    `<td style="vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    `</tr></table></td></tr></table>`
   );
 }
 
