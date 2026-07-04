@@ -5,6 +5,7 @@ import { EventType } from '../../models/EventType.js';
 import { hostCalendarDay } from '../../lib/scheduling/time.js';
 import { buildBusy, confirmedCountByDay, overlapsAny, BUSY_PAD_MS } from './booking-service.js';
 import { googleConfigured } from '../../config/env.js';
+import { GoogleConnection } from '../../models/GoogleConnection.js';
 import { enqueueGoogleSync } from '../google/dispatch.js';
 
 /**
@@ -160,16 +161,28 @@ export async function runReconcile(): Promise<{
   // (4) Backstop del sync con Google (F-gcal): re-encola eventos que quedaron pendientes/erróneos o con
   // un tombstone de borrado sin completar (p.ej. enqueue perdido con Redis caído, o reintentos agotados).
   // El job es idempotente, así que re-encolar es seguro. Sólo si la feature está configurada.
+  // Se re-encolan SÓLO eventos de usuarios con conexión ACTIVA: re-encolar los de usuarios desconectados/
+  // en error es puro churn (el sync retornaría sin hacer nada). Al reconectar, su conn vuelve a 'connected'
+  // y este pass los retoma en el ciclo siguiente → self-healing preservado, sin churn permanente (review
+  // B/C/D). Escala self-hosted acotada (~decenas de usuarios) → el $in sobre los userId conectados es chico.
+  // Race benigna (review D): si un usuario se desconecta ENTRE el distinct y el find, se re-encola un job
+  // que hará no-op (el sync ve la conn no-conectada y retorna). Sin pérdida ni doble-sync; sólo un job de más.
   if (googleConfigured()) {
-    const stuck = await CalendarEvent.find({
-      googleSyncStatus: { $in: ['pending', 'error', 'deleting'] },
-      updatedAt: { $lt: cutoff }, // grace: no competir con un sync en vuelo
-    })
-      .select('_id')
-      .limit(BATCH);
-    for (const ce of stuck) {
-      await enqueueGoogleSync(ce._id);
-      gcalRequeued++;
+    const connectedUserIds = await GoogleConnection.find({ status: 'connected' }).distinct(
+      'userId'
+    );
+    if (connectedUserIds.length > 0) {
+      const stuck = await CalendarEvent.find({
+        userId: { $in: connectedUserIds },
+        googleSyncStatus: { $in: ['pending', 'error', 'deleting'] },
+        updatedAt: { $lt: cutoff }, // grace: no competir con un sync en vuelo
+      })
+        .select('_id')
+        .limit(BATCH);
+      for (const ce of stuck) {
+        await enqueueGoogleSync(ce._id);
+        gcalRequeued++;
+      }
     }
   }
 

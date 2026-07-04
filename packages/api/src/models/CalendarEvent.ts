@@ -94,14 +94,15 @@ CalendarEventSchema.index({ userId: 1, startDate: 1 });
 // planner elija el bound más selectivo (eventos que terminan tras el inicio de la ventana) — review B.
 CalendarEventSchema.index({ userId: 1, endDate: 1 });
 CalendarEventSchema.index({ accountId: 1, calendarId: 1, uid: 1 }, { unique: true });
-// Soporta el backstop del reconciler (F-gcal): busca eventos "atascados" por estado + antigüedad
-// (googleSyncStatus ∈ {pending,error,deleting} AND updatedAt < cutoff) cada 2 min. Sin este índice esa
-// query sería un collection scan periódico. El $in acota por bounds del índice al subconjunto pequeño.
-// PARCIAL (partialFilterExpression $exists): NO indexa los eventos sin googleSyncStatus (los que nunca
-// tocaron Google) → sin entradas null que inflen el índice ni penalicen escrituras ajenas a gcal (review
-// D/C). La query siempre filtra por valores presentes, así que el planner puede usar el índice parcial.
+// Soporta el backstop del reconciler (F-gcal): busca eventos "atascados" de usuarios CONECTADOS por
+// estado + antigüedad (userId ∈ {conectados} AND googleSyncStatus ∈ {pending,error,deleting} AND
+// updatedAt < cutoff) cada 2 min. `userId` va PRIMERO porque la query filtra por él: con el prefijo
+// {googleSyncStatus,updatedAt} el planner elegía `userId_1` y hacía un FETCH-scan (review D-HIGH, medido
+// con explain). Con userId de prefijo el scan es de keys mínimo. PARCIAL (partialFilterExpression
+// $exists): NO indexa los eventos sin googleSyncStatus (los que nunca tocaron Google) → sin entradas
+// null que inflen el índice ni penalicen escrituras ajenas a gcal. La query filtra por valores presentes.
 CalendarEventSchema.index(
-  { googleSyncStatus: 1, updatedAt: 1 },
+  { userId: 1, googleSyncStatus: 1, updatedAt: 1 },
   { partialFilterExpression: { googleSyncStatus: { $exists: true } } }
 );
 

@@ -356,3 +356,23 @@ transitorio → conn intacta, refresh permanente vs transitorio. Suite google/ca
   scope actualizado; (2) `getValidAccessToken` 'sin refresh token' ahora es `permanent` → desconecta y corta
   reintentos en loop sobre un estado irrecuperable (edge case de datos).
 - **C (GLM/z.ai): 8/10 APPROVE** condicionado al skipped-huérfano → cerrado (self-healing).
+
+## §Follow-up: reconciler sólo re-encola usuarios conectados (cierra el churn LOW)
+
+Optimización del backstop del reconciler (retomada del follow-up LOW documentado): el pass-4 re-encola
+SÓLO eventos de usuarios con `GoogleConnection.status==='connected'` → elimina el churn de jobs no-op para
+usuarios desconectados/en error. Self-healing preservado: al reconectar, la conn vuelve a 'connected' y el
+ciclo siguiente los retoma. Índice de soporte reindexado a `{userId:1, googleSyncStatus:1, updatedAt:1}`
+parcial (userId de prefijo — con userId en la query el índice viejo `{googleSyncStatus,updatedAt}` no se
+usaba → FETCH-scan).
+
+**Revisión (cadena de herencia B→D):**
+- **D (Kimi): APPROVE 9/10.** Declaró el HIGH del índice no-usado (verificado con explain: 5000 docs
+  examinados/5 resultados); tras aplicar su fix exacto (índice con prefijo userId) revalidó y cerró el HIGH.
+- **B (Codex): TEAM_UNAVAILABLE** en esta ronda (timeouts a reasoning xhigh; aprobó 9/10 en las rondas
+  previas de esta misma feature). Por la cadena B→D, **D ejerció autoridad primaria heredada**.
+- **DECISIÓN DE AVANCE (Equipo A):** se avanza con la aprobación de D (heredero). **Pendiente obligatorio:
+  validación de B al retomar** — si B rechaza con HIGH, vuelve a ser bloqueante. LOW diferido: índice
+  compuesto `{status,userId}` en GoogleConnection (deuda técnica, ruido a escala pequeña).
+
+Tests: `reconciler-gcal.test.ts` (2) — re-encola sólo al conectado; sin conexión activa no re-encola. 617/617.
