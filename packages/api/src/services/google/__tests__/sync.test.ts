@@ -13,6 +13,7 @@ vi.mock('../calendar-api.js', () => ({
 }));
 
 import * as api from '../calendar-api.js';
+import { OAuthError } from '../oauth.js';
 import { syncEventToGoogle, googleEventIdFor } from '../sync.js';
 import { CalendarEvent, type ICalendarEvent } from '../../../models/CalendarEvent.js';
 import { GoogleConnection } from '../../../models/GoogleConnection.js';
@@ -115,15 +116,38 @@ describe('syncEventToGoogle (F-gcal G3)', () => {
     expect(fresh?.googleSyncStatus).toBe('pending'); // CAS evitó marcar 'synced' sobre el estado nuevo
   });
 
-  it('conexión en error (refresh revocado) → NO llama a Google, marca skipped (sin martilleo)', async () => {
+  it('conexión en error (recuperable) → NO llama a Google y NO hace terminal el estado (self-healing)', async () => {
     const userId = new Types.ObjectId();
     await GoogleConnection.create({ userId, status: 'error', googleCalendarId: 'primary' });
-    const ev = await makeEvent(userId);
+    const ev = await makeEvent(userId, { googleSyncStatus: 'pending' });
     await syncEventToGoogle(ev._id.toString());
     expect(api.upsertEvent).not.toHaveBeenCalled();
     expect(api.deleteEvent).not.toHaveBeenCalled();
+    // Sigue 'pending' (no 'skipped') → al reconectar el reconciler lo retoma y sincroniza. Sin martilleo.
     const fresh = await CalendarEvent.findById(ev._id);
-    expect(fresh?.googleSyncStatus).toBe('skipped');
+    expect(fresh?.googleSyncStatus).toBe('pending');
+  });
+
+  it('401 permanente de la API → marca la CONEXIÓN en error (corta el martilleo de inmediato)', async () => {
+    const userId = new Types.ObjectId();
+    await connect(userId); // status connected
+    const ev = await makeEvent(userId);
+    vi.mocked(api.upsertEvent).mockRejectedValueOnce(
+      new OAuthError('Google rechazó el token (401)', true)
+    );
+    await expect(syncEventToGoogle(ev._id.toString())).rejects.toThrow();
+    const conn = await GoogleConnection.findOne({ userId });
+    expect(conn?.status).toBe('error'); // flip inmediato → los próximos syncs cortan por la compuerta
+  });
+
+  it('fallo TRANSITORIO de la API (no permanente) → NO desconecta la conexión', async () => {
+    const userId = new Types.ObjectId();
+    await connect(userId);
+    const ev = await makeEvent(userId);
+    vi.mocked(api.upsertEvent).mockRejectedValueOnce(new Error('503 transitorio'));
+    await expect(syncEventToGoogle(ev._id.toString())).rejects.toThrow();
+    const conn = await GoogleConnection.findOne({ userId });
+    expect(conn?.status).toBe('connected'); // un blip NO deja la conexión muerta
   });
 
   it('fallo de la API → status error + re-lanza (para que BullMQ reintente)', async () => {

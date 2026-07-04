@@ -26,6 +26,11 @@ export const useGoogleCalendarStore = defineStore('googleCalendar', () => {
     try {
       const { data } = await api.get<GoogleStatus>('/calendar/google/status');
       status.value = data;
+    } catch (err) {
+      // Fallo transitorio (red/401): NO se rompe la vista ni se parpadea ocultando una sección ya
+      // conectada — se conserva el estado previo. Se deja traza para no silenciar un fallo persistente
+      // (review D/C: catch vacío ocultaba errores). (Se llama en onMounted como fire-and-forget.)
+      console.warn('[gcal] no se pudo obtener el estado de Google Calendar', err);
     } finally {
       loading.value = false;
     }

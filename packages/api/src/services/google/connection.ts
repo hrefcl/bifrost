@@ -62,7 +62,10 @@ export async function getValidAccessToken(userId: UserId): Promise<string> {
       const fresh = await GoogleConnection.findOne({ userId });
       if (!fresh || fresh.status === 'revoked') throw new OAuthError('sin conexión con Google');
       if (fresh.accessTokenEnc && isFresh(fresh)) return decrypt(fresh.accessTokenEnc);
-      if (!fresh.refreshTokenEnc) throw new OAuthError('sin refresh token; reconectá con Google');
+      // Sin refresh token no se puede renovar → es PERMANENTE (requiere reconectar); marcarlo así hace
+      // que el caller desconecte la cuenta y corte reintentos en loop sobre un estado irrecuperable (D-LOW).
+      if (!fresh.refreshTokenEnc)
+        throw new OAuthError('sin refresh token; reconectá con Google', true);
       return refreshAndStore(userId, decrypt(fresh.refreshTokenEnc));
     },
     { ttlSeconds: 30, waitMs: 8000 }
@@ -89,16 +92,20 @@ async function refreshAndStore(userId: UserId, refreshToken: string): Promise<st
   try {
     tokens = await refreshAccessToken(refreshToken);
   } catch (err) {
-    // Refresh revocado/expirado (invalid_grant) → marca la conexión en error para que la UI avise.
-    await GoogleConnection.updateOne(
-      { userId },
-      {
-        $set: {
-          status: 'error',
-          syncError: 'La conexión con Google expiró o fue revocada. Reconectá.',
-        },
-      }
-    );
+    // SÓLO un fallo PERMANENTE (invalid_grant) marca la conexión en error → la UI pide reconectar. Un
+    // fallo transitorio (5xx/red) NO desconecta: se re-lanza y BullMQ reintenta con la conexión intacta
+    // (evita que un blip deje la conexión muerta para siempre — review B/C/D).
+    if (err instanceof OAuthError && err.permanent) {
+      await GoogleConnection.updateOne(
+        { userId },
+        {
+          $set: {
+            status: 'error',
+            syncError: 'La conexión con Google expiró o fue revocada. Reconectá.',
+          },
+        }
+      );
+    }
     throw err;
   }
   const set: Record<string, unknown> = {

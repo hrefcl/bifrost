@@ -90,9 +90,10 @@ export async function deleteEvent(
 }
 
 async function toError(res: Response): Promise<Error> {
-  // Un 401 tras un refresh reciente ⇒ credencial inservible: se envuelve como OAuthError para que el
-  // caller marque la conexión, no como error transitorio de API.
-  if (res.status === 401) return new OAuthError('Google rechazó el token (401)');
+  // Un 401 tras un refresh reciente ⇒ credencial inservible de forma PERMANENTE: se envuelve como
+  // OAuthError permanente para que el caller marque la conexión en error (y corte reintentos), no como
+  // error transitorio de API.
+  if (res.status === 401) return new OAuthError('Google rechazó el token (401)', true);
   const text = await res.text().catch(() => '');
   return new GoogleApiError(`Google API ${String(res.status)}: ${text.slice(0, 300)}`, res.status);
 }

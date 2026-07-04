@@ -80,7 +80,7 @@ describe('Google connection service (F-gcal G2)', () => {
     expect(decrypt(doc!.accessTokenEnc!)).toBe('new-access');
   });
 
-  it('refresh revocado (invalid_grant) → marca la conexión en error y lanza', async () => {
+  it('refresh PERMANENTE (invalid_grant) → marca la conexión en error y lanza', async () => {
     const userId = new Types.ObjectId();
     await saveConnection(userId, {
       accessToken: 'old',
@@ -88,10 +88,30 @@ describe('Google connection service (F-gcal G2)', () => {
       expiresAt: past(),
       scope: SCOPE,
     });
-    vi.mocked(oauth.refreshAccessToken).mockRejectedValue(new oauth.OAuthError('invalid_grant'));
+    // invalid_grant → OAuthError permanente.
+    vi.mocked(oauth.refreshAccessToken).mockRejectedValue(
+      new oauth.OAuthError('invalid_grant', true)
+    );
     await expect(getValidAccessToken(userId)).rejects.toThrow();
     const doc = await GoogleConnection.findOne({ userId });
     expect(doc!.status).toBe('error');
+  });
+
+  it('refresh TRANSITORIO (5xx/red, no permanente) → NO desconecta, deja reintentar', async () => {
+    const userId = new Types.ObjectId();
+    await saveConnection(userId, {
+      accessToken: 'old',
+      refreshToken: 'r',
+      expiresAt: past(),
+      scope: SCOPE,
+    });
+    // Error sin `permanent` (default false) = transitorio → la conexión NO debe quedar en error.
+    vi.mocked(oauth.refreshAccessToken).mockRejectedValue(
+      new oauth.OAuthError('backend error 503')
+    );
+    await expect(getValidAccessToken(userId)).rejects.toThrow();
+    const doc = await GoogleConnection.findOne({ userId });
+    expect(doc!.status).toBe('connected'); // un blip no deja la conexión muerta para siempre
   });
 
   it('disconnect revoca en Google y borra los tokens locales (soft: queda revoked)', async () => {

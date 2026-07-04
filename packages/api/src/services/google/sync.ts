@@ -5,6 +5,7 @@ import { GoogleConnection } from '../../models/GoogleConnection.js';
 import { googleConfigured } from '../../config/env.js';
 import { withLock } from '../../lib/withLock.js';
 import { upsertEvent, deleteEvent, type GoogleEventResource } from './calendar-api.js';
+import { OAuthError } from './oauth.js';
 
 /**
  * Motor de sincronización de UN evento con Google (F-gcal G3, v1 unidireccional Bifrost→Google).
@@ -57,17 +58,21 @@ async function doSync(eventId: string): Promise<void> {
 
   const isTombstone = ev.status === 'cancelled' || ev.googleSyncStatus === 'deleting';
   const conn = await GoogleConnection.findOne({ userId: ev.userId });
-  // Sólo 'connected' es utilizable. Con 'error' (refresh revocado) NO se llama a Google: hacerlo daría
-  // 401 en loop en cada reconcile → martilleo de la API (posible rate-limit del cliente OAuth del
-  // operador). Con 'revoked' (desconexión explícita) tampoco. La UI ya pide reconectar en ese estado.
-  if (conn?.status !== 'connected') {
-    // Sin conexión usable. Si es un tombstone, no hay forma de borrar en Google → se limpia el doc local
-    // para no dejar un evento cancelado colgando; si no, sólo se marca skipped (el reconciler no reintenta
-    // 'skipped', así se corta el churn hasta que el usuario reconecte).
+
+  // Conexión ausente o desconexión EXPLÍCITA ('revoked'): estado TERMINAL. Nunca va a volver a esa cuenta
+  // esperando sync, así que un tombstone se limpia local (no hay token para borrar en Google) y el resto
+  // se marca 'skipped' (sin backfill al reconectar; el reconciler no reintenta 'skipped' → sin churn).
+  if (!conn || conn.status === 'revoked') {
     if (isTombstone) await CalendarEvent.deleteOne({ _id: ev._id, updatedAt: rev });
     else await mark(ev, 'skipped', rev);
     return;
   }
+  // Conexión en 'error' (credencial revocada pero RECUPERABLE al reconectar): NO se llama a Google (evita
+  // el martilleo de 401s en cada reconcile) y NO se hace terminal el estado → el evento queda como está
+  // (pending/error/deleting) y, al reconectar, el reconciler lo retoma y sincroniza/borra. Self-healing;
+  // el único costo es churn barato de DB, sin llamada externa (review B/C/D: evita perder cambios/huérfanos).
+  if (conn.status !== 'connected') return;
+
   const calId = conn.googleCalendarId || 'primary';
   const gid = ev.googleEventId ?? googleEventIdFor(ev._id);
 
@@ -83,7 +88,16 @@ async function doSync(eventId: string): Promise<void> {
     }
   } catch (err) {
     await mark(ev, 'error', rev, gid, (err as Error).message);
-    throw err; // BullMQ reintenta; si fue OAuthError, connection.ts ya marcó la conexión
+    // Sólo un fallo PERMANENTE de auth (401 de la API / invalid_grant) marca la CONEXIÓN en error para
+    // cortar YA el martilleo (sin esperar a que expire el access token). Un transitorio (5xx/red) deja la
+    // conexión intacta y BullMQ reintenta — review B (LOW) / C (invariante de flip).
+    if (err instanceof OAuthError && err.permanent) {
+      await GoogleConnection.updateOne(
+        { userId: ev.userId, status: 'connected' },
+        { $set: { status: 'error', syncError: 'La conexión con Google fue rechazada. Reconectá.' } }
+      );
+    }
+    throw err; // BullMQ reintenta
   }
 }
 

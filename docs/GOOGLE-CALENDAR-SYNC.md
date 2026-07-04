@@ -321,3 +321,38 @@ Re-auditoría propia (3 rondas) sobre el código ya implementado:
 - **Errores de sync por-evento** no se muestran con badge en la UI (sí se persisten en `googleSyncStatus`);
   el reconciler + BullMQ los reintentan solos. El error a nivel conexión sí se surface ("Reintentar").
 - **Sin backfill:** al reconectar, los eventos previos marcados `skipped` no se re-sincronizan solos.
+
+## §Ronda B/C/D sobre la re-auditoría (consenso — 3 reviewers)
+
+B (7/10), D (6/10) y C (8/10) coincidieron en el mismo núcleo; incorporados:
+
+- **[MED, B+C+D] Estado terminal con conexión rota.** El gate `!== 'connected'` marcaba `skipped`/borraba
+  tombstones ante CUALQUIER conexión no-conectada → cambios hechos durante `error` no se recuperaban al
+  reconectar + huérfanos en Google. **Fix:** sólo `missing`/`revoked` (desconexión explícita) son
+  terminales; con `error` (recuperable) el sync NO llama a Google y NO toca el estado → self-healing: el
+  reconciler lo retoma al reconectar (recomendación exacta de C).
+- **[MED, D+C] Flip de conexión por fallo transitorio.** `refreshAndStore` marcaba `error` ante cualquier
+  fallo de refresh (incluso 5xx/red) → desconexión permanente por un blip. **Fix:** `OAuthError.permanent`
+  distingue `invalid_grant`/401 (permanente → desconecta) de transitorio (reintenta, conexión intacta). Un
+  401 de la API de Calendar ahora sí marca la conexión en error de inmediato (corta el martilleo sin
+  esperar a que expire el token — LOW de B).
+- **[MED, D] Índice no-sparse.** `{googleSyncStatus,updatedAt}` ahora es PARCIAL
+  (`partialFilterExpression: { googleSyncStatus: { $exists: true } }`) → no indexa los eventos sin estado
+  gcal (sin entradas null que inflen el índice). C confirmó que el `$in`+rango usa bien el índice.
+- **[LOW] Comentario obsoleto del scope en el test, y catch silencioso del store** → traza `console.warn`.
+
+**Limitación conocida (C MED, documentada):** las conexiones creadas ANTES de agregar `openid email` no
+tienen ese scope → `userinfo` da 403 → la UI muestra "Conectado" (sin email) hasta que el usuario reconecte
+(consent incremental). No rompe el sync; sólo el badge del email. Sin migración: al reconectar se resuelve.
+
+Tests nuevos: conexión-en-error self-healing (queda pending, no skipped), 401 permanente → conn error,
+transitorio → conn intacta, refresh permanente vs transitorio. Suite google/calendar 29/29.
+
+### Cierre B/C/D (v2): APPROVE
+- **B (Codex, autoridad primaria): 9/10 APPROVE.** Sin regresiones nuevas. Caveat operativo (no bloqueante,
+  feature nunca deployada → DB fresh): si una DB persistente ya creó el índice `googleSyncStatus_1_updatedAt_1`
+  en su forma NO parcial, Mongoose no lo convierte solo → habría que dropearlo/recrearlo (o `syncIndexes`).
+- **D (Kimi): 8.5→APPROVE.** Sus 2 LOW cerrados en el acto: (1) comentario de cabecera de `oauth.ts` con el
+  scope actualizado; (2) `getValidAccessToken` 'sin refresh token' ahora es `permanent` → desconecta y corta
+  reintentos en loop sobre un estado irrecuperable (edge case de datos).
+- **C (GLM/z.ai): 8/10 APPROVE** condicionado al skipped-huérfano → cerrado (self-healing).

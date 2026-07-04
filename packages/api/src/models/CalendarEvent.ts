@@ -94,6 +94,16 @@ CalendarEventSchema.index({ userId: 1, startDate: 1 });
 // planner elija el bound más selectivo (eventos que terminan tras el inicio de la ventana) — review B.
 CalendarEventSchema.index({ userId: 1, endDate: 1 });
 CalendarEventSchema.index({ accountId: 1, calendarId: 1, uid: 1 }, { unique: true });
+// Soporta el backstop del reconciler (F-gcal): busca eventos "atascados" por estado + antigüedad
+// (googleSyncStatus ∈ {pending,error,deleting} AND updatedAt < cutoff) cada 2 min. Sin este índice esa
+// query sería un collection scan periódico. El $in acota por bounds del índice al subconjunto pequeño.
+// PARCIAL (partialFilterExpression $exists): NO indexa los eventos sin googleSyncStatus (los que nunca
+// tocaron Google) → sin entradas null que inflen el índice ni penalicen escrituras ajenas a gcal (review
+// D/C). La query siempre filtra por valores presentes, así que el planner puede usar el índice parcial.
+CalendarEventSchema.index(
+  { googleSyncStatus: 1, updatedAt: 1 },
+  { partialFilterExpression: { googleSyncStatus: { $exists: true } } }
+);
 
 export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
   return {

@@ -12,7 +12,7 @@ describe('Google OAuth: state + PKCE (F-gcal G2)', () => {
   it('authUrl pide scope MÍNIMO + PKCE S256 + offline/consent', async () => {
     const { url } = await buildAuthUrl('u1');
     const params = new URL(url).searchParams;
-    expect(params.get('scope')).toBe(GOOGLE_SCOPE); // sólo calendar.events
+    expect(params.get('scope')).toBe(GOOGLE_SCOPE); // openid email + calendar.events (mínimo funcional)
     expect(params.get('code_challenge_method')).toBe('S256');
     expect(params.get('code_challenge')).toBeTruthy();
     expect(params.get('access_type')).toBe('offline'); // → refresh token

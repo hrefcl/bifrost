@@ -6,7 +6,8 @@ import { redis } from '../../config/redis.js';
 /**
  * OAuth 2.0 con Google (integración F-gcal G2), desacoplado del calendario. Flujo authorization-code
  * con PKCE (S256) y `state` de un solo uso atado al usuario (anti-CSRF / anti-confusión-de-cuentas).
- * Sólo se pide el scope MÍNIMO `calendar.events`. Se usa `fetch` directo (sin dep googleapis).
+ * Scope mínimo funcional: `calendar.events` (escribir eventos) + `openid email` (sólo para mostrar QUÉ
+ * cuenta quedó conectada). Se usa `fetch` directo (sin dep googleapis).
  */
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
@@ -20,9 +21,14 @@ const STATE_TTL_SEC = 600; // el nonce/verifier viven 10 min en Redis (single-us
 
 export class OAuthError extends Error {
   statusCode = 400;
-  constructor(message: string) {
+  /** `true` = credencial inservible de forma PERMANENTE (invalid_grant / 401 de Google → requiere
+   *  reconectar). `false` = fallo transitorio (5xx/red) → reintentar, NO desconectar. Distinguirlo evita
+   *  que un blip transitorio marque la conexión en error para siempre (review B/C/D). */
+  permanent: boolean;
+  constructor(message: string, permanent = false) {
     super(message);
     this.name = 'OAuthError';
+    this.permanent = permanent;
   }
 }
 
@@ -127,8 +133,12 @@ async function postToken(body: Record<string, string>): Promise<GoogleTokens> {
   });
   const json = (await res.json().catch(() => ({}))) as TokenResponse;
   if (!res.ok || !json.access_token) {
+    // `invalid_grant` = refresh revocado/expirado = PERMANENTE. Un 5xx (o cualquier otro) = transitorio:
+    // no debe desconectar al usuario, sólo reintentar.
+    const permanent = json.error === 'invalid_grant';
     throw new OAuthError(
-      json.error_description ?? json.error ?? 'fallo al obtener tokens de Google'
+      json.error_description ?? json.error ?? 'fallo al obtener tokens de Google',
+      permanent
     );
   }
   return {
