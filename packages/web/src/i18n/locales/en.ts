@@ -428,13 +428,15 @@ export default {
       title: 'Google Calendar',
       desc: 'Connect your Google project so users can sync their events with Google Calendar.',
       guideTitle: 'How do I get the credentials? (step by step)',
-      guide1: 'Go to Google Cloud Console and create (or pick) a project:',
+      guide1: 'Go to Google Cloud Console and create or pick a project:',
       guide2:
-        'Configure the OAuth consent screen (External; in Testing mode add your Gmail as a test user):',
-      guide3: 'Create an OAuth credential of type "Web application":',
-      guide4: 'Under "Authorized redirect URIs" paste EXACTLY:',
+        'Open "OAuth consent screen": type "External"; under Audience / Testing mode add your Gmail under "Test users".',
+      guide3:
+        'Go to "Credentials" → "Create credentials" → "OAuth client ID". For "Application type" pick "Web application". "Name" is free (e.g. "Bifrost Webmail").',
+      guide4:
+        'Leave "Authorized JavaScript origins" EMPTY. Under "Authorized redirect URIs" → "+ Add URI" and paste EXACTLY (no trailing slash):',
       guide5:
-        'Copy the Client ID and Client Secret Google gives you and paste them below. Save — the Google Calendar section shows up in users’ calendar without a restart.',
+        'Click "Create". Google shows the "Client ID" and "Client secret": copy them and paste below. Save. (Google’s config can take a few minutes to take effect.)',
       redirectUri: 'Redirect URI (register the same one in Google)',
       redirectHint:
         'Must match EXACTLY the one registered in Google, or sign-in fails with redirect_uri_mismatch.',

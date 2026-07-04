@@ -430,13 +430,15 @@ export default {
       title: 'Google Calendar',
       desc: 'Conectá tu proyecto de Google para que los usuarios puedan sincronizar sus eventos con Google Calendar.',
       guideTitle: '¿Cómo obtengo las credenciales? (guía paso a paso)',
-      guide1: 'Entrá a Google Cloud Console y creá (o elegí) un proyecto:',
+      guide1: 'Entrá a Google Cloud Console y creá o elegí un proyecto:',
       guide2:
-        'Configurá la "OAuth consent screen" (tipo Externo; en modo Testing agregá tu Gmail como usuario de prueba):',
-      guide3: 'Creá una credencial OAuth tipo "Web application":',
-      guide4: 'En "Authorized redirect URIs" pegá EXACTAMENTE:',
+        'Abrí "Pantalla de consentimiento de OAuth": tipo "Externo"; en "Público" / modo Testing, agregá tu Gmail en "Usuarios de prueba".',
+      guide3:
+        'Andá a "Credenciales" → "Crear credenciales" → "ID de cliente de OAuth". En "Tipo de aplicación" elegí "Aplicación web". El "Nombre" es libre (ej. "Bifrost Webmail").',
+      guide4:
+        'Dejá "Orígenes autorizados de JavaScript" VACÍO. En "URIs de redireccionamiento autorizados" → "+ Agregar URI" y pegá EXACTO (sin barra final):',
       guide5:
-        'Copiá el Client ID y el Client Secret que te da Google y pegalos abajo. Guardá — la sección de Google Calendar aparece en el calendario de los usuarios sin reiniciar.',
+        'Click "Crear". Google muestra el "ID de cliente" y el "Secreto de cliente": copialos y pegalos abajo. Guardá. (La config de Google puede tardar unos minutos en aplicarse.)',
       redirectUri: 'Redirect URI (registralo igual en Google)',
       redirectHint:
         'Debe coincidir EXACTO con el registrado en Google, o el login falla con redirect_uri_mismatch.',
