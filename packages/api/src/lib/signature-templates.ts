@@ -460,7 +460,8 @@ function ejecutiva(ctx: SignatureContext): string {
   return (
     `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr><td>` +
     `<div style="font-size:19px;font-weight:bold;color:${INK};letter-spacing:.3px">${esc(ctx.displayName)}</div>` +
-    `<div style="border-top:2px solid ${ac};width:36px;margin:7px 0;font-size:0;line-height:0">&nbsp;</div>` +
+    // Regla de acento sobre un <td> (no <div>): Outlook rinde bordes en celdas, no en div (como corporativa).
+    `<table cellpadding="0" cellspacing="0" style="margin:7px 0"><tr><td style="border-top:2px solid ${ac};width:36px;font-size:0;line-height:0">&nbsp;</td></tr></table>` +
     (sub ? `<div style="color:${MUTED};font-size:13px">${sub}</div>` : '') +
     contactTable(ctx) +
     socialButtons(ctx) +
