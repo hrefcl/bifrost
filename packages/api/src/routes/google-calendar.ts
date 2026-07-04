@@ -70,7 +70,13 @@ export default function googleCalendarRoutes(fastify: FastifyInstance) {
     const parsed = callbackSchema.safeParse(request.query);
     if (!parsed.success) return reply.redirect(frontendRedirect('error', 'bad_request'));
     const { code, state, error } = parsed.data;
-    if (error) return reply.redirect(frontendRedirect('error', error)); // p.ej. access_denied
+    // El `error` de Google se MAPEA a un valor conocido (no se refleja crudo en el Location): distingue
+    // "el usuario canceló" de un error real, sin reflejar input arbitrario del query.
+    if (error) {
+      return reply.redirect(
+        frontendRedirect('error', error === 'access_denied' ? 'cancelled' : 'google_error')
+      );
+    }
     if (!code || !state) return reply.redirect(frontendRedirect('error', 'missing_params'));
     void reply.clearCookie(OAUTH_COOKIE, { path: '/api/calendar/google' }); // un solo uso
     try {

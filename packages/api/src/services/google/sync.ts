@@ -57,9 +57,13 @@ async function doSync(eventId: string): Promise<void> {
 
   const isTombstone = ev.status === 'cancelled' || ev.googleSyncStatus === 'deleting';
   const conn = await GoogleConnection.findOne({ userId: ev.userId });
-  if (!conn || conn.status === 'revoked') {
-    // El dueño no tiene Google conectado. Si es un tombstone, no hay forma de borrar en Google → se
-    // limpia el doc local para no dejar un evento cancelado colgando; si no, sólo se marca skipped.
+  // Sólo 'connected' es utilizable. Con 'error' (refresh revocado) NO se llama a Google: hacerlo daría
+  // 401 en loop en cada reconcile → martilleo de la API (posible rate-limit del cliente OAuth del
+  // operador). Con 'revoked' (desconexión explícita) tampoco. La UI ya pide reconectar en ese estado.
+  if (conn?.status !== 'connected') {
+    // Sin conexión usable. Si es un tombstone, no hay forma de borrar en Google → se limpia el doc local
+    // para no dejar un evento cancelado colgando; si no, sólo se marca skipped (el reconciler no reintenta
+    // 'skipped', así se corta el churn hasta que el usuario reconecte).
     if (isTombstone) await CalendarEvent.deleteOne({ _id: ev._id, updatedAt: rev });
     else await mark(ev, 'skipped', rev);
     return;

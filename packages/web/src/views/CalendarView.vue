@@ -448,6 +448,8 @@ onMounted(async () => {
               v-if="gcalBanner"
               class="gcal-banner"
               :class="gcalBanner === 'connected' ? 'ok' : 'err'"
+              role="status"
+              aria-live="polite"
             >
               {{
                 gcalBanner === 'connected'
@@ -480,7 +482,7 @@ onMounted(async () => {
               </button>
             </template>
 
-            <div v-if="gcal.status.status === 'error'" class="gcal-error">
+            <div v-if="gcal.status.status === 'error'" class="gcal-error" role="alert">
               <span>{{ t('calendar.google.syncError') }}</span>
               <button class="gcal-btn ghost sm" @click="retryGoogleSync">
                 <AppIcon name="refresh" :size="14" />{{ t('calendar.google.retry') }}

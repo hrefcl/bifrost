@@ -115,6 +115,17 @@ describe('syncEventToGoogle (F-gcal G3)', () => {
     expect(fresh?.googleSyncStatus).toBe('pending'); // CAS evitó marcar 'synced' sobre el estado nuevo
   });
 
+  it('conexión en error (refresh revocado) → NO llama a Google, marca skipped (sin martilleo)', async () => {
+    const userId = new Types.ObjectId();
+    await GoogleConnection.create({ userId, status: 'error', googleCalendarId: 'primary' });
+    const ev = await makeEvent(userId);
+    await syncEventToGoogle(ev._id.toString());
+    expect(api.upsertEvent).not.toHaveBeenCalled();
+    expect(api.deleteEvent).not.toHaveBeenCalled();
+    const fresh = await CalendarEvent.findById(ev._id);
+    expect(fresh?.googleSyncStatus).toBe('skipped');
+  });
+
   it('fallo de la API → status error + re-lanza (para que BullMQ reintente)', async () => {
     const userId = new Types.ObjectId();
     await connect(userId);

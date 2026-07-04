@@ -301,3 +301,23 @@ Rechazado a conciencia: **dedup por `jobId=gcal:<id>`** (sugerencia LOW de D). B
 completados (`removeOnComplete:{count:1000}`) y un re-add con el mismo `jobId` sería IGNORADO → se perdería
 el re-sync de una edición posterior. Con el lock por-evento + idempotencia del motor, los jobs apilados se
 serializan y los redundantes son no-ops (CAS). Se prioriza correctitud sobre ahorro de encolados.
+
+## §Re-auditoría (post-merge de la implementación) — hallazgos y fixes
+
+Re-auditoría propia (3 rondas) sobre el código ya implementado:
+
+- **Scope insuficiente para mostrar la cuenta (real).** Sólo `calendar.events` → `userinfo` daba 403 → el
+  "Conectado como {email}" era código muerto. Se agregó `openid email` (sólo para mostrar QUÉ cuenta ligó
+  el usuario — así verifica que no conectó una equivocada). Sigue sin pedir perfil/contactos/lectura.
+- **Martilleo a Google con conexión en error (real, rate-limit).** El sync sólo saltaba con `revoked`; con
+  `error` (refresh revocado) igual llamaba a Google → 401 en loop en cada reconcile. Ahora sólo se llama a
+  Google si `conn.status === 'connected'`; con error/revoked se marca `skipped` (corta el churn hasta reconectar).
+- **Reflejo del `error` de Google (LOW).** Se mapea a `cancelled`/`google_error` en vez de reflejar el query crudo.
+- **A11y (LOW).** Banner con `role=status`/`aria-live`, error con `role=alert`.
+
+### Limitaciones conocidas (documentadas, no bloqueantes en v1)
+- **Móvil:** la sección vive en el panel lateral del calendario, que se oculta <820px (comportamiento
+  existente del CalendarView). Conectar Google desde móvil no está disponible en v1.
+- **Errores de sync por-evento** no se muestran con badge en la UI (sí se persisten en `googleSyncStatus`);
+  el reconciler + BullMQ los reintentan solos. El error a nivel conexión sí se surface ("Reintentar").
+- **Sin backfill:** al reconectar, los eventos previos marcados `skipped` no se re-sincronizan solos.

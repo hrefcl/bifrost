@@ -12,7 +12,10 @@ const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
 const USERINFO_URL = 'https://www.googleapis.com/oauth2/v3/userinfo';
-export const GOOGLE_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+// Scope MÍNIMO para la función (escribir eventos) + `openid email` SÓLO para mostrar QUÉ cuenta Google
+// quedó conectada (el usuario verifica que ligó la correcta; sin `email`, userinfo da 403). No se pide
+// perfil, contactos ni lectura de otros calendarios.
+export const GOOGLE_SCOPE = 'openid email https://www.googleapis.com/auth/calendar.events';
 const STATE_TTL_SEC = 600; // el nonce/verifier viven 10 min en Redis (single-use)
 
 export class OAuthError extends Error {
