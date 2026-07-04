@@ -134,6 +134,16 @@ onMounted(load);
             </a>
           </li>
           <li>
+            <strong>{{ t('admin.gcal.guideEnableApi') }}</strong>
+            <a
+              href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Google Calendar API → Enable <AppIcon name="externalLink" :size="12" />
+            </a>
+          </li>
+          <li>
             {{ t('admin.gcal.guide2') }}
             <a
               href="https://console.cloud.google.com/apis/credentials/consent"
