@@ -58,7 +58,9 @@ function color(c: string | undefined, fallback = '#1b66ff'): string {
   return c && HEX.test(c) ? c : fallback;
 }
 function assetBase(ctx: SignatureContext): string {
-  return (ctx.assetBase ?? '').replace(/\/+$/, '');
+  // Escape-at-origin al 100%: aunque `assetBase` es server-trusted (lo setea el send-hook), se interpola
+  // en atributos `src` → escaparlo cierra el principio sin excepciones (review B/C/D del render, LOW).
+  return esc((ctx.assetBase ?? '').replace(/\/+$/, ''));
 }
 
 /** `<a>` con URL validada; si el esquema no es seguro, cae a texto escapado (sin link). */
@@ -77,7 +79,7 @@ function safeImageUrl(url: string | undefined): string {
   if (DATA_IMG_RE.test(v)) return esc(v);
   if (v.startsWith('//')) return '';
   if (/^\/api\/signature-images\/[a-f0-9]{24}$/i.test(v)) return esc(v);
-  if (/\/sig-icons\/[a-z-]+\.png$/i.test(v)) return esc(v);
+  if (/^\/sig-icons\/[a-z-]+\.png$/i.test(v)) return esc(v); // anclado: sólo path interno, no `javascript:/sig-icons/…`
   try {
     return ['http:', 'https:'].includes(new URL(v).protocol) ? esc(v) : '';
   } catch {
@@ -182,11 +184,17 @@ function quote(ctx: SignatureContext): string {
     ? `<div style="margin-top:8px;color:${FAINT};font-style:italic;font-size:12px">“${esc(ctx.tagline)}”</div>`
     : '';
 }
+/** Ancho en px SEGURO: entero acotado 1–1000. Si el valor no es un número finito (llamada directa fuera
+ *  del schema Zod del admin), cae al default → nunca produce `width:130pxpx` ni rompe el atributo. */
+function pxWidth(v: unknown, fallback: number): number {
+  const n = typeof v === 'number' ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(Math.round(n), 1000) : fallback;
+}
 function logo(ctx: SignatureContext, w?: number): string {
   return img(
     ctx.logoUrl,
     ctx.companyName ?? '',
-    `width:${String(w ?? ctx.logoWidthPx ?? 130)}px;height:auto;display:block`
+    `width:${String(pxWidth(w ?? ctx.logoWidthPx, 130))}px;height:auto;display:block`
   );
 }
 /** Logo VERTICAL (para layouts apilados/centrados); cae al horizontal si no hay vertical. */
@@ -194,7 +202,7 @@ function logoV(ctx: SignatureContext, w?: number): string {
   return img(
     ctx.logoVerticalUrl ?? ctx.logoUrl,
     ctx.companyName ?? '',
-    `width:${String(w ?? 90)}px;height:auto;display:block;margin:0 auto`
+    `width:${String(pxWidth(w, 90))}px;height:auto;display:block;margin:0 auto`
   );
 }
 function cleanHost(url: string | undefined): string {

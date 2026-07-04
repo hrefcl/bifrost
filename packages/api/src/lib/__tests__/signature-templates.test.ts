@@ -160,4 +160,34 @@ describe('signature-templates (F2)', () => {
     expect(html).toContain('&lt;b&gt;');
     expect(html).toContain('Aulion');
   });
+
+  // ── Hardening del review B/C/D del render (escape-at-origin al 100%) ──
+
+  it('assetBase se escapa: un `"` no puede romper el atributo src del icono', () => {
+    const html = renderSignature('clasica', {
+      ...base,
+      assetBase: 'https://x.test/"><script>alert(1)</script>',
+      personalPhone: '+56 9 1111 2222', // fuerza un contactRow con icono hosteado
+    });
+    expect(html).not.toContain('<script>alert(1)</script>');
+    expect(html).not.toContain('"><script'); // el `"` quedó escapado, no rompió el atributo
+  });
+
+  it('logoWidthPx no-numérico (llamada fuera de Zod) → ningún template filtra la inyección; todo width es numérico', () => {
+    const evil = {
+      ...base,
+      // @ts-expect-error — simula una llamada directa con un valor runtime inválido
+      logoWidthPx: '130" onerror="alert(1)',
+    } as SignatureContext;
+    for (const t of SIGNATURE_TEMPLATES) {
+      const html = renderSignature(t.id, evil);
+      expect(html, `${t.id}: onerror`).not.toContain('onerror');
+      expect(html, `${t.id}: pxpx`).not.toContain('pxpx');
+      expect(html, `${t.id}: no rompe atributo`).not.toContain('130"');
+      // Cada `width:<n>px` que se emita es un entero limpio (pxWidth lo garantiza).
+      for (const m of html.matchAll(/width:([^;"]*)px/g)) {
+        expect(m[1], `${t.id}: width numérico`).toMatch(/^\d+$/);
+      }
+    }
+  });
 });
