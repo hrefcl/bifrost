@@ -183,13 +183,13 @@ function contactTable(ctx: SignatureContext): string {
     : '';
 }
 
-function nameBlock(ctx: SignatureContext, ac: string): string {
+function nameBlock(ctx: SignatureContext, ac: string, opts?: { hideCompany?: boolean }): string {
   return (
     `<div style="font-size:17px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}</div>` +
     (role(ctx)
       ? `<div style="color:${ac};font-weight:bold;font-size:13px">${role(ctx)}</div>`
       : '') +
-    (ctx.companyName
+    (!opts?.hideCompany && ctx.companyName
       ? `<div style="color:${MUTED};font-size:13px">${esc(ctx.companyName)}</div>`
       : '')
   );
@@ -306,11 +306,14 @@ function centrada(ctx: SignatureContext): string {
 function corporativa(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const lg = logo(ctx, 150);
+  // Empresa en la cabecera SOLO cuando no hay logo (letterhead de texto); ahí se oculta en nameBlock
+  // para no duplicarla. Con logo, la cabecera es la imagen y nameBlock sí muestra el nombre de empresa.
+  const companyInHeader = !lg && Boolean(ctx.companyName);
   const header = lg
     ? `<tr><td style="padding-bottom:12px;border-bottom:2px solid ${ac}">${lg}</td></tr>`
-    : ctx.companyName
+    : companyInHeader
       ? `<tr><td style="padding-bottom:10px;border-bottom:2px solid ${ac}">` +
-        `<span style="font-size:16px;font-weight:bold;color:${ac}">${esc(ctx.companyName)}</span>` +
+        `<span style="font-size:16px;font-weight:bold;color:${ac}">${esc(ctx.companyName ?? '')}</span>` +
         (ctx.tagline
           ? `<span style="color:${FAINT};font-size:12px"> — ${esc(ctx.tagline)}</span>`
           : '') +
@@ -322,7 +325,7 @@ function corporativa(ctx: SignatureContext): string {
     `<tr><td style="padding-top:14px">` +
     `<table cellpadding="0" cellspacing="0"><tr>` +
     `<td style="padding-right:16px;vertical-align:top">${avatar(ctx, ac, 60)}</td>` +
-    `<td style="vertical-align:top">${nameBlock(ctx, ac)}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
+    `<td style="vertical-align:top">${nameBlock(ctx, ac, { hideCompany: companyInHeader })}${contactTable(ctx)}${socialButtons(ctx)}</td>` +
     `</tr></table></td></tr></table>`
   );
 }
