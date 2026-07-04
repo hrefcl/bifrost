@@ -181,6 +181,16 @@ describe('signature-templates (F2)', () => {
     expect(one).toContain('>C<');
   });
 
+  it('corporativa: el tagline se muestra tanto con logo como sin logo (no se cae)', () => {
+    // con logo (base tiene logoUrl) → tagline bajo el logo
+    const withLogo = renderSignature('corporativa', { ...base, assetBase: 'https://cdn.test' });
+    expect(withLogo).toContain('Tu correo, tu marca');
+    // sin logo → tagline en el letterhead de texto, y companyName NO duplicado
+    const noLogo = renderSignature('corporativa', { ...base, logoUrl: undefined });
+    expect(noLogo).toContain('Tu correo, tu marca');
+    expect((noLogo.match(/Aulion/g) ?? []).length).toBe(1); // empresa una sola vez
+  });
+
   it('redes: github/whatsapp/website se renderizan si están presentes', () => {
     const html = renderSignature('clasica', {
       ...base,

@@ -310,7 +310,11 @@ function corporativa(ctx: SignatureContext): string {
   // para no duplicarla. Con logo, la cabecera es la imagen y nameBlock sí muestra el nombre de empresa.
   const companyInHeader = !lg && Boolean(ctx.companyName);
   const header = lg
-    ? `<tr><td style="padding-bottom:12px;border-bottom:2px solid ${ac}">${lg}</td></tr>`
+    ? `<tr><td style="padding-bottom:12px;border-bottom:2px solid ${ac}">${lg}` +
+      (ctx.tagline
+        ? `<div style="color:${FAINT};font-size:12px;margin-top:4px">${esc(ctx.tagline)}</div>`
+        : '') +
+      `</td></tr>`
     : companyInHeader
       ? `<tr><td style="padding-bottom:10px;border-bottom:2px solid ${ac}">` +
         `<span style="font-size:16px;font-weight:bold;color:${ac}">${esc(ctx.companyName ?? '')}</span>` +
