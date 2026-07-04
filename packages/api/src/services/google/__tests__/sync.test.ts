@@ -98,6 +98,23 @@ describe('syncEventToGoogle (F-gcal G3)', () => {
     expect(fresh?.googleSyncStatus).toBe('skipped');
   });
 
+  it('CAS: si el evento cambia DURANTE el upsert, el job no pisa el estado nuevo', async () => {
+    const userId = new Types.ObjectId();
+    await connect(userId);
+    const ev = await makeEvent(userId, { googleSyncStatus: 'pending' });
+    // Simula una edición concurrente mientras el job habla con Google: bumpea updatedAt → el mark
+    // terminal (CAS sobre updatedAt) NO debe pisar el 'pending' recién puesto.
+    vi.mocked(api.upsertEvent).mockImplementationOnce(async () => {
+      await CalendarEvent.updateOne(
+        { _id: ev._id },
+        { $set: { summary: 'editado', googleSyncStatus: 'pending' } }
+      );
+    });
+    await syncEventToGoogle(ev._id.toString());
+    const fresh = await CalendarEvent.findById(ev._id);
+    expect(fresh?.googleSyncStatus).toBe('pending'); // CAS evitó marcar 'synced' sobre el estado nuevo
+  });
+
   it('fallo de la API → status error + re-lanza (para que BullMQ reintente)', async () => {
     const userId = new Types.ObjectId();
     await connect(userId);

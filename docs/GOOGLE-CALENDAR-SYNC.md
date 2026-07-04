@@ -274,3 +274,30 @@ Todo lo del diseño + §Hardening se implementó, con estos ajustes deliberados:
 anti-forgería/PKCE), `connection` (5, refresh+lock/invalid_grant/disconnect), `sync` (4, upsert/tombstone/
 skipped/error-retry), `google-calendar` endpoints (5, gate/401/callback-público/idempotencia). Suite existente
 281/281 sin regresiones.
+
+## §Ronda de hardening (review B/D de la implementación)
+
+Hallazgos incorporados:
+
+- **HIGH (B/D) — OAuth login-CSRF / account-linking.** Como el callback no puede validar la sesión
+  (SameSite=strict), se agregó una **cookie double-submit `gcal_oauth` (SameSite=Lax, httpOnly, path acotado,
+  10min)**: `/connect` la setea con el `nonce`; `/callback` exige que el `nonce` del `state` coincida con la
+  cookie. Un flujo iniciado por el atacante y completado en el navegador de la víctima no lleva esa cookie →
+  se rechaza. La cookie Lax SÍ viaja en el redirect top-level (a diferencia de la sesión Strict).
+- **HIGH (B) — DELETE sólo tombstoneaba si ya había `googleEventId`.** Un evento aún `pending` (sync en
+  vuelo) se borraba en duro y el worker podía crearlo en Google después (huérfano). Ahora, con Google
+  configurado, se tombstonea SIEMPRE (atómico); el motor borra por id determinista (404 = no-op).
+- **HIGH (B) — el worker pisaba el estado con marca incondicional.** Ahora la sync se **serializa por evento
+  con `withLock`** (evita reordenar upsert-en-vuelo vs. delete → sin recrear en Google lo borrado) y las
+  marcas terminales usan **CAS sobre `updatedAt`** (no pisan un pending/deleting dejado por una edición
+  concurrente). Ver `sync.ts`.
+- **MED (B/D) — 409 en el insert tras PUT-404 concurrente** → se trata como éxito idempotente (no loop).
+- **LOW (B/D) — single-use del `state` no atómico** → se cierra con el retorno de `redis.del` (sólo un
+  consumidor obtiene `del===1`; el otro se rechaza) antes de canjear el code.
+- **LOW (D) — race PATCH/DELETE** → el DELETE decide hard/soft con `findOneAndUpdate` atómico.
+- **LOW (D) — token en query al revocar** → ahora va en el body `x-www-form-urlencoded`.
+
+Rechazado a conciencia: **dedup por `jobId=gcal:<id>`** (sugerencia LOW de D). BullMQ retiene los jobs
+completados (`removeOnComplete:{count:1000}`) y un re-add con el mismo `jobId` sería IGNORADO → se perdería
+el re-sync de una edición posterior. Con el lock por-evento + idempotencia del motor, los jobs apilados se
+serializan y los redundantes son no-ops (CAS). Se prioriza correctitud sobre ahorro de encolados.

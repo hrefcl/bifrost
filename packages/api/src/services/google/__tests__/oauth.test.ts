@@ -10,7 +10,8 @@ function stateOf(url: string): string {
 
 describe('Google OAuth: state + PKCE (F-gcal G2)', () => {
   it('authUrl pide scope MÍNIMO + PKCE S256 + offline/consent', async () => {
-    const params = new URL(await buildAuthUrl('u1')).searchParams;
+    const { url } = await buildAuthUrl('u1');
+    const params = new URL(url).searchParams;
     expect(params.get('scope')).toBe(GOOGLE_SCOPE); // sólo calendar.events
     expect(params.get('code_challenge_method')).toBe('S256');
     expect(params.get('code_challenge')).toBeTruthy();
@@ -19,25 +20,35 @@ describe('Google OAuth: state + PKCE (F-gcal G2)', () => {
     expect(params.get('state')).toBeTruthy();
   });
 
-  it('un state válido se consume UNA sola vez (single-use) y trae el userId firmado', async () => {
-    const state = stateOf(await buildAuthUrl('user-abc'));
-    const first = await consumeState(state);
+  it('un state válido (con su cookie) se consume UNA sola vez y trae el userId firmado', async () => {
+    const { url, nonce } = await buildAuthUrl('user-abc');
+    const state = stateOf(url);
+    const first = await consumeState(state, nonce);
     expect(first.userId).toBe('user-abc');
     expect(first.verifier).toBeTruthy();
     // Segundo intento con el mismo state → rechazado (replay imposible).
-    await expect(consumeState(state)).rejects.toThrow(OAuthError);
+    await expect(consumeState(state, nonce)).rejects.toThrow(OAuthError);
+  });
+
+  it('anti-CSRF: state válido pero cookie que NO coincide → rechazado', async () => {
+    const { url } = await buildAuthUrl('user-csrf');
+    const state = stateOf(url);
+    // Simula el flujo del atacante completado en el navegador de la víctima (cookie ausente o distinta).
+    await expect(consumeState(state, undefined)).rejects.toThrow(/navegador/);
+    await expect(consumeState(state, 'otro-nonce')).rejects.toThrow(/navegador/);
   });
 
   it('un state con HMAC alterado se rechaza (no manipulable)', async () => {
-    const state = stateOf(await buildAuthUrl('user-x'));
-    const [nonce, uid, ts] = Buffer.from(state, 'base64url').toString('utf8').split(':');
-    const tampered = Buffer.from(`${nonce}:${uid}:${ts}:forgedmac`).toString('base64url');
-    await expect(consumeState(tampered)).rejects.toThrow(/manipulado/);
+    const { url, nonce } = await buildAuthUrl('user-x');
+    const state = stateOf(url);
+    const [n, uid, ts] = Buffer.from(state, 'base64url').toString('utf8').split(':');
+    const tampered = Buffer.from(`${n}:${uid}:${ts}:forgedmac`).toString('base64url');
+    await expect(consumeState(tampered, nonce)).rejects.toThrow(/manipulado/);
   });
 
   it('un state forjado para otro usuario (sin la clave HMAC) se rechaza', async () => {
     // Un atacante NO puede fabricar un state válido para la víctima sin conocer JWT_SECRET.
     const forged = Buffer.from(`nonce:victima:${Date.now()}:deadbeef`).toString('base64url');
-    await expect(consumeState(forged)).rejects.toThrow(OAuthError);
+    await expect(consumeState(forged, 'nonce')).rejects.toThrow(OAuthError);
   });
 });

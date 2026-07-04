@@ -69,7 +69,9 @@ export async function upsertEvent(
   if (put.ok) return;
   if (put.status === 404) {
     const post = await call(userId, 'POST', `/calendars/${enc}/events`, resource);
-    if (post.ok) return;
+    // 409 = ya existe (un sync concurrente lo insertó entre nuestro PUT-404 y este POST): idempotente,
+    // el evento está en Google con el id determinista → éxito, no error que reintente en loop.
+    if (post.ok || post.status === 409) return;
     throw await toError(post);
   }
   throw await toError(put);

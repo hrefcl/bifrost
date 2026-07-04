@@ -151,23 +151,27 @@ export default function calendarRoutes(fastify: FastifyInstance) {
   fastify.delete('/:eventId', async (request, reply) => {
     const { eventId } = request.params as { eventId: string };
     objectIdSchema.parse(eventId);
-    const existing = await CalendarEvent.findOne({ _id: eventId, userId: request.user.userId });
-    if (!existing) {
+    // Con Google configurado NO se borra en duro: se deja un TOMBSTONE (cancelled + 'deleting')
+    // ATÓMICAMENTE y el sync lo borra en Google (por id determinista, idempotente) y RECIÉN AHÍ elimina
+    // el doc local (evita huérfanos en Google). Se tombstonea SIEMPRE —no sólo si ya tiene googleEventId—
+    // porque un evento aún 'pending' (sync en vuelo, id no guardado todavía) igual puede terminar en
+    // Google; el motor de sync resuelve el resto (si nunca se creó, el 404 del delete es un no-op).
+    const tomb = googleConfigured()
+      ? await CalendarEvent.findOneAndUpdate(
+          { _id: eventId, userId: request.user.userId },
+          { $set: { status: 'cancelled', googleSyncStatus: 'deleting' } }
+        )
+      : null;
+    if (tomb) {
+      await enqueueGoogleSync(tomb._id);
+      return { ok: true };
+    }
+    // Nunca sincronizado (o feature apagada): borrado directo.
+    const result = await CalendarEvent.deleteOne({ _id: eventId, userId: request.user.userId });
+    if (result.deletedCount === 0) {
       return reply
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
-    }
-    // Si el evento fue empujado a Google, no se borra en duro: se deja un TOMBSTONE (cancelled +
-    // 'deleting') y el sync lo borra en Google y RECIÉN AHÍ elimina el doc local (evita huérfanos en
-    // Google). Si nunca se sincronizó (o la feature está apagada), borrado directo.
-    if (googleConfigured() && existing.googleEventId) {
-      await CalendarEvent.updateOne(
-        { _id: existing._id },
-        { $set: { status: 'cancelled', googleSyncStatus: 'deleting' } }
-      );
-      await enqueueGoogleSync(existing._id);
-    } else {
-      await CalendarEvent.deleteOne({ _id: existing._id });
     }
     return { ok: true };
   });

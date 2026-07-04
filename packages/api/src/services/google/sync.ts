@@ -3,12 +3,18 @@ import type { Types } from 'mongoose';
 import { CalendarEvent, type ICalendarEvent } from '../../models/CalendarEvent.js';
 import { GoogleConnection } from '../../models/GoogleConnection.js';
 import { googleConfigured } from '../../config/env.js';
+import { withLock } from '../../lib/withLock.js';
 import { upsertEvent, deleteEvent, type GoogleEventResource } from './calendar-api.js';
 
 /**
  * Motor de sincronización de UN evento con Google (F-gcal G3, v1 unidireccional Bifrost→Google).
  * Desacoplado del calendario y del OAuth. El job es IDEMPOTENTE: lee el evento fresco y decide por su
  * estado actual (upsert vs. delete), de modo que reintentos o ediciones repetidas convergen sin duplicar.
+ *
+ * Concurrencia (review B HIGH): la sync de un evento se SERIALIZA con `withLock` por eventId (evita que
+ * un upsert en vuelo y un delete se reordenen → nada de recrear en Google algo ya borrado). Además, las
+ * escrituras terminales de estado usan CAS sobre `updatedAt`: si el evento cambió mientras el job hablaba
+ * con Google, NO se pisa el estado nuevo (lo retoma el job siguiente / el reconciler).
  */
 
 /**
@@ -37,26 +43,25 @@ function toGoogleResource(ev: ICalendarEvent, id: string): GoogleEventResource {
   };
 }
 
-/**
- * Sincroniza un evento con Google. Lee FRESCO y decide:
- *  - tombstone (status 'cancelled' o googleSyncStatus 'deleting') → borra en Google (por id determinista,
- *    idempotente: un 404 = ya no está = éxito).
- *  - resto → upsert idempotente.
- * Persiste el resultado en googleSyncStatus/Error. Re-lanza en fallo para que BullMQ reintente.
- * Aislamiento: SIEMPRE contra la conexión del dueño del evento (nunca cruza usuarios).
- */
+/** Punto de entrada del job. Serializa por evento; si otro job ya lo está sincronizando, no compite
+ *  (ese job lee fresco y refleja el último estado; un cambio aún más nuevo lo retoma el reconciler). */
 export async function syncEventToGoogle(eventId: string): Promise<void> {
   if (!googleConfigured()) return;
+  await withLock(`gcal:evt:${eventId}`, () => doSync(eventId), { ttlSeconds: 30, waitMs: 5000 });
+}
+
+async function doSync(eventId: string): Promise<void> {
   const ev = await CalendarEvent.findById(eventId);
   if (!ev) return; // borrado en duro sin tombstone: no hay nada que reflejar
+  const rev = ev.updatedAt; // CAS: sólo escribimos el estado terminal si el evento no cambió entretanto
 
   const isTombstone = ev.status === 'cancelled' || ev.googleSyncStatus === 'deleting';
   const conn = await GoogleConnection.findOne({ userId: ev.userId });
   if (!conn || conn.status === 'revoked') {
     // El dueño no tiene Google conectado. Si es un tombstone, no hay forma de borrar en Google → se
     // limpia el doc local para no dejar un evento cancelado colgando; si no, sólo se marca skipped.
-    if (isTombstone) await CalendarEvent.deleteOne({ _id: ev._id });
-    else await mark(ev, 'skipped');
+    if (isTombstone) await CalendarEvent.deleteOne({ _id: ev._id, updatedAt: rev });
+    else await mark(ev, 'skipped', rev);
     return;
   }
   const calId = conn.googleCalendarId || 'primary';
@@ -65,13 +70,15 @@ export async function syncEventToGoogle(eventId: string): Promise<void> {
   try {
     if (isTombstone) {
       await deleteEvent(ev.userId, calId, gid); // idempotente (404 = ya no está = ok)
-      await CalendarEvent.deleteOne({ _id: ev._id }); // Google confirmó → se elimina el tombstone local
+      // Google confirmó → se elimina el tombstone local, salvo que una edición concurrente lo haya
+      // tocado (updatedAt cambió) → lo retoma el próximo job/reconciler.
+      await CalendarEvent.deleteOne({ _id: ev._id, updatedAt: rev });
     } else {
       await upsertEvent(ev.userId, calId, toGoogleResource(ev, gid));
-      await mark(ev, 'synced', gid);
+      await mark(ev, 'synced', rev, gid);
     }
   } catch (err) {
-    await mark(ev, 'error', gid, (err as Error).message);
+    await mark(ev, 'error', rev, gid, (err as Error).message);
     throw err; // BullMQ reintenta; si fue OAuthError, connection.ts ya marcó la conexión
   }
 }
@@ -79,14 +86,17 @@ export async function syncEventToGoogle(eventId: string): Promise<void> {
 async function mark(
   ev: ICalendarEvent,
   status: NonNullable<ICalendarEvent['googleSyncStatus']>,
+  rev: Date,
   gid?: string,
   error?: string
 ): Promise<void> {
   const set: Record<string, unknown> = { googleSyncStatus: status };
   if (gid) set.googleEventId = gid;
-  if (status === 'synced' || status === 'deleted') set.googleLastSyncedAt = new Date();
+  if (status === 'synced') set.googleLastSyncedAt = new Date();
   const update: Record<string, unknown> = { $set: set };
   if (error) set.googleSyncError = error.slice(0, 500);
   else update.$unset = { googleSyncError: '' };
-  await CalendarEvent.updateOne({ _id: ev._id }, update);
+  // CAS: sólo si el evento no fue modificado desde que el job lo leyó (evita pisar un pending/deleting
+  // que dejó una edición/borrado concurrente — review B HIGH).
+  await CalendarEvent.updateOne({ _id: ev._id, updatedAt: rev }, update);
 }

@@ -1,8 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { env, googleConfigured } from '../config/env.js';
-import { buildAuthUrl, consumeState, exchangeCode, OAuthError } from '../services/google/oauth.js';
+import {
+  buildAuthUrl,
+  consumeState,
+  exchangeCode,
+  OAuthError,
+  OAUTH_COOKIE,
+} from '../services/google/oauth.js';
 import { saveConnection, getStatus, disconnect } from '../services/google/connection.js';
+
+const OAUTH_COOKIE_TTL_SEC = 600; // igual al TTL del state en Redis (10 min)
 
 /**
  * Endpoints de la integración con Google Calendar (F-gcal G2). Montados bajo /api/calendar/google.
@@ -41,7 +49,16 @@ export default function googleCalendarRoutes(fastify: FastifyInstance) {
         message: 'Integración con Google no configurada por el operador',
       });
     }
-    const url = await buildAuthUrl(request.user.userId);
+    const { url, nonce } = await buildAuthUrl(request.user.userId);
+    // Cookie double-submit anti-CSRF (SameSite=Lax → viaja en el redirect top-level de Google, a
+    // diferencia de la sesión que es Strict). Acotada al path de la feature y de vida corta.
+    void reply.setCookie(OAUTH_COOKIE, nonce, {
+      httpOnly: true,
+      secure: env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      path: '/api/calendar/google',
+      maxAge: OAUTH_COOKIE_TTL_SEC,
+    });
     return { url };
   });
 
@@ -55,8 +72,9 @@ export default function googleCalendarRoutes(fastify: FastifyInstance) {
     const { code, state, error } = parsed.data;
     if (error) return reply.redirect(frontendRedirect('error', error)); // p.ej. access_denied
     if (!code || !state) return reply.redirect(frontendRedirect('error', 'missing_params'));
+    void reply.clearCookie(OAUTH_COOKIE, { path: '/api/calendar/google' }); // un solo uso
     try {
-      const { userId, verifier } = await consumeState(state);
+      const { userId, verifier } = await consumeState(state, request.cookies[OAUTH_COOKIE]);
       const tokens = await exchangeCode(code, verifier);
       await saveConnection(userId, tokens);
     } catch (err) {

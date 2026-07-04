@@ -34,11 +34,16 @@ function challengeFrom(verifier: string): string {
   return createHash('sha256').update(verifier).digest('base64url');
 }
 
+/** Nombre de la cookie anti-CSRF (double-submit). SameSite=Lax → SÍ viaja en el redirect top-level. */
+export const OAUTH_COOKIE = 'gcal_oauth';
+
 /**
  * URL de consentimiento. Genera nonce + PKCE verifier, los guarda en Redis atados al `userId`
- * (single-use, TTL), y arma un `state` firmado (HMAC) e infalsificable.
+ * (single-use, TTL), y arma un `state` firmado (HMAC) e infalsificable. Devuelve también el `nonce`:
+ * el caller lo setea en una cookie `SameSite=Lax` (double-submit) para atar el callback al MISMO
+ * navegador que inició — defensa contra el OAuth login-CSRF (la sesión no sirve: es SameSite=strict).
  */
-export async function buildAuthUrl(userId: string): Promise<string> {
+export async function buildAuthUrl(userId: string): Promise<{ url: string; nonce: string }> {
   const nonce = randomToken(16);
   const verifier = randomToken(32); // 64 hex chars → PKCE code_verifier válido
   const ts = String(Date.now());
@@ -57,7 +62,7 @@ export async function buildAuthUrl(userId: string): Promise<string> {
     code_challenge: challengeFrom(verifier),
     code_challenge_method: 'S256',
   });
-  return `${AUTH_URL}?${params.toString()}`;
+  return { url: `${AUTH_URL}?${params.toString()}`, nonce };
 }
 
 /**
@@ -68,7 +73,10 @@ export async function buildAuthUrl(userId: string): Promise<string> {
  * atacante no puede fabricar un state para otro userId ni reusar uno ajeno. Devuelve el `userId` (de
  * confianza) y el PKCE `verifier` para el intercambio del code.
  */
-export async function consumeState(state: string): Promise<{ userId: string; verifier: string }> {
+export async function consumeState(
+  state: string,
+  cookieNonce: string | undefined
+): Promise<{ userId: string; verifier: string }> {
   let decoded: string;
   try {
     decoded = Buffer.from(state, 'base64url').toString('utf8');
@@ -79,9 +87,20 @@ export async function consumeState(state: string): Promise<{ userId: string; ver
   if (!nonce || !userId || !tsStr || !mac) throw new OAuthError('state inválido');
   if (!verifyHmac(`${nonce}:${userId}:${tsStr}`, mac)) throw new OAuthError('state manipulado');
   if (Date.now() - Number(tsStr) > STATE_TTL_SEC * 1000) throw new OAuthError('state expirado');
-  const raw = await redis.get(`gcal:oauth:${nonce}`);
+  // Double-submit anti-CSRF: el nonce del state DEBE coincidir con la cookie del navegador que inició.
+  // Un flujo iniciado por un atacante (su state) completado en el navegador de la víctima no tendrá la
+  // cookie con ESE nonce → se rechaza. Cierra el OAuth login-CSRF / account-linking.
+  if (!cookieNonce || cookieNonce !== nonce) {
+    throw new OAuthError('state no coincide con la sesión del navegador');
+  }
+  const key = `gcal:oauth:${nonce}`;
+  const raw = await redis.get(key);
   if (!raw) throw new OAuthError('state ya usado o expirado'); // single-use (o TTL vencido)
-  await redis.del(`gcal:oauth:${nonce}`);
+  // Single-use ATÓMICO ante callbacks concurrentes: Redis serializa los comandos, así que de dos
+  // consumidores del mismo nonce sólo UNO obtiene `del === 1`; el otro (0) se rechaza aquí, antes de
+  // canjear el code. Cierra el TOCTOU entre get y del.
+  const removed = await redis.del(key);
+  if (removed === 0) throw new OAuthError('state ya usado'); // otro callback lo consumió primero
   const stored = JSON.parse(raw) as { userId: string; verifier: string };
   // Integridad cruzada: el userId firmado en el state debe coincidir con el guardado en Redis.
   if (stored.userId !== userId) throw new OAuthError('state inconsistente');
@@ -139,10 +158,15 @@ export async function refreshAccessToken(refreshToken: string): Promise<GoogleTo
   });
 }
 
-/** Revoca un token en Google (best-effort: un fallo no debe impedir la desconexión local). */
+/** Revoca un token en Google (best-effort: un fallo no debe impedir la desconexión local). El token va
+ *  en el BODY (no en la query) para no filtrarlo en logs de acceso/proxy. */
 export async function revokeToken(token: string): Promise<void> {
   try {
-    await fetch(`${REVOKE_URL}?token=${encodeURIComponent(token)}`, { method: 'POST' });
+    await fetch(REVOKE_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }).toString(),
+    });
   } catch {
     /* best-effort */
   }
