@@ -635,6 +635,15 @@ monotónico), validación de tamaño de logo, hint de modo. Diferidos como deuda
   XSS explotable. Documentado, no bloqueante.
 - **PRODUCT DECISION (preview sin clamp de política):** el preview del admin NO se acota a `allowedTemplateIds`
   a propósito — el admin debe poder previsualizar CUALQUIER diseño antes de habilitarlo/fijarlo.
+- **TD-SIG-GRADIENT-RING (LOW, diferido a conciencia — B/C review del template Cleverty, jul 2026):** el
+  anillo del avatar del template `cleverty` usa un SÓLIDO de color de acento, no el gradiente azul→violeta del
+  ref. Motivo: `sanitizeEmailHtml` (backstop) sólo conserva `background-color`; `background-image`/
+  `linear-gradient` se elimina antes del envío. C propuso permitir `background-image` en `STYLE_PROPS` de
+  `sanitizeHtml.ts` (dice que `SAFE_VALUE` ya bloquea `url(`/`image-set(`/`expression(`, así que
+  `linear-gradient()` pasaría sin debilitar la seguridad). NO se hizo: es un cambio en el **allowlist del
+  sanitizer** (afecta TODO el HTML saneado, no sólo firmas) → merece su propio review de seguridad dedicado,
+  no apurarlo. Si se retoma: agregar `'background-image'` a `STYLE_PROPS` + test de que `SAFE_VALUE` bloquea
+  todo fetch/exfil, y recién ahí volver a emitir el gradiente en `ringedAvatar`.
 
 ## Provisioning CRUD de buzones — review retroactivo A/B/C/D (jul 2026)
 
