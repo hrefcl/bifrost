@@ -313,6 +313,18 @@ export default {
       styleFieldsHint:
         'Arrastrá para reordenar. El orden y la visibilidad aplican a toda la firma.',
       fieldSocialIcons: 'Iconos en redes sociales',
+      field: {
+        photo: 'Foto / avatar',
+        name: 'Nombre',
+        title: 'Cargo',
+        company: 'Empresa',
+        phone: 'Teléfono',
+        email: 'Email',
+        website: 'Sitio web',
+        address: 'Dirección',
+        tagline: 'Eslogan',
+        social: 'Redes sociales',
+      },
       styleLogoH: 'Logo horizontal',
       styleLogoV: 'Logo vertical',
       styleLogoHint:

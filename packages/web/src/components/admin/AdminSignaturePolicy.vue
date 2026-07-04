@@ -69,18 +69,8 @@ const STACK_DEFAULT: FieldKey[] = [
 ];
 // Campos que NO se pueden ocultar (siempre visibles): nombre y cargo.
 const ALWAYS_ON: FieldKey[] = ['name', 'title'];
-const FIELD_LABEL: Record<FieldKey, string> = {
-  photo: 'Foto / avatar',
-  name: 'Nombre',
-  title: 'Cargo',
-  company: 'Empresa',
-  phone: 'Teléfono',
-  email: 'Email',
-  website: 'Sitio web',
-  address: 'Dirección',
-  tagline: 'Eslogan',
-  social: 'Redes sociales',
-};
+// Etiqueta i18n del campo (review D: no hardcodear español; el UI puede estar en inglés).
+const fieldLabel = (f: FieldKey) => t(`admin.signatures.field.${f}`);
 
 const sig = ref<{
   fontFamily: string;
@@ -123,12 +113,21 @@ function setSep(s: string) {
 
 // Drag & drop del orden de campos (HTML5 nativo, sin dependencia).
 const dragIndex = ref(-1);
+const dragOverIndex = ref(-1);
 function onDragStart(i: number) {
   dragIndex.value = i;
 }
+function onDragEnter(i: number) {
+  if (dragIndex.value >= 0) dragOverIndex.value = i;
+}
+function onDragEnd() {
+  // Limpia el estado aunque el usuario cancele el drag (Esc / soltar afuera) — review D.
+  dragIndex.value = -1;
+  dragOverIndex.value = -1;
+}
 function onDrop(i: number) {
   const from = dragIndex.value;
-  dragIndex.value = -1;
+  onDragEnd();
   if (from < 0 || from === i) return;
   saved.value = false;
   const arr = sig.value.order;
@@ -191,7 +190,8 @@ async function load() {
       const order = [...ord, ...STACK_DEFAULT.filter((k) => !ord.includes(k))];
       sig.value = {
         fontFamily: st.fontFamily ?? 'Arial',
-        photoSizePx: st.photoSizePx ?? 68,
+        photoSizePx: Math.min(Math.max(st.photoSizePx ?? 68, 24), 160), // acota al rango del slider
+
         align: st.align ?? 'left',
         separator: st.separator ?? '·',
         hidden: (st.hidden ?? []).filter((k) => !ALWAYS_ON.includes(k)),
@@ -528,9 +528,10 @@ onMounted(load);
           <div class="ctl">
             <span class="ctl-h">{{ t('admin.signatures.styleFields') }}</span>
             <p class="hint">{{ t('admin.signatures.styleFieldsHint') }}</p>
+            <!-- Foto: no va en el stack ordenable (su posición la define el diseño), sólo mostrar/ocultar. -->
             <div class="frow static">
               <span class="grip ghost">⋮⋮</span>
-              <span class="fname">{{ FIELD_LABEL.photo }}</span>
+              <span class="fname">{{ fieldLabel('photo') }}</span>
               <label class="sw">
                 <input
                   type="checkbox"
@@ -545,14 +546,16 @@ onMounted(load);
                 v-for="(f, i) in sig.order"
                 :key="f"
                 class="frow"
-                :class="{ dragging: dragIndex === i }"
+                :class="{ dragging: dragIndex === i, over: dragOverIndex === i && dragIndex !== i }"
                 draggable="true"
                 @dragstart="onDragStart(i)"
+                @dragenter="onDragEnter(i)"
                 @dragover.prevent
-                @drop="onDrop(i)"
+                @drop.prevent="onDrop(i)"
+                @dragend="onDragEnd"
               >
                 <span class="grip">⋮⋮</span>
-                <span class="fname">{{ FIELD_LABEL[f] }}</span>
+                <span class="fname">{{ fieldLabel(f) }}</span>
                 <label class="sw" :class="{ locked: ALWAYS_ON.includes(f) }">
                   <input
                     type="checkbox"
@@ -894,6 +897,10 @@ onMounted(load);
 }
 .frow.dragging {
   opacity: 0.4;
+}
+.frow.over {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .grip {
   color: var(--text-3);

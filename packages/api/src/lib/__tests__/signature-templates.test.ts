@@ -202,6 +202,46 @@ describe('signature-templates (F2)', () => {
     expect(evil).not.toContain('badge-apple.png'); // safeUrl rechazó → sin badge
   });
 
+  it('HIGH (B): ocultar un campo NO lo muestra en NINGÚN template, ni en su chrome (banda/header/columna)', () => {
+    // Empresa oculta → no aparece como texto en ningún template (banner/cleverty/corporativa la ponían en
+    // el chrome). Sin logoUrl para aislar el campo visible del `alt` del logo (que no es texto visible).
+    for (const t of SIGNATURE_TEMPLATES) {
+      const html = renderSignature(t.id, {
+        ...base,
+        logoUrl: undefined,
+        style: { hidden: ['company'] },
+      });
+      expect(html, `${t.id}: company oculta`).not.toContain('Aulion');
+    }
+    // Email oculto → no aparece (incluye centrada, que lo renderiza en su línea custom).
+    for (const t of SIGNATURE_TEMPLATES) {
+      const html = renderSignature(t.id, {
+        ...base,
+        logoUrl: undefined,
+        style: { hidden: ['email'] },
+      });
+      expect(html, `${t.id}: email oculto`).not.toContain('ana@aulion.app');
+    }
+    // Eslogan oculto → no aparece en corporativa/cleverty (chrome).
+    for (const id of ['corporativa', 'cleverty']) {
+      const html = renderSignature(id, {
+        ...base,
+        logoUrl: '/api/signature-images/0123456789abcdef01234567',
+        style: { hidden: ['tagline'] },
+      });
+      expect(html, `${id}: tagline oculto`).not.toContain('Tu correo, tu marca');
+    }
+  });
+
+  it('order duplicado no rinde el campo dos veces (dedup)', () => {
+    const html = renderSignature('clasica', {
+      ...base,
+      style: { order: ['email', 'email', 'name'] },
+    });
+    // el email aparece una sola vez (un solo mailto:)
+    expect((html.match(/mailto:ana@aulion\.app/g) ?? []).length).toBe(1);
+  });
+
   it('catálogo tiene los 10 diseños incl. banner/ejecutiva/compacta; el banner mantiene su banda de acento', () => {
     for (const id of ['banner', 'ejecutiva', 'compacta']) {
       expect(SIGNATURE_TEMPLATE_IDS).toContain(id);

@@ -168,7 +168,8 @@ function photoSize(ctx: SignatureContext, deflt: number): number {
 function orderedStack(ctx: SignatureContext): StackField[] {
   const isStack = (k: SignatureFieldKey): k is StackField =>
     (STACK_FIELDS as readonly SignatureFieldKey[]).includes(k);
-  const wanted = (styleOf(ctx).order ?? []).filter(isStack);
+  // Dedup: un order con claves repetidas (['email','email']) no debe rendir el campo dos veces.
+  const wanted = [...new Set((styleOf(ctx).order ?? []).filter(isStack))];
   const seen = new Set<StackField>(wanted);
   return [...wanted, ...STACK_FIELDS.filter((k) => !seen.has(k))];
 }
@@ -517,12 +518,20 @@ function centrada(ctx: SignatureContext): string {
     (vlogo ? `<div style="margin-bottom:8px">${vlogo}</div>` : '') +
     `<div>${avatar(ctx, ac, 64)}</div>` +
     `<div style="margin-top:8px">${renderField(ctx, 'name', ac)}${renderField(ctx, 'title', ac)}${renderField(ctx, 'company', ac)}</div>` +
-    `<div style="margin-top:6px;color:${MUTED};font-size:13px">` +
-    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`) +
-    (ctx.domainUrl
-      ? ` · ${link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)}`
-      : '') +
-    `</div>` +
+    (() => {
+      // Respeta los toggles email/website (HIGH del review B) + el separador elegido.
+      const line = [
+        isHidden(ctx, 'email')
+          ? ''
+          : link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
+        !isHidden(ctx, 'website') && ctx.domainUrl
+          ? link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)
+          : '',
+      ]
+        .filter(Boolean)
+        .join(sepText(ctx));
+      return line ? `<div style="margin-top:6px;color:${MUTED};font-size:13px">${line}</div>` : '';
+    })() +
     (social ? `<div align="center">${social}</div>` : '') +
     `</td></tr></table>`
   );
@@ -534,18 +543,19 @@ function corporativa(ctx: SignatureContext): string {
   const lg = logo(ctx, 150);
   // Empresa en la cabecera SOLO cuando no hay logo (letterhead de texto); ahí se oculta en nameBlock
   // para no duplicarla. Con logo, la cabecera es la imagen y nameBlock sí muestra el nombre de empresa.
-  const companyInHeader = !lg && Boolean(ctx.companyName);
+  const showTagline = !isHidden(ctx, 'tagline') && ctx.tagline;
+  const companyInHeader = !lg && Boolean(ctx.companyName) && !isHidden(ctx, 'company');
   const header = lg
     ? `<tr><td style="padding-bottom:12px;border-bottom:2px solid ${ac}">${lg}` +
-      (ctx.tagline
-        ? `<div style="color:${FAINT};font-size:12px;margin-top:4px">${esc(ctx.tagline)}</div>`
+      (showTagline
+        ? `<div style="color:${FAINT};font-size:12px;margin-top:4px">${esc(ctx.tagline ?? '')}</div>`
         : '') +
       `</td></tr>`
     : companyInHeader
       ? `<tr><td style="padding-bottom:10px;border-bottom:2px solid ${ac}">` +
         `<span style="font-size:16px;font-weight:bold;color:${ac}">${esc(ctx.companyName ?? '')}</span>` +
-        (ctx.tagline
-          ? `<span style="color:${FAINT};font-size:12px"> — ${esc(ctx.tagline)}</span>`
+        (showTagline
+          ? `<span style="color:${FAINT};font-size:12px"> — ${esc(ctx.tagline ?? '')}</span>`
           : '') +
         `</td></tr>`
       : '';
@@ -555,7 +565,8 @@ function corporativa(ctx: SignatureContext): string {
     `<tr><td style="padding-top:14px">` +
     `<table cellpadding="0" cellspacing="0"><tr>` +
     `<td style="padding-right:16px;vertical-align:top">${avatar(ctx, ac, 60)}</td>` +
-    `<td style="vertical-align:top">${fieldStack(ctx, ac, { hideCompany: companyInHeader })}</td>` +
+    // Si hay cabecera (logo o empresa-texto), el tagline ya va ahí → se excluye del stack para no duplicarlo.
+    `<td style="vertical-align:top">${fieldStack(ctx, ac, { hideCompany: companyInHeader, exclude: header ? ['tagline'] : [] })}</td>` +
     `</tr></table></td></tr></table>`
   );
 }
@@ -568,10 +579,10 @@ function cleverty(ctx: SignatureContext): string {
   const lg = logo(ctx, 130);
   const brand =
     (lg ||
-      (ctx.companyName
+      (!isHidden(ctx, 'company') && ctx.companyName
         ? `<div style="font-size:18px;font-weight:bold;color:${ac}">${esc(ctx.companyName)}</div>`
         : '')) +
-    (ctx.tagline
+    (!isHidden(ctx, 'tagline') && ctx.tagline
       ? `<div style="color:${FAINT};font-size:10px;letter-spacing:2px;text-transform:uppercase;margin-top:4px">${esc(ctx.tagline)}</div>`
       : '');
   const badges = appBadges(ctx);
@@ -599,7 +610,9 @@ function cleverty(ctx: SignatureContext): string {
 /** 8) Banner — cabecera con banda de color de acento (nombre en blanco), cuerpo con contacto + redes. */
 function banner(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
-  const sub = [role(ctx), ctx.companyName ? esc(ctx.companyName) : ''].filter(Boolean).join(' · ');
+  const sub = [role(ctx), !isHidden(ctx, 'company') && ctx.companyName ? esc(ctx.companyName) : '']
+    .filter(Boolean)
+    .join(sepText(ctx));
   return (
     // Sin overflow:hidden (el sanitizer lo descarta): la banda redondea sus PROPIAS esquinas superiores,
     // así el redondeo es robusto aunque el clip del contenedor no exista.
@@ -702,5 +715,5 @@ export function minimalPlainSignature(ctx: SignatureContext): string {
   const parts = [ctx.displayName, ctx.companyName, ctx.email]
     .filter(Boolean)
     .map((s) => esc(s ?? ''));
-  return `<div style="${fontDecl(ctx)};font-size:13px;color:${INK}">${parts.join(' · ')}</div>`;
+  return `<div style="${fontDecl(ctx)};font-size:13px;color:${INK}">${parts.join(sepText(ctx))}</div>`;
 }

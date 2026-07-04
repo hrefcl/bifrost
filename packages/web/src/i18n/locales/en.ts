@@ -312,6 +312,18 @@ export default {
       styleFields: 'Show and order fields',
       styleFieldsHint: 'Drag to reorder. Order and visibility apply to the whole signature.',
       fieldSocialIcons: 'Icons in social links',
+      field: {
+        photo: 'Photo / avatar',
+        name: 'Name',
+        title: 'Job title',
+        company: 'Company',
+        phone: 'Phone',
+        email: 'Email',
+        website: 'Website',
+        address: 'Address',
+        tagline: 'Tagline',
+        social: 'Social links',
+      },
       styleLogoH: 'Horizontal logo',
       styleLogoV: 'Vertical logo',
       styleLogoHint:
