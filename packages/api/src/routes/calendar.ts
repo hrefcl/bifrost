@@ -1,9 +1,13 @@
 import type { FastifyInstance } from 'fastify';
+import { Types } from 'mongoose';
 import { z } from 'zod';
 import { CalendarEvent, serializeCalendarEvent } from '../models/CalendarEvent.js';
 import { requireOwnedAccount } from '../lib/authz.js';
 import { googleEnabled } from '../services/google/creds.js';
 import { enqueueGoogleSync } from '../services/google/dispatch.js';
+import { createCalendarMeetRoom } from '../services/meet/booking-meet.js';
+import { getStoredMeetSettings } from '../services/meet/settings.js';
+import { meetEnabled } from '../services/meet/token-service.js';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
@@ -16,6 +20,13 @@ const eventBodySchema = z.object({
   summary: z.string().min(1).max(1024),
   description: z.string().max(8192).optional(),
   location: z.string().max(1024).optional(),
+  // Invitados (estilo Google): lista de emails con nombre opcional.
+  attendees: z
+    .array(z.object({ name: z.string().max(200).optional(), email: z.string().email() }))
+    .max(100)
+    .optional(),
+  // Toggle "con Bifrost Meet": crea una sala y pega el link en el evento.
+  withMeet: z.boolean().optional(),
   startDate: z.string().datetime(),
   startTimezone: z.string().default('UTC'),
   endDate: z.string().datetime(),
@@ -75,14 +86,44 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         message: 'endDate must be after startDate',
       });
     }
+    const { withMeet, attendees, ...eventFields } = body;
     const event = await CalendarEvent.create({
-      ...body,
+      ...eventFields,
+      // Invitados: normalizados con estado/rol por default (Google-like).
+      attendees: attendees?.map((a) => ({
+        name: a.name,
+        email: a.email,
+        status: 'needs-action',
+        role: 'required',
+      })),
       userId: request.user.userId,
       startDate: new Date(body.startDate),
       endDate: new Date(body.endDate),
       // 'pending' sólo si la feature está activa → el reconciler puede rastrear un enqueue perdido.
       googleSyncStatus: (await googleEnabled()) ? 'pending' : undefined,
     });
+    // Toggle "con Meet": crea la sala y pega el link (degradado si Meet está off o falla — nunca aborta).
+    if (withMeet) {
+      const settings = await getStoredMeetSettings();
+      if (meetEnabled(settings)) {
+        try {
+          const room = await createCalendarMeetRoom({
+            calendarEventId: event._id,
+            userId: new Types.ObjectId(request.user.userId),
+            name: body.summary,
+            endAt: new Date(body.endDate),
+            settings,
+          });
+          event.meetRoomId = room.meetRoomId;
+          event.meetUrl = room.meetUrl;
+          await event.save();
+        } catch (err) {
+          request.log.warn(
+            `[calendar] no se pudo crear la sala Meet del evento (evento creado sin Meet): ${(err as Error).message}`
+          );
+        }
+      }
+    }
     await enqueueGoogleSync(event._id); // sync a Google (no-op si la feature está apagada; fail-soft)
     return serializeCalendarEvent(event);
   });
@@ -125,7 +166,17 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         message: 'endDate must be after startDate',
       });
     }
-    const update: Record<string, unknown> = { ...body };
+    const { withMeet: _withMeet, attendees: patchAttendees, ...patchFields } = body;
+    const update: Record<string, unknown> = { ...patchFields };
+    // Invitados: normalizados con estado/rol por default (consistente con el create).
+    if (patchAttendees) {
+      update.attendees = patchAttendees.map((a) => ({
+        name: a.name,
+        email: a.email,
+        status: 'needs-action',
+        role: 'required',
+      }));
+    }
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);
     // La edición debe re-reflejarse en Google: 'pending' hace rastreable un enqueue perdido.

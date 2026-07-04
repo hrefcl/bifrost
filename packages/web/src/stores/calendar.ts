@@ -3,6 +3,17 @@ import { defineStore } from 'pinia';
 import { api } from '@/lib/http';
 import type { CalendarEvent } from '@webmail6/shared';
 
+/** Invitado de ENTRADA: sólo email (+ nombre opcional); el backend añade status/role. */
+interface AttendeeInput {
+  name?: string;
+  email: string;
+}
+type EventCreateInput = Omit<
+  CalendarEvent,
+  'id' | 'createdAt' | 'updatedAt' | 'userId' | 'attendees' | 'meetUrl' | 'meetRoomId'
+> & { withMeet?: boolean; attendees?: AttendeeInput[] };
+type EventPatchInput = Partial<Omit<CalendarEvent, 'attendees'>> & { attendees?: AttendeeInput[] };
+
 export const useCalendarStore = defineStore('calendar', () => {
   const events = ref<CalendarEvent[]>([]);
 
@@ -17,9 +28,7 @@ export const useCalendarStore = defineStore('calendar', () => {
     if (token === fetchToken) events.value = data;
   }
 
-  async function createEvent(
-    event: Omit<CalendarEvent, 'id' | 'createdAt' | 'updatedAt' | 'userId'>
-  ) {
+  async function createEvent(event: EventCreateInput) {
     const { data } = await api.post<CalendarEvent>('/calendar', event);
     fetchToken++; // invalida cualquier fetch en vuelo que pisaría esta inserción.
     events.value.push(data);
@@ -27,7 +36,7 @@ export const useCalendarStore = defineStore('calendar', () => {
   }
 
   /** Actualiza un evento (drag/resize o modal de edición → PATCH parcial) y refleja el resultado. */
-  async function updateEvent(id: string, patch: Partial<CalendarEvent>) {
+  async function updateEvent(id: string, patch: EventPatchInput) {
     const { data } = await api.patch<CalendarEvent>(`/calendar/${id}`, patch);
     fetchToken++; // invalida cualquier fetch en vuelo que pisaría esta edición.
     const i = events.value.findIndex((e) => e.id === id);

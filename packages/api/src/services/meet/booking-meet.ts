@@ -107,6 +107,71 @@ export async function createBookingMeetRoom(params: {
   throw lastErr instanceof Error ? lastErr : new Error('createBookingMeetRoom failed');
 }
 
+/**
+ * Crea la `MeetRoom` de un EVENTO de calendario (toggle "con Meet"). Idempotente por `calendarEventId`
+ * (si ya existe, la reusa). `source:'calendar'`; `allowExternalOverride:true` porque los invitados del
+ * evento (attendees) reciben el link y pueden ser externos. Mismo patrón de reintento por colisión de slug.
+ */
+export async function createCalendarMeetRoom(params: {
+  calendarEventId: mongoose.Types.ObjectId;
+  userId: mongoose.Types.ObjectId;
+  name: string;
+  endAt: Date;
+  settings: StoredMeetSettings;
+}): Promise<BookingMeetRoom> {
+  const { calendarEventId, userId, name, endAt, settings } = params;
+  const existing = await MeetRoom.findOne({ calendarEventId }).lean<Pick<
+    IMeetRoom,
+    '_id' | 'slug'
+  > | null>();
+  if (existing) {
+    return {
+      meetRoomId: existing._id,
+      slug: existing.slug,
+      meetUrl: meetUrlFor(settings, existing.slug),
+    };
+  }
+  const expiresAt = new Date(endAt.getTime() + GRACE_MS);
+  const purgeAt = new Date(endAt.getTime() + PURGE_DAYS_MS);
+  const maxParticipants = clampMaxParticipants(settings.maxParticipants, settings);
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const slug = generateMeetSlug();
+    try {
+      const room = await MeetRoom.create({
+        userId,
+        slug,
+        name,
+        mode: 'per_event',
+        status: 'active',
+        source: 'calendar',
+        calendarEventId,
+        maxParticipants,
+        allowExternalOverride: true,
+        expiresAt,
+        purgeAt,
+      });
+      return { meetRoomId: room._id, slug, meetUrl: meetUrlFor(settings, slug) };
+    } catch (err) {
+      lastErr = err;
+      if (isSlugCollision(err) && attempt < 2) continue;
+      const raced = await MeetRoom.findOne({ calendarEventId }).lean<Pick<
+        IMeetRoom,
+        '_id' | 'slug'
+      > | null>();
+      if (raced) {
+        return {
+          meetRoomId: raced._id,
+          slug: raced.slug,
+          meetUrl: meetUrlFor(settings, raced.slug),
+        };
+      }
+      throw err;
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error('createCalendarMeetRoom failed');
+}
+
 /** Borra la sala de una reserva (compensación cuando el insert de la Booking falla). Hard delete. */
 export async function deleteMeetRoomById(meetRoomId: mongoose.Types.ObjectId): Promise<void> {
   await MeetRoom.deleteOne({ _id: meetRoomId });

@@ -110,6 +110,39 @@ describe('GET /api/calendar — filtro de rango por solapamiento', () => {
     await app.close();
   });
 
+  it('POST /calendar — invitados (attendees) se guardan con status/role default (Google-like)', async () => {
+    const app = await buildTestApp();
+    const { user, account } = await seedUserWithAccount({ email: 'cal-att@test.com' });
+    const headers = authHeaders(app, user._id.toString());
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/calendar',
+      headers,
+      payload: {
+        accountId: account._id.toString(),
+        calendarId: 'default',
+        calendarName: 'Personal',
+        uid: 'uid-att',
+        summary: 'Con invitados',
+        startDate: '2026-06-10T10:00:00.000Z',
+        endDate: '2026-06-10T11:00:00.000Z',
+        attendees: [{ email: 'a@x.com' }, { name: 'Bea', email: 'b@x.com' }],
+        withMeet: false, // Meet off en el test → sin sala, pero el evento se crea igual
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    const body = JSON.parse(res.body) as {
+      attendees?: { email: string; status: string; role: string }[];
+    };
+    expect(body.attendees).toHaveLength(2);
+    expect(body.attendees?.[0]).toMatchObject({
+      email: 'a@x.com',
+      status: 'needs-action',
+      role: 'required',
+    });
+    await app.close();
+  });
+
   // Cubre el path del DRAG/RESIZE del calendario (FullCalendar → updateEvent → PATCH parcial):
   // mover un evento sólo manda startDate/endDate y debe persistir, con authz por-usuario.
   it('PATCH actualiza fechas (drag/resize) de forma parcial y owner-bound', async () => {

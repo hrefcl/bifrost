@@ -46,8 +46,25 @@ const createForm = ref({
   startDate: '',
   endDate: '',
   allDay: false,
+  withMeet: false,
+  attendees: [] as { name?: string; email: string }[],
 });
 const createError = ref('');
+// Invitados (estilo Google): agregar por email.
+const attendeeInput = ref('');
+function addAttendee() {
+  const email = attendeeInput.value.trim();
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+  if (createForm.value.attendees.some((a) => a.email === email)) {
+    attendeeInput.value = '';
+    return;
+  }
+  createForm.value.attendees.push({ email });
+  attendeeInput.value = '';
+}
+function removeAttendee(email: string) {
+  createForm.value.attendees = createForm.value.attendees.filter((a) => a.email !== email);
+}
 
 // Modal de detalle (click en un evento).
 const detail = ref<CalendarEvent | null>(null);
@@ -174,6 +191,8 @@ function onSelect(arg: DateSelectArg): void {
     startDate: toLocalInput(arg.start),
     endDate: toLocalInput(arg.end),
     allDay: arg.allDay,
+    withMeet: false,
+    attendees: [],
   };
   createError.value = '';
   showCreate.value = true;
@@ -194,6 +213,8 @@ function openCreate(): void {
     startDate: toLocalInput(start),
     endDate: toLocalInput(end),
     allDay: false,
+    withMeet: false,
+    attendees: [],
   };
   createError.value = '';
   showCreate.value = true;
@@ -209,6 +230,8 @@ function openEdit(ev: CalendarEvent): void {
     startDate: toLocalInput(new Date(ev.startDate)),
     endDate: toLocalInput(new Date(ev.endDate)),
     allDay: ev.allDay,
+    withMeet: Boolean(ev.meetUrl),
+    attendees: (ev.attendees ?? []).map((a) => ({ name: a.name, email: a.email })),
   };
   createError.value = '';
   detail.value = null;
@@ -238,6 +261,7 @@ async function submitCreate(): Promise<void> {
         startDate: start.toISOString(),
         endDate: end.toISOString(),
         allDay: createForm.value.allDay,
+        attendees: createForm.value.attendees,
       });
     } else {
       await store.createEvent({
@@ -254,6 +278,8 @@ async function submitCreate(): Promise<void> {
         endTimezone: 'UTC',
         allDay: createForm.value.allDay,
         status: 'confirmed',
+        withMeet: createForm.value.withMeet,
+        attendees: createForm.value.attendees,
       });
     }
     showCreate.value = false;
@@ -540,6 +566,35 @@ onMounted(async () => {
           class="field"
           rows="3"
         ></textarea>
+
+        <!-- Bifrost Meet -->
+        <label class="check">
+          <input v-model="createForm.withMeet" type="checkbox" :disabled="!!editingId" />
+          {{ t('calendar.withMeet') }}
+        </label>
+
+        <!-- Invitados -->
+        <div class="attendees">
+          <div class="att-add">
+            <input
+              v-model="attendeeInput"
+              type="email"
+              :placeholder="t('calendar.attendeePlaceholder')"
+              class="field"
+              @keydown.enter.prevent="addAttendee"
+            />
+            <button type="button" class="ghost-btn" @click="addAttendee">
+              {{ t('calendar.addAttendee') }}
+            </button>
+          </div>
+          <div v-if="createForm.attendees.length" class="att-chips">
+            <span v-for="a in createForm.attendees" :key="a.email" class="att-chip">
+              {{ a.email }}
+              <button type="button" class="att-x" @click="removeAttendee(a.email)">×</button>
+            </span>
+          </div>
+        </div>
+
         <p v-if="createError" class="err">{{ createError }}</p>
         <div class="modal-foot">
           <button class="create-btn" @click="submitCreate">{{ t('calendar.save') }}</button>
@@ -1017,6 +1072,41 @@ onMounted(async () => {
   font-size: 14px;
   color: var(--text-1);
   margin: 4px 0 12px;
+}
+.attendees {
+  margin: 0 0 12px;
+}
+.att-add {
+  display: flex;
+  gap: 8px;
+}
+.att-add .field {
+  flex: 1;
+  margin: 0;
+}
+.att-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  color: var(--text-1);
+  border-radius: 999px;
+  padding: 3px 6px 3px 10px;
+  font-size: 12.5px;
+}
+.att-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  color: var(--text-3);
+  font-size: 15px;
+  line-height: 1;
 }
 .err {
   font-size: 13px;
