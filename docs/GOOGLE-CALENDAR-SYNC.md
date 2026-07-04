@@ -366,13 +366,14 @@ ciclo siguiente los retoma. Índice de soporte reindexado a `{userId:1, googleSy
 parcial (userId de prefijo — con userId en la query el índice viejo `{googleSyncStatus,updatedAt}` no se
 usaba → FETCH-scan).
 
-**Revisión (cadena de herencia B→D):**
+**Revisión B/D: APPROVE.**
 - **D (Kimi): APPROVE 9/10.** Declaró el HIGH del índice no-usado (verificado con explain: 5000 docs
   examinados/5 resultados); tras aplicar su fix exacto (índice con prefijo userId) revalidó y cerró el HIGH.
-- **B (Codex): TEAM_UNAVAILABLE** en esta ronda (timeouts a reasoning xhigh; aprobó 9/10 en las rondas
-  previas de esta misma feature). Por la cadena B→D, **D ejerció autoridad primaria heredada**.
-- **DECISIÓN DE AVANCE (Equipo A):** se avanza con la aprobación de D (heredero). **Pendiente obligatorio:
-  validación de B al retomar** — si B rechaza con HIGH, vuelve a ser bloqueante. LOW diferido: índice
-  compuesto `{status,userId}` en GoogleConnection (deuda técnica, ruido a escala pequeña).
+- **B (Codex, autoridad primaria): APPROVE 9/10.** Confirmó correctness/concurrencia/aislamiento y que el
+  índice `{userId,googleSyncStatus,updatedAt}` sirve a la query (`$in` de userId → googleSyncStatus → rango
+  updatedAt). Caveat LOW: el `limit(BATCH)` sin `sort` puede sesgar por orden de índice con backlog enorme
+  (mismo patrón que los passes 1-3 del reconciler; no rompe correctness; backlog acotado a escala self-hosted).
+- **LOW diferidos (deuda técnica):** índice compuesto `{status,userId}` en GoogleConnection; `sort` en el
+  backstop. Ruido a escala pequeña; registrados como follow-up.
 
 Tests: `reconciler-gcal.test.ts` (2) — re-encola sólo al conectado; sin conexión activa no re-encola. 617/617.
