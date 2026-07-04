@@ -13,6 +13,10 @@ COPY packages/shared/src packages/shared/src
 COPY packages/shared/tsconfig.json packages/shared/
 COPY packages/web/index.html packages/web/vite.config.ts packages/web/tsconfig.json packages/web/tailwind.config.js packages/web/postcss.config.js packages/web/
 COPY packages/web/src packages/web/src
+# public/ (iconos hosteados de firmas /sig-icons/*.png, favicon, etc.). Vite lo copia a dist/ en el build.
+# Sin esto NO entra a la imagen → nginx sirve el fallback SPA para /sig-icons/*.png y los iconos de firma
+# salen ROTOS en el preview y en TODOS los emails enviados.
+COPY packages/web/public packages/web/public
 
 RUN pnpm --filter @webmail6/shared build
 
