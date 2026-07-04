@@ -55,7 +55,12 @@ MeetRoomSchema.index(
   { bookingId: 1 },
   { unique: true, partialFilterExpression: { bookingId: { $exists: true } } }
 );
-MeetRoomSchema.index({ calendarEventId: 1 });
+// ÚNICO parcial: una sola sala por evento de calendario → el create race-safe (el 2º insert concurrente
+// lanza duplicate-key y `createCalendarMeetRoom` reusa la sala existente). Review B (HIGH).
+MeetRoomSchema.index(
+  { calendarEventId: 1 },
+  { unique: true, partialFilterExpression: { calendarEventId: { $exists: true } } }
+);
 // GC largo: TTL sobre purgeAt (NO sobre expiresAt — borrar al expirar mataría links recién terminados).
 MeetRoomSchema.index({ purgeAt: 1 }, { expireAfterSeconds: 0 });
 

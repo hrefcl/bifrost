@@ -12,7 +12,10 @@ type EventCreateInput = Omit<
   CalendarEvent,
   'id' | 'createdAt' | 'updatedAt' | 'userId' | 'attendees' | 'meetUrl' | 'meetRoomId'
 > & { withMeet?: boolean; attendees?: AttendeeInput[] };
-type EventPatchInput = Partial<Omit<CalendarEvent, 'attendees'>> & { attendees?: AttendeeInput[] };
+type EventPatchInput = Partial<Omit<CalendarEvent, 'attendees'>> & {
+  attendees?: AttendeeInput[];
+  withMeet?: boolean;
+};
 
 export const useCalendarStore = defineStore('calendar', () => {
   const events = ref<CalendarEvent[]>([]);

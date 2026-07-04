@@ -166,7 +166,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         message: 'endDate must be after startDate',
       });
     }
-    const { withMeet: _withMeet, attendees: patchAttendees, ...patchFields } = body;
+    const { withMeet, attendees: patchAttendees, ...patchFields } = body;
     const update: Record<string, unknown> = { ...patchFields };
     // Invitados: normalizados con estado/rol por default (consistente con el create).
     if (patchAttendees) {
@@ -194,6 +194,29 @@ export default function calendarRoutes(fastify: FastifyInstance) {
       return reply
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
+    }
+    // withMeet en PATCH: agregar sala a un evento que aún no tiene (review B — MED: no descartar el flag).
+    // Idempotente por el índice único de `calendarEventId`; degradado si Meet off o falla.
+    if (withMeet && !event.meetRoomId) {
+      const settings = await getStoredMeetSettings();
+      if (meetEnabled(settings)) {
+        try {
+          const room = await createCalendarMeetRoom({
+            calendarEventId: event._id,
+            userId: new Types.ObjectId(request.user.userId),
+            name: event.summary,
+            endAt: event.endDate,
+            settings,
+          });
+          event.meetRoomId = room.meetRoomId;
+          event.meetUrl = room.meetUrl;
+          await event.save();
+        } catch (err) {
+          request.log.warn(
+            `[calendar] no se pudo crear la sala Meet al editar (evento sin Meet): ${(err as Error).message}`
+          );
+        }
+      }
     }
     await enqueueGoogleSync(event._id); // refleja la edición en Google (fail-soft)
     return serializeCalendarEvent(event);

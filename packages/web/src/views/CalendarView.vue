@@ -50,6 +50,8 @@ const createForm = ref({
   attendees: [] as { name?: string; email: string }[],
 });
 const createError = ref('');
+// El toggle de Meet se bloquea sólo si el evento YA tiene sala (no se puede quitar desde acá).
+const meetLocked = ref(false);
 // Invitados (estilo Google): agregar por email.
 const attendeeInput = ref('');
 function addAttendee() {
@@ -194,6 +196,7 @@ function onSelect(arg: DateSelectArg): void {
     withMeet: false,
     attendees: [],
   };
+  meetLocked.value = false;
   createError.value = '';
   showCreate.value = true;
   fcApi()?.unselect();
@@ -216,6 +219,7 @@ function openCreate(): void {
     withMeet: false,
     attendees: [],
   };
+  meetLocked.value = false;
   createError.value = '';
   showCreate.value = true;
 }
@@ -233,6 +237,7 @@ function openEdit(ev: CalendarEvent): void {
     withMeet: Boolean(ev.meetUrl),
     attendees: (ev.attendees ?? []).map((a) => ({ name: a.name, email: a.email })),
   };
+  meetLocked.value = Boolean(ev.meetUrl);
   createError.value = '';
   detail.value = null;
   showCreate.value = true;
@@ -262,6 +267,7 @@ async function submitCreate(): Promise<void> {
         endDate: end.toISOString(),
         allDay: createForm.value.allDay,
         attendees: createForm.value.attendees,
+        withMeet: createForm.value.withMeet,
       });
     } else {
       await store.createEvent({
@@ -569,7 +575,7 @@ onMounted(async () => {
 
         <!-- Bifrost Meet -->
         <label class="check">
-          <input v-model="createForm.withMeet" type="checkbox" :disabled="!!editingId" />
+          <input v-model="createForm.withMeet" type="checkbox" :disabled="meetLocked" />
           {{ t('calendar.withMeet') }}
         </label>
 
