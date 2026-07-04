@@ -110,13 +110,31 @@ export async function setMailboxPassword(email: string, password: string): Promi
   const account = await Account.findOne({ email: target });
   if (!account) throw new MailboxNotFoundError(target);
   const provider = await getActiveMailboxProvider();
-  await provider.setPassword(target, password); // lanza si falla el mailserver → 502 en la ruta
-  // Mantener sincronizadas las credenciales cifradas que usa el webmail (si no, el sync falla hasta el
-  // próximo login). Best-effort: el cambio de password del buzón ya se aplicó.
+
+  if (account.provisionSuspendedLine) {
+    // Buzón SUSPENDIDO: no hay línea en accounts.cf, así que setPassword del provider lanzaría "no existe"
+    // (502 engañoso: el buzón existe, sólo está suspendido). Reescribimos el hash guardado para que la
+    // nueva password aplique al reactivar. Mongo es la única fuente del cambio → si el save falla, 502
+    // honesto (nada aplicado). MED-6.
+    account.provisionSuspendedLine = provider.buildAccountLine(target, password);
+    account.setImapCredentials(password);
+    account.setSmtpCredentials(password);
+    await account.save();
+    return;
+  }
+
+  await provider.setPassword(target, password); // side-effect REAL; si falla → 502 (sin cambio aplicado)
+  // Sincronizar las credenciales cifradas del webmail. BEST-EFFORT: el password del buzón YA cambió, así
+  // que un fallo del save de Mongo NO debe devolver 502 (no re-cambia el password); se re-sincroniza en el
+  // próximo login del usuario. MED-4.
   account.setImapCredentials(password);
   account.setSmtpCredentials(password);
   account.status = 'active';
-  await account.save();
+  try {
+    await account.save();
+  } catch {
+    // Password ya aplicada en el mailserver; el sync de credenciales cifradas se recupera al próximo login.
+  }
 }
 
 /** Resetea la contraseña: genera una fuerte, la fija y la devuelve UNA vez. */
@@ -145,31 +163,40 @@ export async function patchMailbox(
   if (!account) throw new MailboxNotFoundError(target);
   const provider = await getActiveMailboxProvider();
 
-  if (patch.displayName !== undefined) {
-    await User.updateOne({ _id: account.userId }, { $set: { displayName: patch.displayName } });
+  // Orden deliberado: primero las ops del mailserver que pueden FALLAR (→ 409/502) sin haber commiteado
+  // Mongo, así un fallo deja el registro intacto. Residual conocido (TD-PROVISION-ATOMIC): displayName
+  // vive en otro documento (User) → no es atómico con el Account; aceptable para 1 admin secuencial.
+  if (patch.aliases !== undefined) {
+    await provider.setAliases(target, patch.aliases); // AliasConflictError → 409; otro fallo → 502
+  }
+  if (patch.active !== undefined) {
+    // Convergemos al estado deseado (no gateamos por el estado actual) → un retry tras un fallo parcial
+    // se auto-sana: addRawLine y deleteMailbox son idempotentes.
+    if (patch.active) {
+      // → ACTIVO: asegurar la línea presente (restaura la password original) y limpiar el campo.
+      if (account.provisionSuspendedLine) await provider.addRawLine(account.provisionSuspendedLine);
+      account.provisionSuspendedLine = undefined;
+      account.status = 'active';
+    } else {
+      // → SUSPENDIDO: PERSISTIR el hash en Mongo ANTES de borrar la línea del accounts.cf (HIGH-1). Si el
+      // save falla, el buzón no se toca; si el delete falla, el hash ya quedó guardado → el retry completa
+      // el borrado. Nunca queda sin línea Y sin hash guardado (perdería la password para siempre).
+      if (!account.provisionSuspendedLine) {
+        const line = await provider.getRawLine(target);
+        if (line) account.provisionSuspendedLine = line;
+      }
+      account.status = 'disabled';
+      if (account.provisionSuspendedLine) {
+        await account.save();
+        await provider.deleteMailbox(target); // sin purgeMaildir (corta IMAP/SMTP; conserva el Maildir)
+      }
+    }
   }
   if (patch.quotaBytes !== undefined) {
     account.quotaBytes = patch.quotaBytes;
   }
-  if (patch.aliases !== undefined) {
-    await provider.setAliases(target, patch.aliases); // puede lanzar → 502
-  }
-  if (patch.active !== undefined) {
-    const suspendedLine = account.provisionSuspendedLine;
-    if (patch.active && suspendedLine) {
-      // Reactivar: restaurar la línea guardada (conserva la password original).
-      await provider.addRawLine(suspendedLine);
-      account.provisionSuspendedLine = undefined;
-      account.status = 'active';
-    } else if (!patch.active && !suspendedLine) {
-      // Suspender: guardar la línea y quitarla del accounts.cf (corta IMAP/SMTP; no borra el Maildir).
-      const line = await provider.getRawLine(target);
-      if (line) {
-        account.provisionSuspendedLine = line;
-        await provider.deleteMailbox(target); // sin purgeMaildir
-      }
-      account.status = 'disabled';
-    }
+  if (patch.displayName !== undefined) {
+    await User.updateOne({ _id: account.userId }, { $set: { displayName: patch.displayName } });
   }
   await account.save();
 

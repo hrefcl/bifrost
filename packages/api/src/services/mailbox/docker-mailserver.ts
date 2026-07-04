@@ -13,7 +13,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import bcrypt from 'bcryptjs';
-import { MailboxExistsError, type MailboxProvider } from './types.js';
+import { AliasConflictError, MailboxExistsError, type MailboxProvider } from './types.js';
 
 /** Genera el hash Dovecot para `password`. bcrypt cost 10; prefijo normalizado a `{BLF-CRYPT}$2y$`. */
 function hashPassword(password: string): string {
@@ -117,13 +117,26 @@ export class DockerMailserverProvider implements MailboxProvider {
     });
   }
 
-  /** Restaura una línea cruda `email|hash` (para reactivar un buzón suspendido sin perder la password). */
+  /** Construye la línea `email|hash` para `password` (no escribe). Reescribir el hash de un suspendido. */
+  buildAccountLine(email: string, password: string): string {
+    return `${email.trim().toLowerCase()}|${hashPassword(password)}`;
+  }
+
+  /** Asegura que la línea cruda `email|hash` EXACTA esté presente (reactivar un buzón suspendido sin
+   *  perder la password). Si ya hay una línea para ese email con distinto hash, la REEMPLAZA: la línea
+   *  guardada es la fuente de verdad al reactivar (Bifrost es la autoridad). Idempotente por línea exacta. */
   async addRawLine(rawLine: string): Promise<void> {
     const target = emailOf(rawLine);
+    const clean = rawLine.trim();
     await this.withLock(async () => {
       const lines = await this.readLines();
-      if (lines.some((l) => emailOf(l) === target)) return; // ya activo, idempotente
-      lines.push(rawLine.trim());
+      const idx = lines.findIndex((l) => emailOf(l) === target);
+      if (idx >= 0) {
+        if (lines[idx] === clean) return; // ya exacta → no reescribir
+        lines[idx] = clean; // reemplaza el hash viejo por el guardado (convergencia real)
+      } else {
+        lines.push(clean);
+      }
       await this.writeLines(lines);
     });
   }
@@ -157,11 +170,24 @@ export class DockerMailserverProvider implements MailboxProvider {
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
         throw e;
       });
-      // Conserva las líneas que NO apuntan a este email; agrega las nuevas.
-      const kept = content
+      const rows = content
         .split('\n')
         .map((l) => l.trim())
-        .filter((l) => l && (l.startsWith('#') || l.split(/\s+/)[1]?.toLowerCase() !== target));
+        .filter(Boolean);
+      // Unicidad global: si un alias pedido ya apunta a OTRO buzón, es conflicto (no lo robamos).
+      const ownedByOthers = new Set(
+        rows
+          .filter((l) => !l.startsWith('#'))
+          .map((l) => l.split(/\s+/))
+          .filter((p) => p[1]?.toLowerCase() !== target)
+          .map((p) => p[0].toLowerCase())
+      );
+      const conflict = clean.find((a) => ownedByOthers.has(a));
+      if (conflict) throw new AliasConflictError(conflict);
+      // Conserva las líneas que NO apuntan a este email; agrega las nuevas.
+      const kept = rows.filter(
+        (l) => l.startsWith('#') || l.split(/\s+/)[1]?.toLowerCase() !== target
+      );
       const added = clean.map((a) => `${a} ${target}`);
       const out = [...kept, ...added].join('\n') + '\n';
       const tmp = `${this.virtualFile}.tmp-${String(process.pid)}`;

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { Account } from '../models/Account.js';
 import { getStorageDefaults } from '../services/storage-defaults.js';
 import { provisioningEnabled, MailboxExistsError } from '../services/mailbox/index.js';
+import { AliasConflictError } from '../services/mailbox/types.js';
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import { verifyProvisionKey, hasActiveProvisionKey } from '../services/provision-keys.js';
@@ -50,6 +51,7 @@ async function isAuthorized(provided: string | undefined): Promise<boolean> {
 // Cache de idempotencia para el ALTA (Idempotency-Key → respuesta). TTL 15 min. Resuelve el caso
 // "el alta tuvo éxito pero la respuesta se perdió → el retry daría 409 sin la password generada".
 const IDEM_TTL_MS = 15 * 60 * 1000;
+const IDEM_MAX = 2000;
 const idemCache = new Map<string, { at: number; status: number; body: unknown }>();
 function idemGet(key: string): { status: number; body: unknown } | null {
   const hit = idemCache.get(key);
@@ -61,8 +63,19 @@ function idemGet(key: string): { status: number; body: unknown } | null {
   return { status: hit.status, body: hit.body };
 }
 function idemSet(key: string, status: number, body: unknown): void {
-  if (idemCache.size > 2000) idemCache.clear(); // backstop anti-crecimiento
-  idemCache.set(key, { at: Date.now(), status, body });
+  const now = Date.now();
+  if (idemCache.size >= IDEM_MAX) {
+    // Primero barrer expirados (TTL) — nunca borra respuestas vigentes de un retry legítimo.
+    for (const [k, v] of idemCache) if (now - v.at > IDEM_TTL_MS) idemCache.delete(k);
+    // Si sigue lleno (todas vigentes), descartar las MÁS ANTIGUAS (Map preserva orden de inserción),
+    // no un clear() total que perdería todas las respuestas cacheadas de golpe.
+    while (idemCache.size >= IDEM_MAX) {
+      const oldest = idemCache.keys().next().value;
+      if (oldest === undefined) break;
+      idemCache.delete(oldest);
+    }
+  }
+  idemCache.set(key, { at: now, status, body });
 }
 
 const emailParam = (raw: string) =>
@@ -146,13 +159,11 @@ export default function provisionRoutes(fastify: FastifyInstance) {
       });
     } catch (err) {
       if (err instanceof MailboxExistsError) {
-        return reply
-          .code(409)
-          .send({
-            statusCode: 409,
-            error: 'Conflict',
-            message: 'Ya existe un buzón con ese email.',
-          });
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ya existe un buzón con ese email.',
+        });
       }
       throw err; // atómico con rollback → sin buzón creado; el retry es seguro (→ 500 sin side-effect)
     }
@@ -195,6 +206,9 @@ export default function provisionRoutes(fastify: FastifyInstance) {
           return reply
             .code(404)
             .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        if (err instanceof AliasConflictError) {
+          return reply.code(409).send({ statusCode: 409, error: 'Conflict', message: err.message });
         }
         // Un fallo del mailserver (alias/suspend) → 502 (sin side-effect parcial que importe).
         return reply.code(502).send({

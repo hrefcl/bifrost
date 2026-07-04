@@ -635,3 +635,34 @@ monotónico), validación de tamaño de logo, hint de modo. Diferidos como deuda
   XSS explotable. Documentado, no bloqueante.
 - **PRODUCT DECISION (preview sin clamp de política):** el preview del admin NO se acota a `allowedTemplateIds`
   a propósito — el admin debe poder previsualizar CUALQUIER diseño antes de habilitarlo/fijarlo.
+
+## Provisioning CRUD de buzones — review retroactivo A/B/C/D (jul 2026)
+
+El CRUD de buzones (#51: list/patch/password/reset, suspend/restore, aliases) se mergeó y desplegó a prod
+SIN pasar por B/C/D. Revisión retroactiva (deuda de proceso cerrada). **2 HIGH encontrados y CERRADOS**:
+
+- **HIGH-1 (C GLM) — CERRADO:** suspender persistía `provisionSuspendedLine` en memoria y borraba la línea
+  del `accounts.cf` ANTES del `account.save()` final → un fallo de Mongo dejaba el buzón sin línea Y sin hash
+  guardado = **password perdida para siempre**. Fix: persistir el hash (`account.save`) ANTES de `deleteMailbox`,
+  y converger al estado deseado (addRawLine/deleteMailbox idempotentes) → retry tras fallo parcial se auto-sana.
+- **HIGH-2 (B Codex) — CERRADO:** `addRawLine` era no-op si ya existía una línea para el email, sin comparar el
+  hash → tras un partial-suspend + cambio de password, reactivar dejaba la password VIEJA vigente. Fix: upsert
+  exacto por email (reemplaza la línea si el hash difiere; la guardada es la fuente de verdad al reactivar).
+- MEDIUMs cerrados: idemCache clear()-total → eviction por TTL + drop-oldest (MED-2); password 502-con-side-effect
+  → sync de credenciales best-effort (MED-4); alias sin unicidad global → `AliasConflictError`→409 (MED-5);
+  password sobre suspendido → reescribe el hash guardado, no 502 (MED-6).
+
+Scoreboard v2 (código corregido): C(GLM) 9 APPROVE, D(Kimi) 8 APPROVE, B(Codex) re-verificación del HIGH-2.
+Deuda viva no bloqueante:
+
+- **TD-PROVISION-ATOMIC (MEDIUM, diferible — target 1-admin):** `patchMailbox` toca DOS documentos (User para
+  `displayName`, Account para el resto) + el provider (archivos). Se reordenó para que las ops del mailserver
+  (aliases/active) que pueden 502ear ocurran ANTES de commitear Mongo (un fallo deja el registro intacto), pero
+  `displayName`↔`Account` siguen sin ser atómicos entre sí. Aceptable para 1 admin secuencial; elevar si hay
+  edición concurrente. Alineado con [[bifrost-self-hosted-no-babysitting]] (defaults sanos, sin maquinaria).
+- **TD-PROVISION-CREDS-SYNC-LOG (LOW, observabilidad — D Kimi):** el `catch {}` best-effort de MED-4 (sync de
+  credenciales cifradas tras cambiar la password en el mailserver) es silencioso — un operador no ve si el sync
+  a Mongo falló (se auto-recupera al próximo login del usuario). Falta un logger compartido en `services/`;
+  follow-up: exponerlo y loggear el fallo. No bloqueante (la password YA se aplicó en el mailserver).
+- **TD-PROVISION-QUOTA-USED (LOW, ya documentado):** `quotaUsedBytes` siempre 0; el uso real vive en el Maildir
+  (doveadm) y no está montado. Follow-up: exponer el uso real vía doveadm/mount.
