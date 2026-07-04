@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CalendarEvent, serializeCalendarEvent } from '../models/CalendarEvent.js';
 import { requireOwnedAccount } from '../lib/authz.js';
+import { googleConfigured } from '../config/env.js';
+import { enqueueGoogleSync } from '../services/google/dispatch.js';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
@@ -41,13 +43,11 @@ export default function calendarRoutes(fastify: FastifyInstance) {
   fastify.get('/', async (request, reply) => {
     const parsed = rangeSchema.safeParse(request.query);
     if (!parsed.success) {
-      return reply
-        .code(400)
-        .send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'start y end requeridos (≤366 días)',
-        });
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'start y end requeridos (≤366 días)',
+      });
     }
     const { start, end } = parsed.data;
     // Solapamiento REAL con el rango [start,end]: el evento empieza antes del fin Y termina
@@ -57,6 +57,9 @@ export default function calendarRoutes(fastify: FastifyInstance) {
       userId: request.user.userId,
       startDate: { $lte: new Date(end) },
       endDate: { $gte: new Date(start) },
+      // Los tombstones pendientes de borrado en Google (delete manual ya confirmado al usuario) no
+      // deben seguir viéndose en el calendario mientras el sync los elimina.
+      googleSyncStatus: { $ne: 'deleting' },
     }).sort({ startDate: 1 });
     return events.map(serializeCalendarEvent);
   });
@@ -66,20 +69,21 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     await requireOwnedAccount(request.user.userId, body.accountId);
     // Invariante fin>inicio también en create (antes sólo se validaba en PATCH) — review B.
     if (new Date(body.endDate).getTime() <= new Date(body.startDate).getTime()) {
-      return reply
-        .code(400)
-        .send({
-          statusCode: 400,
-          error: 'Bad Request',
-          message: 'endDate must be after startDate',
-        });
+      return reply.code(400).send({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: 'endDate must be after startDate',
+      });
     }
     const event = await CalendarEvent.create({
       ...body,
       userId: request.user.userId,
       startDate: new Date(body.startDate),
       endDate: new Date(body.endDate),
+      // 'pending' sólo si la feature está activa → el reconciler puede rastrear un enqueue perdido.
+      googleSyncStatus: googleConfigured() ? 'pending' : undefined,
     });
+    await enqueueGoogleSync(event._id); // sync a Google (no-op si la feature está apagada; fail-soft)
     return serializeCalendarEvent(event);
   });
 
@@ -124,6 +128,8 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     const update: Record<string, unknown> = { ...body };
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);
+    // La edición debe re-reflejarse en Google: 'pending' hace rastreable un enqueue perdido.
+    if (googleConfigured()) update.googleSyncStatus = 'pending';
 
     // Escritura ATÓMICA y PARCIAL ($set sólo de los campos del body): evita el lost-update de un
     // read-modify-write con save() (que reescribiría el doc entero y pisaría cambios concurrentes en
@@ -138,12 +144,29 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
     }
+    await enqueueGoogleSync(event._id); // refleja la edición en Google (fail-soft)
     return serializeCalendarEvent(event);
   });
 
   fastify.delete('/:eventId', async (request, reply) => {
     const { eventId } = request.params as { eventId: string };
     objectIdSchema.parse(eventId);
+    // Con Google configurado NO se borra en duro: se deja un TOMBSTONE (cancelled + 'deleting')
+    // ATÓMICAMENTE y el sync lo borra en Google (por id determinista, idempotente) y RECIÉN AHÍ elimina
+    // el doc local (evita huérfanos en Google). Se tombstonea SIEMPRE —no sólo si ya tiene googleEventId—
+    // porque un evento aún 'pending' (sync en vuelo, id no guardado todavía) igual puede terminar en
+    // Google; el motor de sync resuelve el resto (si nunca se creó, el 404 del delete es un no-op).
+    const tomb = googleConfigured()
+      ? await CalendarEvent.findOneAndUpdate(
+          { _id: eventId, userId: request.user.userId },
+          { $set: { status: 'cancelled', googleSyncStatus: 'deleting' } }
+        )
+      : null;
+    if (tomb) {
+      await enqueueGoogleSync(tomb._id);
+      return { ok: true };
+    }
+    // Nunca sincronizado (o feature apagada): borrado directo.
     const result = await CalendarEvent.deleteOne({ _id: eventId, userId: request.user.userId });
     if (result.deletedCount === 0) {
       return reply

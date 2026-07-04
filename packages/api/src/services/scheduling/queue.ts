@@ -16,7 +16,7 @@ import { env } from '../../config/env.js';
 
 export const SCHEDULING_QUEUE = 'scheduling';
 
-export type SchedulingJobName = 'send-email' | 'reconcile';
+export type SchedulingJobName = 'send-email' | 'reconcile' | 'gcal-sync';
 
 const isMock = (): boolean => env.REDIS_URL === 'mock';
 

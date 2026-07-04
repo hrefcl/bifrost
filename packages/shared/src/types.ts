@@ -289,6 +289,10 @@ export interface CalendarEvent {
   meetRoomId?: string;
   /** URL pública de unión a la sala Meet (`${publicBaseUrl}/meet/<slug>`); no es secreto. */
   meetUrl?: string;
+  /** Estado de sync con Google Calendar (F-gcal). Ausente = nunca tocó Google. NO incluye tokens. */
+  googleSyncStatus?: 'pending' | 'synced' | 'error' | 'skipped' | 'deleting' | 'deleted';
+  googleSyncError?: string;
+  googleLastSyncedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
