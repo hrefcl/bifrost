@@ -429,6 +429,70 @@ function cleverty(ctx: SignatureContext): string {
   );
 }
 
+/** 8) Banner — cabecera con banda de color de acento (nombre en blanco), cuerpo con contacto + redes. */
+function banner(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const sub = [role(ctx), ctx.companyName ? esc(ctx.companyName) : ''].filter(Boolean).join(' · ');
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">` +
+    `<tr><td style="background-color:${ac};padding:14px 20px">` +
+    `<div style="font-size:18px;font-weight:bold;color:#ffffff">${esc(ctx.displayName)}</div>` +
+    (sub ? `<div style="color:#ffffff;font-size:13px">${sub}</div>` : '') +
+    `</td></tr>` +
+    `<tr><td style="padding:14px 20px">${contactTable(ctx)}${socialButtons(ctx)}</td></tr>` +
+    `</table>`
+  );
+}
+
+/** 9) Ejecutiva — nombre grande, regla de acento corta, cargo·empresa, contacto y redes. Sobria. */
+function ejecutiva(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const sub = [
+    role(ctx),
+    ctx.companyName
+      ? `<span style="color:${ac};font-weight:bold">${esc(ctx.companyName)}</span>`
+      : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr><td>` +
+    `<div style="font-size:19px;font-weight:bold;color:${INK};letter-spacing:.3px">${esc(ctx.displayName)}</div>` +
+    `<div style="border-top:2px solid ${ac};width:36px;margin:7px 0;font-size:0;line-height:0">&nbsp;</div>` +
+    (sub ? `<div style="color:${MUTED};font-size:13px">${sub}</div>` : '') +
+    contactTable(ctx) +
+    socialButtons(ctx) +
+    `</td></tr></table>`
+  );
+}
+
+/** 10) Compacta — avatar chico + nombre/cargo, contacto en una línea con separadores (huella mínima). */
+function compacta(ctx: SignatureContext): string {
+  const ac = color(ctx.accentColor);
+  const phone = ctx.personalPhone ?? ctx.companyPhone;
+  const parts = [
+    phone ? link(`tel:${phone}`, phone, `color:${MUTED};text-decoration:none`) : '',
+    link(`mailto:${ctx.email}`, ctx.email, `color:${ac};text-decoration:none`),
+    ctx.domainUrl
+      ? link(ctx.domainUrl, cleanHost(ctx.domainUrl), `color:${ac};text-decoration:none`)
+      : '',
+  ].filter(Boolean);
+  return (
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
+    `<td style="padding-right:14px;vertical-align:middle">${avatar(ctx, ac, 46)}</td>` +
+    `<td style="vertical-align:middle">` +
+    `<div style="font-size:15px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}${role(ctx) ? `<span style="color:${MUTED};font-weight:normal"> · ${role(ctx)}</span>` : ''}</div>` +
+    (ctx.companyName
+      ? `<div style="color:${ac};font-weight:bold;font-size:12px">${esc(ctx.companyName)}</div>`
+      : '') +
+    (parts.length
+      ? `<div style="margin-top:4px;color:${MUTED};font-size:12px">${parts.join(esc(' · '))}</div>`
+      : '') +
+    socialButtons(ctx, 22) +
+    `</td></tr></table>`
+  );
+}
+
 export const SIGNATURE_TEMPLATES = [
   { id: 'clasica', nameKey: 'settings.signatureTpl.clasica', render: clasica },
   { id: 'moderna', nameKey: 'settings.signatureTpl.moderna', render: moderna },
@@ -437,6 +501,9 @@ export const SIGNATURE_TEMPLATES = [
   { id: 'centrada', nameKey: 'settings.signatureTpl.centrada', render: centrada },
   { id: 'corporativa', nameKey: 'settings.signatureTpl.corporativa', render: corporativa },
   { id: 'cleverty', nameKey: 'settings.signatureTpl.cleverty', render: cleverty },
+  { id: 'banner', nameKey: 'settings.signatureTpl.banner', render: banner },
+  { id: 'ejecutiva', nameKey: 'settings.signatureTpl.ejecutiva', render: ejecutiva },
+  { id: 'compacta', nameKey: 'settings.signatureTpl.compacta', render: compacta },
 ] as const satisfies readonly SignatureTemplate[];
 
 export type SignatureTemplateId = (typeof SIGNATURE_TEMPLATES)[number]['id'];

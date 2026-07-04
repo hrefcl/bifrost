@@ -202,6 +202,19 @@ describe('signature-templates (F2)', () => {
     expect(evil).not.toContain('badge-apple.png'); // safeUrl rechazó → sin badge
   });
 
+  it('catálogo tiene los 10 diseños incl. banner/ejecutiva/compacta; el banner mantiene su banda de acento', () => {
+    for (const id of ['banner', 'ejecutiva', 'compacta']) {
+      expect(SIGNATURE_TEMPLATE_IDS).toContain(id);
+    }
+    // El banner usa una banda con background-color de acento → debe sobrevivir sanitizeEmailHtml.
+    const html = renderSignature('banner', { ...base, accentColor: '#2563ff' });
+    expect(sanitizeEmailHtml(html)).toContain('background-color:#2563ff');
+    // compacta rinde el nombre y la empresa
+    const c = renderSignature('compacta', base);
+    expect(c).toContain('Ana Pérez');
+    expect(c).toContain('Aulion');
+  });
+
   it('cleverty: badge parcial — solo App Store válido (Google Play con esquema malo) → solo el válido', () => {
     const html = renderSignature('cleverty', {
       ...base,

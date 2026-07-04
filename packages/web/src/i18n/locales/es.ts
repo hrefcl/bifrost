@@ -574,6 +574,9 @@ export default {
       centrada: 'Centrada',
       corporativa: 'Corporativa',
       cleverty: 'Cleverty',
+      banner: 'Banner',
+      ejecutiva: 'Ejecutiva',
+      compacta: 'Compacta',
     },
     security: {
       title: 'Seguridad',
