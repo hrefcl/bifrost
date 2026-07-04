@@ -209,6 +209,10 @@ describe('signature-templates (F2)', () => {
     // El banner usa una banda con background-color de acento → debe sobrevivir sanitizeEmailHtml.
     const html = renderSignature('banner', { ...base, accentColor: '#2563ff' });
     expect(sanitizeEmailHtml(html)).toContain('background-color:#2563ff');
+    expect(html).not.toContain('overflow:hidden'); // estilo muerto (lo descarta el sanitizer) — removido
+    // La regla de acento de ejecutiva (border-top) sobrevive el sanitizer.
+    const ej = renderSignature('ejecutiva', { ...base, accentColor: '#2563ff' });
+    expect(sanitizeEmailHtml(ej)).toContain('border-top:2px solid #2563ff');
     // compacta rinde el nombre y la empresa
     const c = renderSignature('compacta', base);
     expect(c).toContain('Ana Pérez');

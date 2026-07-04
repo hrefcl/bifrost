@@ -434,8 +434,10 @@ function banner(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
   const sub = [role(ctx), ctx.companyName ? esc(ctx.companyName) : ''].filter(Boolean).join(' · ');
   return (
-    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px;overflow:hidden">` +
-    `<tr><td style="background-color:${ac};padding:14px 20px">` +
+    // Sin overflow:hidden (el sanitizer lo descarta): la banda redondea sus PROPIAS esquinas superiores,
+    // así el redondeo es robusto aunque el clip del contenedor no exista.
+    `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK};border:1px solid #e5e7eb;border-radius:10px">` +
+    `<tr><td style="background-color:${ac};padding:14px 20px;border-radius:9px 9px 0 0">` +
     `<div style="font-size:18px;font-weight:bold;color:#ffffff">${esc(ctx.displayName)}</div>` +
     (sub ? `<div style="color:#ffffff;font-size:13px">${sub}</div>` : '') +
     `</td></tr>` +
@@ -469,6 +471,7 @@ function ejecutiva(ctx: SignatureContext): string {
 /** 10) Compacta — avatar chico + nombre/cargo, contacto en una línea con separadores (huella mínima). */
 function compacta(ctx: SignatureContext): string {
   const ac = color(ctx.accentColor);
+  const rol = role(ctx);
   const phone = ctx.personalPhone ?? ctx.companyPhone;
   const parts = [
     phone ? link(`tel:${phone}`, phone, `color:${MUTED};text-decoration:none`) : '',
@@ -481,7 +484,7 @@ function compacta(ctx: SignatureContext): string {
     `<table cellpadding="0" cellspacing="0" style="${FONT};color:${INK}"><tr>` +
     `<td style="padding-right:14px;vertical-align:middle">${avatar(ctx, ac, 46)}</td>` +
     `<td style="vertical-align:middle">` +
-    `<div style="font-size:15px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}${role(ctx) ? `<span style="color:${MUTED};font-weight:normal"> · ${role(ctx)}</span>` : ''}</div>` +
+    `<div style="font-size:15px;font-weight:bold;color:${INK}">${esc(ctx.displayName)}${rol ? `<span style="color:${MUTED};font-weight:normal"> · ${rol}</span>` : ''}</div>` +
     (ctx.companyName
       ? `<div style="color:${ac};font-weight:bold;font-size:12px">${esc(ctx.companyName)}</div>`
       : '') +
