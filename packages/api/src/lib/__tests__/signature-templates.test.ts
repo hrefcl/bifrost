@@ -209,6 +209,14 @@ describe('signature-templates (F2)', () => {
     expect(sanitizeEmailHtml(html).length).toBeGreaterThan(50);
   });
 
+  it('cleverty: el anillo del avatar SÍ sobrevive al sanitizer (background-color sólido, sin gradiente muerto)', () => {
+    const html = renderSignature('cleverty', { ...base, accentColor: '#2563ff' });
+    // No emitimos CSS que el sanitizer descarta (honestidad): sin background-image/linear-gradient.
+    expect(html).not.toContain('linear-gradient');
+    // El anillo (background-color de acento) permanece tras sanitizeEmailHtml → se ve en el email real.
+    expect(sanitizeEmailHtml(html)).toContain('background-color:#2563ff');
+  });
+
   it('corporativa: el tagline se muestra tanto con logo como sin logo (no se cae)', () => {
     // con logo (base tiene logoUrl) → tagline bajo el logo
     const withLogo = renderSignature('corporativa', { ...base, assetBase: 'https://cdn.test' });

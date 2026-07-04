@@ -115,11 +115,13 @@ function contactRow(
 ): string {
   if (!value) return '';
   const ic = icon(ctx, iconName);
-  const cell = ic ? `<td style="padding:3px 8px 3px 0;line-height:1">${ic}</td>` : '';
+  // Padding 3px sólo en modo bold (Cleverty); los templates previos conservan su 2px original.
+  const pad = opts?.bold ? '3px' : '2px';
+  const cell = ic ? `<td style="padding:${pad} 8px ${pad} 0;line-height:1">${ic}</td>` : '';
   const col = opts?.bold ? INK : MUTED;
   const weight = opts?.bold ? 'font-weight:bold;' : '';
   const text = link(href, value, `color:${col};text-decoration:none;${weight}`);
-  return `<tr>${cell}<td style="padding:3px 0;color:${col};font-size:13px;line-height:1.4;${weight}">${text}</td></tr>`;
+  return `<tr>${cell}<td style="padding:${pad} 0;color:${col};font-size:13px;line-height:1.4;${weight}">${text}</td></tr>`;
 }
 
 /** Iniciales del nombre: primera + última (ej. "Valentina Ríos" → "VR"); una sola si es un solo nombre. */
@@ -148,9 +150,10 @@ function avatar(ctx: SignatureContext, ac: string, size = 72): string {
 }
 
 /** Avatar con ANILLO de acento (estilo Cleverty): foto/iniciales en círculo gris claro, dentro de un
- *  anillo con gradiente acento→violeta. Adaptación email-safe: Gmail ignora `linear-gradient` en el borde,
- *  así que el anillo usa `background-color:${ac}` (sólido de acento) de fallback + `background-image` con
- *  el gradiente para los clientes que lo soportan. */
+ *  anillo de color de acento. Adaptación email-safe: el ref usa un anillo con gradiente azul→violeta, pero
+ *  el backstop `sanitizeEmailHtml` (y Gmail) sólo conservan `background-color` — `background-image`/
+ *  `linear-gradient` se elimina antes de llegar al cliente. Por eso el anillo es un SÓLIDO de acento (lo
+ *  más fiel que sobrevive el pipeline de email). */
 function ringedAvatar(ctx: SignatureContext, ac: string, size = 76): string {
   const s = String(size);
   const photo = img(
@@ -163,7 +166,7 @@ function ringedAvatar(ctx: SignatureContext, ac: string, size = 76): string {
     `<table cellpadding="0" cellspacing="0" style="width:${s}px;height:${s}px;border-radius:50%;background:#eef1f6">` +
       `<tr><td align="center" valign="middle" style="color:#8a94a6;font-size:${String(Math.round(size / 2.6))}px;font-weight:bold;letter-spacing:.5px;${FONT}">${esc(initials(ctx.displayName))}</td></tr></table>`;
   return (
-    `<table cellpadding="0" cellspacing="0" style="border-radius:50%;background-color:${ac};background-image:linear-gradient(135deg,${ac},#7c3aed)">` +
+    `<table cellpadding="0" cellspacing="0" style="border-radius:50%;background-color:${ac}">` +
     `<tr><td style="padding:3px"><table cellpadding="0" cellspacing="0" style="border-radius:50%;background:#fff"><tr><td style="padding:2px">${inner}</td></tr></table></td></tr></table>`
   );
 }
