@@ -149,14 +149,12 @@ export function getPartialEnv(): PartialEnv {
 
 export const env = isSetupMode() ? (getPartialEnv() as Env) : validateEnv();
 
-/**
- * Feature-gate de la integración Google Calendar (open source): sólo está disponible si el operador
- * configuró SU proyecto Google (client id + secret + redirect). Sin esto, los endpoints /google/* se
- * apagan y la UI muestra "no disponible" — nunca rompe el calendario.
+/*
+ * Feature-gate de la integración Google Calendar (open source): el operador configura SU proyecto Google
+ * (client id + secret + redirect) por env-var O desde /admin (DB, cifrado). La resolución DB-o-env y el
+ * gate `googleEnabled()` viven en `services/google/creds.ts` (async). Las env `GOOGLE_*` de arriba son el
+ * fallback. Sin nada configurado, los endpoints /google/* se apagan y la UI oculta la sección.
  */
-export function googleConfigured(): boolean {
-  return Boolean(env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET && env.GOOGLE_REDIRECT_URI);
-}
 
 /**
  * TTL del access token en segundos, derivado de JWT_ACCESS_TTL (formato '15m'/'3s'/'2h'…),

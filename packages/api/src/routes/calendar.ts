@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { CalendarEvent, serializeCalendarEvent } from '../models/CalendarEvent.js';
 import { requireOwnedAccount } from '../lib/authz.js';
-import { googleConfigured } from '../config/env.js';
+import { googleEnabled } from '../services/google/creds.js';
 import { enqueueGoogleSync } from '../services/google/dispatch.js';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
@@ -81,7 +81,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
       startDate: new Date(body.startDate),
       endDate: new Date(body.endDate),
       // 'pending' sólo si la feature está activa → el reconciler puede rastrear un enqueue perdido.
-      googleSyncStatus: googleConfigured() ? 'pending' : undefined,
+      googleSyncStatus: (await googleEnabled()) ? 'pending' : undefined,
     });
     await enqueueGoogleSync(event._id); // sync a Google (no-op si la feature está apagada; fail-soft)
     return serializeCalendarEvent(event);
@@ -129,7 +129,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     if (body.startDate) update.startDate = new Date(body.startDate);
     if (body.endDate) update.endDate = new Date(body.endDate);
     // La edición debe re-reflejarse en Google: 'pending' hace rastreable un enqueue perdido.
-    if (googleConfigured()) update.googleSyncStatus = 'pending';
+    if (await googleEnabled()) update.googleSyncStatus = 'pending';
 
     // Escritura ATÓMICA y PARCIAL ($set sólo de los campos del body): evita el lost-update de un
     // read-modify-write con save() (que reescribiría el doc entero y pisaría cambios concurrentes en
@@ -156,7 +156,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     // el doc local (evita huérfanos en Google). Se tombstonea SIEMPRE —no sólo si ya tiene googleEventId—
     // porque un evento aún 'pending' (sync en vuelo, id no guardado todavía) igual puede terminar en
     // Google; el motor de sync resuelve el resto (si nunca se creó, el 404 del delete es un no-op).
-    const tomb = googleConfigured()
+    const tomb = (await googleEnabled())
       ? await CalendarEvent.findOneAndUpdate(
           { _id: eventId, userId: request.user.userId },
           { $set: { status: 'cancelled', googleSyncStatus: 'deleting' } }

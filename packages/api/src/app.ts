@@ -18,6 +18,7 @@ import draftRoutes from './routes/drafts.js';
 import contactRoutes from './routes/contacts.js';
 import calendarRoutes from './routes/calendar.js';
 import googleCalendarRoutes from './routes/google-calendar.js';
+import { googleCalendarAdminRoutes } from './routes/google-calendar-admin.js';
 import scheduleRoutes from './routes/schedule.js';
 import schedulePublicRoutes from './routes/schedule-public.js';
 import adminRoutes from './routes/admin.js';
@@ -162,6 +163,7 @@ export async function buildApp() {
   await app.register(attachmentRoutes, { prefix: '/api/attachments' });
   await app.register(meetRoutes, { prefix: '/api/meet' });
   await app.register(meetAdminRoutes, { prefix: '/api/admin/meet' });
+  await app.register(googleCalendarAdminRoutes, { prefix: '/api/admin/google-calendar' });
   await app.register(complianceRoutes, { prefix: '/api/compliance' });
 
   return app;

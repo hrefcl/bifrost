@@ -1,4 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+
+// Este test es unit puro (state/PKCE, sin DB): se mockean las creds para que buildAuthUrl no pegue a Mongo.
+vi.mock('../creds.js', () => ({
+  resolveGoogleCreds: async () => ({
+    clientId: 'test-client',
+    clientSecret: 'test-secret',
+    redirectUri: 'https://example.com/api/calendar/google/callback',
+  }),
+  googleCredsStatus: async () => ({
+    source: 'env',
+    clientId: 'test-client',
+    redirectUri: 'https://example.com/api/calendar/google/callback',
+  }),
+  googleEnabled: async () => true,
+}));
+
 import { buildAuthUrl, consumeState, OAuthError, GOOGLE_SCOPE } from '../oauth.js';
 
 /** Extrae el parámetro `state` de una authUrl. */

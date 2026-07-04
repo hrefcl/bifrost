@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Types } from 'mongoose';
 import { CalendarEvent, type ICalendarEvent } from '../../models/CalendarEvent.js';
 import { GoogleConnection } from '../../models/GoogleConnection.js';
-import { googleConfigured } from '../../config/env.js';
+import { googleEnabled } from './creds.js';
 import { withLock } from '../../lib/withLock.js';
 import { upsertEvent, deleteEvent, type GoogleEventResource } from './calendar-api.js';
 import { OAuthError } from './oauth.js';
@@ -47,7 +47,7 @@ function toGoogleResource(ev: ICalendarEvent, id: string): GoogleEventResource {
 /** Punto de entrada del job. Serializa por evento; si otro job ya lo está sincronizando, no compite
  *  (ese job lee fresco y refleja el último estado; un cambio aún más nuevo lo retoma el reconciler). */
 export async function syncEventToGoogle(eventId: string): Promise<void> {
-  if (!googleConfigured()) return;
+  if (!(await googleEnabled())) return;
   await withLock(`gcal:evt:${eventId}`, () => doSync(eventId), { ttlSeconds: 30, waitMs: 5000 });
 }
 

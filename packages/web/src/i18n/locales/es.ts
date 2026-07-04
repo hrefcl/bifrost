@@ -279,6 +279,7 @@ export default {
       compliance: 'Compliance',
       scheduling: 'Agenda',
       preferences: 'Calendario',
+      gcal: 'Google Calendar',
       groups: 'Grupos',
       roles: 'Roles y permisos',
       signatures: 'Firmas',
@@ -419,6 +420,33 @@ export default {
     preferences: {
       title: 'Preferencias de calendario',
       desc: 'Valores por defecto del calendario para toda la instancia.',
+    },
+    gcal: {
+      title: 'Google Calendar',
+      desc: 'Conectá tu proyecto de Google para que los usuarios puedan sincronizar sus eventos con Google Calendar.',
+      guideTitle: '¿Cómo obtengo las credenciales? (guía paso a paso)',
+      guide1: 'Entrá a Google Cloud Console y creá (o elegí) un proyecto:',
+      guide2:
+        'Configurá la "OAuth consent screen" (tipo Externo; en modo Testing agregá tu Gmail como usuario de prueba):',
+      guide3: 'Creá una credencial OAuth tipo "Web application":',
+      guide4: 'En "Authorized redirect URIs" pegá EXACTAMENTE:',
+      guide5:
+        'Copiá el Client ID y el Client Secret que te da Google y pegalos abajo. Guardá — la sección de Google Calendar aparece en el calendario de los usuarios sin reiniciar.',
+      redirectUri: 'Redirect URI (registralo igual en Google)',
+      redirectHint:
+        'Debe coincidir EXACTO con el registrado en Google, o el login falla con redirect_uri_mismatch.',
+      clientId: 'Client ID',
+      clientSecret: 'Client Secret',
+      save: 'Guardar',
+      clear: 'Borrar credenciales',
+      saved: 'Credenciales guardadas. Google Calendar quedó activo para los usuarios.',
+      savedIncomplete: 'Guardado, pero falta el Client Secret para activar Google Calendar.',
+      errLoad: 'No se pudo cargar la configuración.',
+      errSave: 'No se pudo guardar. Revisá los datos.',
+      sourceDb: 'Configurado desde el panel de administración.',
+      sourceEnv: 'Configurado por variables de entorno del servidor.',
+      sourceError: 'Configuración inválida (el secret no se pudo descifrar). Reingresá las credenciales.',
+      sourceNone: 'Sin configurar — Google Calendar está desactivado para los usuarios.',
     },
     apply: 'Aplicar',
     storage: {

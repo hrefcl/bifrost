@@ -4,7 +4,7 @@ import { Account } from '../../models/Account.js';
 import { EventType } from '../../models/EventType.js';
 import { hostCalendarDay } from '../../lib/scheduling/time.js';
 import { buildBusy, confirmedCountByDay, overlapsAny, BUSY_PAD_MS } from './booking-service.js';
-import { googleConfigured } from '../../config/env.js';
+import { googleEnabled } from '../google/creds.js';
 import { GoogleConnection } from '../../models/GoogleConnection.js';
 import { enqueueGoogleSync } from '../google/dispatch.js';
 
@@ -167,7 +167,7 @@ export async function runReconcile(): Promise<{
   // B/C/D). Escala self-hosted acotada (~decenas de usuarios) → el $in sobre los userId conectados es chico.
   // Race benigna (review D): si un usuario se desconecta ENTRE el distinct y el find, se re-encola un job
   // que hará no-op (el sync ve la conn no-conectada y retorna). Sin pérdida ni doble-sync; sólo un job de más.
-  if (googleConfigured()) {
+  if (await googleEnabled()) {
     const connectedUserIds = await GoogleConnection.find({ status: 'connected' }).distinct(
       'userId'
     );
