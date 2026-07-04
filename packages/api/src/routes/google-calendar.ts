@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { env, googleConfigured } from '../config/env.js';
+import { env } from '../config/env.js';
+import { googleEnabled } from '../services/google/creds.js';
 import {
   buildAuthUrl,
   consumeState,
@@ -35,14 +36,14 @@ export default function googleCalendarRoutes(fastify: FastifyInstance) {
   // Estado de la conexión del usuario (sin tokens). `configured` deja que la UI oculte la sección
   // cuando el operador no habilitó la feature.
   fastify.get('/status', async (request) => {
-    if (!googleConfigured()) return { configured: false, connected: false };
+    if (!(await googleEnabled())) return { configured: false, connected: false };
     const status = await getStatus(request.user.userId);
     return { configured: true, ...status };
   });
 
   // Inicia el consentimiento: devuelve la URL de Google (la SPA hace window.location = url).
   fastify.get('/connect', async (request, reply) => {
-    if (!googleConfigured()) {
+    if (!(await googleEnabled())) {
       return reply.code(503).send({
         statusCode: 503,
         error: 'Service Unavailable',
@@ -66,7 +67,7 @@ export default function googleCalendarRoutes(fastify: FastifyInstance) {
   // SameSite=strict y no viaja en el redirect cross-site desde Google. La identidad recae en el `state`
   // firmado + single-use (ver consumeState). Siempre REDIRIGE a la SPA (nunca devuelve JSON al navegador).
   fastify.get('/callback', { config: { requiresAuth: false } }, async (request, reply) => {
-    if (!googleConfigured()) return reply.redirect(frontendRedirect('error', 'not_configured'));
+    if (!(await googleEnabled())) return reply.redirect(frontendRedirect('error', 'not_configured'));
     const parsed = callbackSchema.safeParse(request.query);
     if (!parsed.success) return reply.redirect(frontendRedirect('error', 'bad_request'));
     const { code, state, error } = parsed.data;

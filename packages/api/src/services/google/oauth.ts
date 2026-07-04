@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { env } from '../../config/env.js';
 import { randomToken, hmacToken, verifyHmac } from '../../config/crypto.js';
 import { redis } from '../../config/redis.js';
+import { resolveGoogleCreds, googleCredsStatus } from './creds.js';
 
 /**
  * OAuth 2.0 con Google (integración F-gcal G2), desacoplado del calendario. Flujo authorization-code
@@ -59,9 +59,13 @@ export async function buildAuthUrl(userId: string): Promise<{ url: string; nonce
   const payload = `${nonce}:${userId}:${ts}`;
   const state = Buffer.from(`${payload}:${hmacToken(payload)}`).toString('base64url');
   await redis.setex(`gcal:oauth:${nonce}`, STATE_TTL_SEC, JSON.stringify({ userId, verifier }));
+  // Sólo se necesitan clientId + redirectUri (NO el secret) → se usa el status, que NO descifra el secret
+  // (review D LOW). Si no hay config usable, faltan y se lanza (fail-closed).
+  const status = await googleCredsStatus();
+  if (!status.clientId || !status.redirectUri) throw new OAuthError('Google no configurado', true);
   const params = new URLSearchParams({
-    client_id: env.GOOGLE_CLIENT_ID ?? '',
-    redirect_uri: env.GOOGLE_REDIRECT_URI ?? '',
+    client_id: status.clientId,
+    redirect_uri: status.redirectUri,
     response_type: 'code',
     scope: GOOGLE_SCOPE,
     access_type: 'offline', // → refresh token
@@ -151,11 +155,12 @@ async function postToken(body: Record<string, string>): Promise<GoogleTokens> {
 
 /** Intercambia el `code` del callback por tokens (con el PKCE verifier). */
 export async function exchangeCode(code: string, verifier: string): Promise<GoogleTokens> {
+  const creds = await resolveGoogleCreds(); // secret descifrado just-in-time (no cacheado en claro)
   return postToken({
     code,
-    client_id: env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: env.GOOGLE_CLIENT_SECRET ?? '',
-    redirect_uri: env.GOOGLE_REDIRECT_URI ?? '',
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
+    redirect_uri: creds.redirectUri,
     grant_type: 'authorization_code',
     code_verifier: verifier,
   });
@@ -163,10 +168,11 @@ export async function exchangeCode(code: string, verifier: string): Promise<Goog
 
 /** Renueva el access token con el refresh token. Un `invalid_grant` = refresh revocado → OAuthError. */
 export async function refreshAccessToken(refreshToken: string): Promise<GoogleTokens> {
+  const creds = await resolveGoogleCreds(); // secret descifrado just-in-time
   return postToken({
     refresh_token: refreshToken,
-    client_id: env.GOOGLE_CLIENT_ID ?? '',
-    client_secret: env.GOOGLE_CLIENT_SECRET ?? '',
+    client_id: creds.clientId,
+    client_secret: creds.clientSecret,
     grant_type: 'refresh_token',
   });
 }

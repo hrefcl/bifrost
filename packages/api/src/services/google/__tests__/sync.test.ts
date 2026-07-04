@@ -3,9 +3,9 @@ import { Types } from 'mongoose';
 import { setupTestDb, teardownTestDb, resetState } from '../../../../test/integration-helper.js';
 
 // La feature se fuerza activa; las llamadas de red a Google se mockean.
-vi.mock('../../../config/env.js', async (imp) => {
-  const actual = await imp<typeof import('../../../config/env.js')>();
-  return { ...actual, googleConfigured: () => true };
+vi.mock('../creds.js', async (imp) => {
+  const actual = await imp<typeof import('../creds.js')>();
+  return { ...actual, googleEnabled: async () => true };
 });
 vi.mock('../calendar-api.js', () => ({
   upsertEvent: vi.fn(async () => undefined),

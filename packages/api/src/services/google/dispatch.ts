@@ -1,6 +1,6 @@
 import type { Types } from 'mongoose';
 import { enqueue } from '../scheduling/queue.js';
-import { googleConfigured } from '../../config/env.js';
+import { googleEnabled } from './creds.js';
 
 /**
  * Punto ÚNICO desde el que las escrituras de calendario piden un sync a Google (F-gcal G4). No-op si la
@@ -9,7 +9,7 @@ import { googleConfigured } from '../../config/env.js';
  * fallo de encolado NUNCA tumba la escritura local (el reconciler recupera los pendientes).
  */
 export async function enqueueGoogleSync(eventId: Types.ObjectId | string): Promise<void> {
-  if (!googleConfigured()) return;
+  if (!(await googleEnabled())) return;
   try {
     await enqueue('gcal-sync', { eventId: String(eventId) });
   } catch {

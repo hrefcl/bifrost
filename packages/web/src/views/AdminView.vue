@@ -12,6 +12,7 @@ import AdminGroups from '@/components/admin/AdminGroups.vue';
 import AdminRoles from '@/components/admin/AdminRoles.vue';
 import AdminSignaturePolicy from '@/components/admin/AdminSignaturePolicy.vue';
 import AdminProvisioning from '@/components/admin/AdminProvisioning.vue';
+import AdminGoogleCalendar from '@/components/admin/AdminGoogleCalendar.vue';
 import { api } from '@/lib/http';
 import {
   brand,
@@ -42,7 +43,8 @@ type Tab =
   | 'provisioning'
   | 'compliance'
   | 'scheduling'
-  | 'preferences';
+  | 'preferences'
+  | 'gcal';
 const tab = ref<Tab>('accounts');
 
 const { t, locale } = useI18n();
@@ -115,6 +117,13 @@ const SECTIONS: AdminSection[] = [
     desc: 'admin.preferences.desc',
   },
   {
+    key: 'gcal',
+    icon: 'globe',
+    label: 'admin.tabs.gcal',
+    title: 'admin.gcal.title',
+    desc: 'admin.gcal.desc',
+  },
+  {
     key: 'compliance',
     icon: 'file',
     label: 'admin.tabs.compliance',
@@ -141,7 +150,7 @@ const NAV_GROUPS: NavGroup[] = [
   { label: 'admin.navGroups.directory', keys: ['accounts', 'groups', 'roles'] },
   {
     label: 'admin.navGroups.config',
-    keys: ['branding', 'signatures', 'storage', 'provisioning', 'preferences'],
+    keys: ['branding', 'signatures', 'storage', 'provisioning', 'preferences', 'gcal'],
   },
   { label: 'admin.navGroups.compliance', keys: ['compliance', 'scheduling'] },
 ];
@@ -167,6 +176,7 @@ const SECTION_PERMISSION: Record<Tab, string | null> = {
   preferences: 'calendar.manage',
   scheduling: 'scheduling.manage',
   compliance: null, // admin-only (sin permiso delegable)
+  gcal: null, // admin-only (credenciales OAuth de Google — endpoints /admin/google-calendar)
 };
 function canSee(key: Tab): boolean {
   if (isAdmin.value) return true;
@@ -1046,6 +1056,8 @@ async function save() {
 
           <!-- ===================== PROVISIONING (API-keys de buzones) ===================== -->
           <AdminProvisioning v-else-if="tab === 'provisioning'" />
+
+          <AdminGoogleCalendar v-else-if="tab === 'gcal'" />
 
           <!-- ===================== USUARIOS ===================== -->
           <template v-if="tab === 'accounts'">

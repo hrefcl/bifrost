@@ -3,9 +3,9 @@ import { Types } from 'mongoose';
 import { setupTestDb, teardownTestDb, resetState } from '../../../../test/integration-helper.js';
 
 // Feature activa; el enqueue real (BullMQ) se mockea para observar A QUIÉNES re-encola el backstop.
-vi.mock('../../../config/env.js', async (imp) => {
-  const actual = await imp<typeof import('../../../config/env.js')>();
-  return { ...actual, googleConfigured: () => true };
+vi.mock('../../google/creds.js', async (imp) => {
+  const actual = await imp<typeof import('../../google/creds.js')>();
+  return { ...actual, googleEnabled: async () => true };
 });
 vi.mock('../../google/dispatch.js', () => ({
   enqueueGoogleSync: vi.fn(async () => undefined),

@@ -279,6 +279,7 @@ export default {
       compliance: 'Compliance',
       scheduling: 'Scheduling',
       preferences: 'Calendar',
+      gcal: 'Google Calendar',
       groups: 'Groups',
       roles: 'Roles & permissions',
       signatures: 'Signatures',
@@ -417,6 +418,33 @@ export default {
     preferences: {
       title: 'Calendar preferences',
       desc: 'Instance-wide calendar defaults.',
+    },
+    gcal: {
+      title: 'Google Calendar',
+      desc: 'Connect your Google project so users can sync their events with Google Calendar.',
+      guideTitle: 'How do I get the credentials? (step by step)',
+      guide1: 'Go to Google Cloud Console and create (or pick) a project:',
+      guide2:
+        'Configure the OAuth consent screen (External; in Testing mode add your Gmail as a test user):',
+      guide3: 'Create an OAuth credential of type "Web application":',
+      guide4: 'Under "Authorized redirect URIs" paste EXACTLY:',
+      guide5:
+        'Copy the Client ID and Client Secret Google gives you and paste them below. Save — the Google Calendar section shows up in users’ calendar without a restart.',
+      redirectUri: 'Redirect URI (register the same one in Google)',
+      redirectHint:
+        'Must match EXACTLY the one registered in Google, or sign-in fails with redirect_uri_mismatch.',
+      clientId: 'Client ID',
+      clientSecret: 'Client Secret',
+      save: 'Save',
+      clear: 'Clear credentials',
+      saved: 'Credentials saved. Google Calendar is now active for users.',
+      savedIncomplete: 'Saved, but the Client Secret is still missing to activate Google Calendar.',
+      errLoad: 'Could not load the configuration.',
+      errSave: 'Could not save. Check the values.',
+      sourceDb: 'Configured from the admin panel.',
+      sourceEnv: 'Configured via server environment variables.',
+      sourceError: 'Invalid configuration (the secret could not be decrypted). Re-enter the credentials.',
+      sourceNone: 'Not configured — Google Calendar is disabled for users.',
     },
     apply: 'Apply',
     storage: {
