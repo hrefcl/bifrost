@@ -54,7 +54,12 @@ export async function enqueue(
 ): Promise<void> {
   const q = getQueue();
   if (!q) return;
-  await q.add(name, data, { ...DEFAULT_JOB_OPTS, ...opts });
+  // BullMQ RECHAZA jobIds con ':' ("Custom Id cannot contain :") → el add lanza y el job se pierde.
+  // Fue un bug real: los emails de confirmación de reserva no se encolaban (jobId `confirm:<id>`).
+  // Sanitizar defensivamente para que ningún caller reintroduzca el problema.
+  const safe: JobsOptions =
+    typeof opts.jobId === 'string' ? { ...opts, jobId: opts.jobId.replace(/:/g, '-') } : opts;
+  await q.add(name, data, { ...DEFAULT_JOB_OPTS, ...safe });
 }
 
 /** Programa el job repetible `reconcile` (cada 2 min). No-op en mock/test. Llamar en el boot. */

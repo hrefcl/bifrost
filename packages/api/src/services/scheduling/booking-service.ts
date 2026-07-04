@@ -402,7 +402,7 @@ export async function createBooking(p: CreateBookingParams): Promise<CreateBooki
     await safeEnqueue(
       'send-email',
       { bookingId: result.booking._id.toString(), kind: 'confirmation' },
-      { jobId: `confirm:${result.booking._id.toString()}` }
+      { jobId: `confirm-${result.booking._id.toString()}` }
     );
   }
   return result;
@@ -441,7 +441,7 @@ export async function cancelBooking(
   await safeEnqueue(
     'send-email',
     { bookingId: updated._id.toString(), kind: 'cancellation' },
-    { jobId: `cancel:${updated._id.toString()}` }
+    { jobId: `cancel-${updated._id.toString()}` }
   );
   return updated;
 }
@@ -694,12 +694,12 @@ export async function rescheduleBooking(params: {
     await safeEnqueue(
       'send-email',
       { bookingId: old._id.toString(), kind: 'cancellation' },
-      { jobId: `reschedule-cancel:${old._id.toString()}` }
+      { jobId: `reschedule-cancel-${old._id.toString()}` }
     );
     await safeEnqueue(
       'send-email',
       { bookingId: result.booking._id.toString(), kind: 'reschedule' },
-      { jobId: `reschedule:${result.booking._id.toString()}` }
+      { jobId: `reschedule-${result.booking._id.toString()}` }
     );
   }
   return result;
