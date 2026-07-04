@@ -38,6 +38,8 @@ const estilo = ref({
   tagline: '',
   logoDataUrl: '',
   logoVerticalDataUrl: '',
+  appStoreUrl: '',
+  googlePlayUrl: '',
 });
 const selectedId = ref('');
 const previewHtml = ref('');
@@ -63,6 +65,8 @@ async function load() {
         tagline: string | null;
         logoDataUrl: string | null;
         logoVerticalDataUrl: string | null;
+        appStoreUrl: string | null;
+        googlePlayUrl: string | null;
       }>('/admin/config/branding'),
     ]);
     policy.value = pol.data.policy;
@@ -74,6 +78,8 @@ async function load() {
       tagline: brand.data.tagline ?? '',
       logoDataUrl: brand.data.logoDataUrl ?? '',
       logoVerticalDataUrl: brand.data.logoVerticalDataUrl ?? '',
+      appStoreUrl: brand.data.appStoreUrl ?? '',
+      googlePlayUrl: brand.data.googlePlayUrl ?? '',
     };
     selectedId.value = policy.value.allowedTemplateIds.at(0) ?? templates.value.at(0)?.id ?? '';
     await refreshPreview();
@@ -157,6 +163,8 @@ async function refreshPreview() {
       tagline: estilo.value.tagline,
       logoDataUrl: estilo.value.logoDataUrl,
       logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
+      appStoreUrl: estilo.value.appStoreUrl,
+      googlePlayUrl: estilo.value.googlePlayUrl,
     });
     if (seq === previewSeq) previewHtml.value = data.html; // ignora respuestas stale
   } catch {
