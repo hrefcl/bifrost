@@ -41,6 +41,100 @@ const estilo = ref({
   appStoreUrl: '',
   googlePlayUrl: '',
 });
+
+// ── Estilo componible (tab Estilo, "biblia"): tipografía, foto, alineación, separador, campos + orden ──
+type FieldKey =
+  | 'photo'
+  | 'name'
+  | 'title'
+  | 'company'
+  | 'phone'
+  | 'email'
+  | 'website'
+  | 'address'
+  | 'tagline'
+  | 'social';
+const FONTS = ['Arial', 'Helvetica', 'Georgia', 'Verdana', 'Trebuchet', 'Tahoma'];
+const SEPS = ['·', '|', '–', ''];
+const STACK_DEFAULT: FieldKey[] = [
+  'name',
+  'title',
+  'company',
+  'phone',
+  'email',
+  'website',
+  'address',
+  'tagline',
+  'social',
+];
+// Campos que NO se pueden ocultar (siempre visibles): nombre y cargo.
+const ALWAYS_ON: FieldKey[] = ['name', 'title'];
+const FIELD_LABEL: Record<FieldKey, string> = {
+  photo: 'Foto / avatar',
+  name: 'Nombre',
+  title: 'Cargo',
+  company: 'Empresa',
+  phone: 'Teléfono',
+  email: 'Email',
+  website: 'Sitio web',
+  address: 'Dirección',
+  tagline: 'Eslogan',
+  social: 'Redes sociales',
+};
+
+const sig = ref<{
+  fontFamily: string;
+  photoSizePx: number;
+  align: 'left' | 'center';
+  separator: string;
+  hidden: FieldKey[];
+  order: FieldKey[];
+  socialAsIcons: boolean;
+}>({
+  fontFamily: 'Arial',
+  photoSizePx: 68,
+  align: 'left',
+  separator: '·',
+  hidden: [],
+  order: [...STACK_DEFAULT],
+  socialAsIcons: true,
+});
+
+const isFieldOn = (f: FieldKey) => !sig.value.hidden.includes(f);
+function toggleField(f: FieldKey) {
+  if (ALWAYS_ON.includes(f)) return; // nombre/cargo no se ocultan
+  saved.value = false;
+  const i = sig.value.hidden.indexOf(f);
+  if (i >= 0) sig.value.hidden.splice(i, 1);
+  else sig.value.hidden.push(f);
+}
+function setFont(f: string) {
+  saved.value = false;
+  sig.value.fontFamily = f;
+}
+function setAlign(a: 'left' | 'center') {
+  saved.value = false;
+  sig.value.align = a;
+}
+function setSep(s: string) {
+  saved.value = false;
+  sig.value.separator = s;
+}
+
+// Drag & drop del orden de campos (HTML5 nativo, sin dependencia).
+const dragIndex = ref(-1);
+function onDragStart(i: number) {
+  dragIndex.value = i;
+}
+function onDrop(i: number) {
+  const from = dragIndex.value;
+  dragIndex.value = -1;
+  if (from < 0 || from === i) return;
+  saved.value = false;
+  const arr = sig.value.order;
+  const [moved] = arr.splice(from, 1);
+  arr.splice(i, 0, moved);
+}
 const selectedId = ref('');
 const previewHtml = ref('');
 const loading = ref(true);
@@ -67,6 +161,15 @@ async function load() {
         logoVerticalDataUrl: string | null;
         appStoreUrl: string | null;
         googlePlayUrl: string | null;
+        signatureStyle: {
+          fontFamily?: string;
+          photoSizePx?: number;
+          align?: 'left' | 'center';
+          separator?: string;
+          hidden?: FieldKey[];
+          order?: FieldKey[];
+          socialAsIcons?: boolean;
+        } | null;
       }>('/admin/config/branding'),
     ]);
     policy.value = pol.data.policy;
@@ -81,6 +184,21 @@ async function load() {
       appStoreUrl: brand.data.appStoreUrl ?? '',
       googlePlayUrl: brand.data.googlePlayUrl ?? '',
     };
+    const st = brand.data.signatureStyle;
+    if (st) {
+      // Orden guardado + cualquier campo nuevo del catálogo al final (robusto a versiones).
+      const ord = (st.order ?? []).filter((k) => STACK_DEFAULT.includes(k));
+      const order = [...ord, ...STACK_DEFAULT.filter((k) => !ord.includes(k))];
+      sig.value = {
+        fontFamily: st.fontFamily ?? 'Arial',
+        photoSizePx: st.photoSizePx ?? 68,
+        align: st.align ?? 'left',
+        separator: st.separator ?? '·',
+        hidden: (st.hidden ?? []).filter((k) => !ALWAYS_ON.includes(k)),
+        order,
+        socialAsIcons: st.socialAsIcons ?? true,
+      };
+    }
     selectedId.value = policy.value.allowedTemplateIds.at(0) ?? templates.value.at(0)?.id ?? '';
     await refreshPreview();
   } catch {
@@ -165,6 +283,7 @@ async function refreshPreview() {
       logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
       appStoreUrl: estilo.value.appStoreUrl,
       googlePlayUrl: estilo.value.googlePlayUrl,
+      signatureStyle: sig.value,
     });
     if (seq === previewSeq) previewHtml.value = data.html; // ignora respuestas stale
   } catch {
@@ -172,7 +291,7 @@ async function refreshPreview() {
   }
 }
 watch(
-  [selectedId, estilo],
+  [selectedId, estilo, sig],
   () => {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(() => void refreshPreview(), 350);
@@ -217,6 +336,9 @@ async function save() {
         tagline: estilo.value.tagline,
         logoDataUrl: estilo.value.logoDataUrl, // '' limpia
         logoVerticalDataUrl: estilo.value.logoVerticalDataUrl,
+        appStoreUrl: estilo.value.appStoreUrl,
+        googlePlayUrl: estilo.value.googlePlayUrl,
+        signatureStyle: sig.value,
       },
       policy: policy.value,
     });
@@ -328,6 +450,130 @@ onMounted(load);
               <input v-model="estilo.accentColor" class="in" maxlength="7" @input="saved = false" />
             </span>
           </label>
+
+          <!-- TIPOGRAFÍA -->
+          <div class="ctl">
+            <span class="ctl-h">{{ t('admin.signatures.styleFont') }}</span>
+            <div class="chips">
+              <button
+                v-for="f in FONTS"
+                :key="f"
+                type="button"
+                class="chip"
+                :class="{ on: sig.fontFamily === f }"
+                @click="setFont(f)"
+              >
+                {{ f }}
+              </button>
+            </div>
+          </div>
+
+          <!-- TAMAÑO DE FOTO -->
+          <div class="ctl">
+            <span class="ctl-h"
+              >{{ t('admin.signatures.stylePhoto') }}
+              <b class="val">{{ sig.photoSizePx }} px</b></span
+            >
+            <input
+              v-model.number="sig.photoSizePx"
+              type="range"
+              min="24"
+              max="160"
+              class="range"
+              @input="saved = false"
+            />
+          </div>
+
+          <!-- ALINEACIÓN -->
+          <div class="ctl">
+            <span class="ctl-h">{{ t('admin.signatures.styleAlign') }}</span>
+            <div class="chips two">
+              <button
+                type="button"
+                class="chip"
+                :class="{ on: sig.align === 'left' }"
+                @click="setAlign('left')"
+              >
+                {{ t('admin.signatures.alignLeft') }}
+              </button>
+              <button
+                type="button"
+                class="chip"
+                :class="{ on: sig.align === 'center' }"
+                @click="setAlign('center')"
+              >
+                {{ t('admin.signatures.alignCenter') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- SEPARADOR -->
+          <div class="ctl">
+            <span class="ctl-h">{{ t('admin.signatures.styleSep') }}</span>
+            <div class="chips">
+              <button
+                v-for="s in SEPS"
+                :key="s"
+                type="button"
+                class="chip sep"
+                :class="{ on: sig.separator === s }"
+                @click="setSep(s)"
+              >
+                {{ s || 'ø' }}
+              </button>
+            </div>
+          </div>
+
+          <!-- MOSTRAR Y ORDENAR CAMPOS (drag & drop) -->
+          <div class="ctl">
+            <span class="ctl-h">{{ t('admin.signatures.styleFields') }}</span>
+            <p class="hint">{{ t('admin.signatures.styleFieldsHint') }}</p>
+            <div class="frow static">
+              <span class="grip ghost">⋮⋮</span>
+              <span class="fname">{{ FIELD_LABEL.photo }}</span>
+              <label class="sw">
+                <input
+                  type="checkbox"
+                  :checked="isFieldOn('photo')"
+                  @change="toggleField('photo')"
+                />
+                <span class="track"></span>
+              </label>
+            </div>
+            <ul class="fields">
+              <li
+                v-for="(f, i) in sig.order"
+                :key="f"
+                class="frow"
+                :class="{ dragging: dragIndex === i }"
+                draggable="true"
+                @dragstart="onDragStart(i)"
+                @dragover.prevent
+                @drop="onDrop(i)"
+              >
+                <span class="grip">⋮⋮</span>
+                <span class="fname">{{ FIELD_LABEL[f] }}</span>
+                <label class="sw" :class="{ locked: ALWAYS_ON.includes(f) }">
+                  <input
+                    type="checkbox"
+                    :checked="isFieldOn(f)"
+                    :disabled="ALWAYS_ON.includes(f)"
+                    @change="toggleField(f)"
+                  />
+                  <span class="track"></span>
+                </label>
+              </li>
+            </ul>
+            <div class="frow static">
+              <span class="grip ghost">⋮⋮</span>
+              <span class="fname">{{ t('admin.signatures.fieldSocialIcons') }}</span>
+              <label class="sw">
+                <input v-model="sig.socialAsIcons" type="checkbox" @change="saved = false" />
+                <span class="track"></span>
+              </label>
+            </div>
+          </div>
+
           <div class="logos">
             <div class="logobox">
               <span class="lbl">{{ t('admin.signatures.styleLogoH') }}</span>
@@ -577,6 +823,133 @@ onMounted(load);
   color: var(--danger);
   font-size: 12px;
   cursor: pointer;
+}
+.ctl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ctl-h {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-3);
+}
+.ctl-h .val {
+  color: var(--accent);
+  float: right;
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.chips.two .chip {
+  flex: 1;
+}
+.chip {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  background: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chip.on {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--accent);
+}
+.chip.sep {
+  min-width: 44px;
+  text-align: center;
+  font-size: 16px;
+}
+.range {
+  width: 100%;
+  accent-color: var(--accent);
+}
+.fields {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.frow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fff;
+}
+.frow[draggable='true'] {
+  cursor: grab;
+}
+.frow.dragging {
+  opacity: 0.4;
+}
+.grip {
+  color: var(--text-3);
+  font-size: 13px;
+  letter-spacing: -2px;
+  cursor: grab;
+  user-select: none;
+}
+.grip.ghost {
+  visibility: hidden;
+}
+.fname {
+  flex: 1;
+  font-size: 13px;
+  font-weight: 600;
+}
+.sw {
+  position: relative;
+  display: inline-block;
+  width: 38px;
+  height: 22px;
+  cursor: pointer;
+  flex: none;
+}
+.sw.locked {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.sw input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.sw .track {
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 999px;
+  transition: 0.15s;
+}
+.sw .track::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 16px;
+  height: 16px;
+  background: #fff;
+  border-radius: 50%;
+  transition: 0.15s;
+}
+.sw input:checked + .track {
+  background: var(--accent);
+}
+.sw input:checked + .track::before {
+  transform: translateX(16px);
 }
 .hint {
   font-size: 12px;

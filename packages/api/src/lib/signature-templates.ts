@@ -354,7 +354,8 @@ function contactBlock(
 ): string {
   if (!value) return '';
   const r = contactRow(ctx, iconName, value, href, opts);
-  return r ? `<table cellpadding="0" cellspacing="0">${r}</table>` : '';
+  const center = styleOf(ctx).align === 'center' ? 'margin:0 auto;' : '';
+  return r ? `<table cellpadding="0" cellspacing="0" style="${center}">${r}</table>` : '';
 }
 
 function quote(ctx: SignatureContext): string {
@@ -415,10 +416,12 @@ function renderField(ctx: SignatureContext, key: StackField, ac: string, opts?: 
  *  toggles de visibilidad. Reemplaza la vieja composición fija nombre+contacto+eslogan+redes. */
 function fieldStack(ctx: SignatureContext, ac: string, opts?: StackOpts): string {
   const ex = new Set(opts?.exclude ?? []);
-  return orderedStack(ctx)
+  const html = orderedStack(ctx)
     .filter((k) => !ex.has(k))
     .map((k) => renderField(ctx, k, ac, opts))
     .join('');
+  // Alineación: centra el stack (los contactBlock ya se auto-centran con margin:0 auto).
+  return styleOf(ctx).align === 'center' ? `<div style="text-align:center">${html}</div>` : html;
 }
 /** Ancho en px SEGURO: entero acotado 1–1000. Si el valor no es un número finito (llamada directa fuera
  *  del schema Zod del admin), cae al default → nunca produce `width:130pxpx` ni rompe el atributo. */

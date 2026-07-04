@@ -303,6 +303,16 @@ export default {
       styleCompany: 'Empresa',
       styleTagline: 'Eslogan / frase',
       styleColor: 'Color de acento',
+      styleFont: 'Tipografía',
+      stylePhoto: 'Tamaño de foto',
+      styleAlign: 'Alineación',
+      alignLeft: 'Izquierda',
+      alignCenter: 'Centro',
+      styleSep: 'Separador',
+      styleFields: 'Mostrar y ordenar campos',
+      styleFieldsHint:
+        'Arrastrá para reordenar. El orden y la visibilidad aplican a toda la firma.',
+      fieldSocialIcons: 'Iconos en redes sociales',
       styleLogoH: 'Logo horizontal',
       styleLogoV: 'Logo vertical',
       styleLogoHint:
