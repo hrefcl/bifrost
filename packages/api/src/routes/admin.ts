@@ -76,6 +76,34 @@ const httpUrl = z
   }, 'URL inválida (solo http/https)');
 const httpUrlOrClear = z.union([httpUrl, z.literal(''), z.null()]).optional();
 
+// Estilo componible de la firma (tab Estilo). Enums cerrados → rechazan valores inválidos; el render
+// igual valida (color HEX, photoSize acotado), esto es el gate de entrada.
+const SIG_FIELD_KEYS = [
+  'photo',
+  'name',
+  'title',
+  'company',
+  'phone',
+  'email',
+  'website',
+  'address',
+  'tagline',
+  'social',
+] as const;
+const signatureStyleSchema = z
+  .object({
+    fontFamily: z
+      .enum(['Arial', 'Helvetica', 'Georgia', 'Verdana', 'Trebuchet', 'Tahoma'])
+      .optional(),
+    photoSizePx: z.number().int().min(24).max(160).optional(),
+    align: z.enum(['left', 'center']).optional(),
+    separator: z.enum(['·', '|', '–', '']).optional(),
+    hidden: z.array(z.enum(SIG_FIELD_KEYS)).max(10).optional(),
+    order: z.array(z.enum(SIG_FIELD_KEYS)).max(10).optional(),
+    socialAsIcons: z.boolean().optional(),
+  })
+  .strict();
+
 const brandingSchema = z
   .object({
     companyName: z.string().trim().max(60).optional(),
@@ -104,6 +132,7 @@ const brandingSchema = z
       .optional(),
     appStoreUrl: httpUrlOrClear,
     googlePlayUrl: httpUrlOrClear,
+    signatureStyle: z.union([signatureStyleSchema, z.null()]).optional(),
     logoWidthPx: z.union([z.number().int().min(40).max(400), z.null()]).optional(),
     lockAccentColor: z.boolean().optional(),
     // Estilo de iconos app-wide (weight de Phosphor). Enum cerrado → rechaza valores inválidos.
@@ -745,6 +774,8 @@ export default function adminRoutes(fastify: FastifyInstance) {
       // Badges del template Cleverty: el admin debe poder previsualizarlos antes de guardar (review D, HIGH).
       appStoreUrl: httpUrlOrClear,
       googlePlayUrl: httpUrlOrClear,
+      // Estilo componible: previsualizar campos/orden/tipografía/foto en vivo sin guardar.
+      signatureStyle: z.union([signatureStyleSchema, z.null()]).optional(),
     })
     .strict();
   fastify.post(
@@ -771,6 +802,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
         ...(b.googlePlayUrl !== undefined
           ? // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
             { googlePlayUrl: b.googlePlayUrl || undefined }
+          : {}),
+        ...(b.signatureStyle !== undefined
+          ? { signatureStyle: b.signatureStyle ?? undefined }
           : {}),
       };
       return { html: await renderDraftPreview(user, b.templateId, draft, env.FRONTEND_URL) };

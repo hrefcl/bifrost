@@ -102,6 +102,7 @@ function signatureContext(
     socialLinks: branding.socialLinks,
     appStoreUrl: branding.appStoreUrl,
     googlePlayUrl: branding.googlePlayUrl,
+    style: branding.signatureStyle ?? undefined,
     // Base para los iconos hosteados (`/sig-icons/*.png`). En email deben ser URLs absolutas.
     assetBase: baseUrl,
   };

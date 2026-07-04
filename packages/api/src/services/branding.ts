@@ -1,4 +1,5 @@
 import { SystemConfig } from '../models/SystemConfig.js';
+import type { SignatureStyle } from '../lib/signature-templates.js';
 
 /**
  * Branding white-label configurable en RUNTIME por el admin (persistido en `SystemConfig`
@@ -53,6 +54,7 @@ export interface BrandingConfig {
   socialLinks?: SocialLinks; // URLs de redes
   appStoreUrl?: string; // link a la app iOS (badge App Store en el template Cleverty)
   googlePlayUrl?: string; // link a la app Android (badge Google Play en el template Cleverty)
+  signatureStyle?: SignatureStyle; // estilo componible (tab Estilo): campos/orden/tipografía/foto/etc.
   logoWidthPx?: number; // ancho del logo en la firma (px); default de render = 120
   /** Política: si el admin bloquea el color, el cliente ignora el accent personal (app-wide). */
   lockAccentColor?: boolean;
@@ -75,6 +77,7 @@ export interface BrandingInput {
   socialLinks?: SocialLinksInput | null;
   appStoreUrl?: string | null;
   googlePlayUrl?: string | null;
+  signatureStyle?: SignatureStyle | null;
   logoWidthPx?: number | null;
   lockAccentColor?: boolean;
   iconWeight?: IconWeight;
@@ -93,6 +96,7 @@ export interface PublicBranding {
   socialLinks: SocialLinks | null;
   appStoreUrl: string | null;
   googlePlayUrl: string | null;
+  signatureStyle: SignatureStyle | null;
   logoWidthPx: number | null;
   lockAccentColor: boolean;
   iconWeight: IconWeight;
@@ -125,6 +129,7 @@ export function toPublicBranding(cfg: BrandingConfig): PublicBranding {
       cfg.socialLinks && Object.keys(cfg.socialLinks).length > 0 ? cfg.socialLinks : null,
     appStoreUrl: cfg.appStoreUrl ?? null,
     googlePlayUrl: cfg.googlePlayUrl ?? null,
+    signatureStyle: cfg.signatureStyle ?? null,
     logoWidthPx: cfg.logoWidthPx ?? null,
     lockAccentColor: cfg.lockAccentColor ?? false,
     iconWeight: cfg.iconWeight ?? DEFAULT_ICON_WEIGHT,
@@ -162,6 +167,7 @@ export async function setBranding(
   if (input.address !== undefined) value.address = nonEmpty(input.address);
   if (input.appStoreUrl !== undefined) value.appStoreUrl = nonEmpty(input.appStoreUrl);
   if (input.googlePlayUrl !== undefined) value.googlePlayUrl = nonEmpty(input.googlePlayUrl);
+  if (input.signatureStyle !== undefined) value.signatureStyle = input.signatureStyle ?? undefined;
   if (input.socialLinks !== undefined) value.socialLinks = cleanSocials(input.socialLinks);
   if (input.logoWidthPx !== undefined) value.logoWidthPx = input.logoWidthPx ?? undefined;
   if (input.lockAccentColor !== undefined) value.lockAccentColor = input.lockAccentColor;

@@ -108,6 +108,49 @@ describe('admin: editor de firmas (settings combinado + preview + logo vertical)
     expect(res.json().html).toContain('Google Play');
   });
 
+  it('preview: signatureStyle oculta campos y reordena (firma componible)', async () => {
+    const headers = await seedAdmin();
+    const res = await app.inject({
+      method: 'PUT',
+      url: '/api/admin/config/signature-settings',
+      headers,
+      payload: {
+        branding: {
+          companyName: 'ACME',
+          signatureStyle: {
+            hidden: ['company', 'photo'],
+            order: ['email', 'name'],
+            fontFamily: 'Georgia',
+          },
+        },
+        policy: { allowedTemplateIds: ['clasica'], lockTemplate: false },
+      },
+    });
+    expect(res.statusCode).toBe(200);
+    // El preview refleja el estilo: sin empresa, fuente Georgia.
+    const prev = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/signature-preview',
+      headers,
+      payload: { templateId: 'clasica' },
+    });
+    expect(prev.statusCode).toBe(200);
+    const html = prev.json().html as string;
+    expect(html).toContain('Georgia'); // tipografía aplicada
+    expect(html).not.toContain('ACME'); // empresa oculta
+  });
+
+  it('preview: rechaza signatureStyle inválido (fontFamily fuera del enum) → 400', async () => {
+    const headers = await seedAdmin();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/config/signature-preview',
+      headers,
+      payload: { templateId: 'clasica', signatureStyle: { fontFamily: 'ComicSans' } },
+    });
+    expect(res.statusCode).toBe(400);
+  });
+
   it('preview: acepta null para limpiar el logo (consistencia con branding)', async () => {
     const headers = await seedAdmin();
     const res = await app.inject({
