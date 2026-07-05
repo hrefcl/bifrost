@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/client" />
 
 interface ImportMetaEnv {
   /** Marca white-label (ver src/config/brand.ts). Todas opcionales → default Bifrost. */

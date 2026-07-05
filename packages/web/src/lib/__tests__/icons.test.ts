@@ -10,8 +10,9 @@ describe('icons Phosphor duotone', () => {
   const names = Object.keys(ICONS) as IconName[];
 
   it('conserva el set completo (ninguno se perdió en la migración)', () => {
-    // 59 del set original + 4 de Meet (mic/micOff/videoOff/screenShare) = 63; no debe encogerse.
-    expect(names.length).toBe(63);
+    // 59 del set original + 4 de Meet (mic/micOff/videoOff/screenShare) + 2 de PWA (wifiSlash/share)
+    // = 65; no debe encogerse.
+    expect(names.length).toBe(65);
     expect(new Set(names).size).toBe(names.length); // sin duplicados
   });
 

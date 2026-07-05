@@ -834,4 +834,26 @@ export default {
       leave: 'Salir',
     },
   },
+  pwa: {
+    offline: {
+      title: 'Sin conexión',
+      body: 'El correo requiere conexión a internet. Revisá tu red y volvé a intentar.',
+    },
+    update: {
+      title: 'Hay una versión nueva de Bifrost.',
+      action: 'Actualizar',
+    },
+    install: {
+      title: 'Instalar Bifrost',
+      body: 'Agregá el correo a tu pantalla de inicio y usalo como una app.',
+      action: 'Instalar',
+      dismiss: 'Ahora no',
+    },
+    ios: {
+      title: 'Instalar Bifrost en tu iPhone',
+      step1: 'Tocá el botón Compartir en Safari.',
+      step2: 'Elegí “Agregar a pantalla de inicio”.',
+      dismiss: 'Entendido',
+    },
+  },
 };
