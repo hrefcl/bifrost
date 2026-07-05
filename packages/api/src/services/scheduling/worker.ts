@@ -3,6 +3,7 @@ import { sendBookingEmail, type EmailKind } from './email.js';
 import { sendEventInvite } from './event-email.js';
 import { runReconcile } from './reconciler.js';
 import { syncEventToGoogle } from '../google/sync.js';
+import { pollUserCalendar, enqueueGooglePolls } from '../google/poll.js';
 
 /**
  * Procesador de la cola de agenda — despacha por `job.name` (review B HIGH de Fase 3.0: el worker debe
@@ -34,6 +35,18 @@ export function schedulingProcessor(job: Job): Promise<void> {
       if (!data.eventId) return Promise.reject(new Error('gcal-sync: eventId requerido'));
       return syncEventToGoogle(data.eventId);
     }
+    case 'gcal-poll': {
+      // Poll bidireccional de UN usuario (import Google→Bifrost). `full` = sync de ventana + reconcile.
+      const data = job.data as { userId?: string; full?: boolean };
+      if (!data.userId) return Promise.reject(new Error('gcal-poll: userId requerido'));
+      return pollUserCalendar(data.userId, { full: data.full });
+    }
+    case 'gcal-poll-all':
+      // Fan-out repetible: encola un gcal-poll por usuario conectado (incremental).
+      return enqueueGooglePolls(false).then(() => undefined);
+    case 'gcal-window-refresh':
+      // Fan-out repetible diario: gcal-poll FULL por usuario (renueva la ventana rolling).
+      return enqueueGooglePolls(true).then(() => undefined);
     case 'reconcile':
       // Observabilidad (auto-auditoría): el reconciler descartaba sus conteos. Si reparó algo, es señal
       // operativa de crashes/races entre Booking↔CalendarEvent — se loguea para no dejarlo invisible.
