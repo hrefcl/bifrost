@@ -61,6 +61,14 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
     }
     throw err; // BullMQ reintenta (acotado: en el retry doPoll corta porque conn ya no es 'connected')
   }
+
+  // POST-GUARD anti-carrera disconnect-vs-poll-en-vuelo (review B): si el usuario DESCONECTÓ mientras
+  // este poll importaba, sus upserts quedaron huérfanos. Re-leemos el status al terminar; si pasó a
+  // 'revoked', purgamos lo que este poll pudo haber creado. Cierra la carrera de forma INDEPENDIENTE del
+  // lock/TTL del disconnect: quien termina último (disconnect.deleteMany o este post-guard) converge al
+  // estado correcto (cero eventos source:'google'). Sólo 'revoked' (disconnect explícito); 'error' conserva el espejo.
+  const after = await GoogleConnection.findOne({ userId }).select('status');
+  if (after?.status === 'revoked') await CalendarEvent.deleteMany({ userId, source: 'google' });
 }
 
 async function runIncremental(

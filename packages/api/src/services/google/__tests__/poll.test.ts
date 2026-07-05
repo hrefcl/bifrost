@@ -179,6 +179,18 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
     expect((await GoogleConnection.findOne({ userId }))?.status).toBe('connected'); // intacta
   });
 
+  it('post-guard: si el usuario DESCONECTÓ mientras el poll importaba, purga los imports (carrera, review B)', async () => {
+    const { userId } = await seedConnected('tokPG');
+    // El feed trae un evento, pero DURANTE el import el usuario desconecta (status→revoked).
+    vi.mocked(api.listEvents).mockImplementationOnce(async () => {
+      await GoogleConnection.updateOne({ userId }, { $set: { status: 'revoked' } });
+      return { items: [gEvent('pg')], nextSyncToken: 'tokPG2' };
+    });
+    await pollUserCalendar(userId);
+    // El post-guard detecta el 'revoked' y purga lo que el poll importó → cero huérfanos.
+    expect(await CalendarEvent.countDocuments({ userId, source: 'google' })).toBe(0);
+  });
+
   it('conexión NO conectada → no llama a Google', async () => {
     const { user } = await seedUserWithAccount({ email: 'off@test.com' });
     await GoogleConnection.create({
