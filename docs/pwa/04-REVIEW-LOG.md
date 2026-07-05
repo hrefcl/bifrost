@@ -104,3 +104,25 @@ Confirmados sin issue en la re-auditoría: `/api` fuera de todo cache (re-verifi
 | B-$ | MED | El `BRAND_NAME` escapado fluía como replacement string en `String.replace` → un `$` (`$1`,`$$`,`$&`) se interpretaba como patrón (C y D no lo vieron). | **Replacer callback** (no string) → `$` sale literal. Verificado con `Pay$1$$ Mail`. |
 
 **Scores finales del delta:** B (Codex) **9/10 APPROVE** · C (z.ai) **9/10 APPROVE** · D (Kimi) **10/10 APROBADO**. Sin HIGH abierto. Residual menor (regex asume orden `name` antes de `content`) — no bloqueante, `index.html` versionado.
+
+## Ronda 5 — Auto-auditoría (cron): cobertura de tests
+
+**Hallazgo material 1 (regresión CI-red ya committeada):** `src/lib/__tests__/icons.test.ts` esperaba 63 íconos, pero el feature agregó `wifiSlash`+`share` → **65**. El test estaba en **ROJO** desde el commit `befe805` y no se detectó porque el pre-commit (lint-staged) sólo corre eslint/prettier, **no vitest**. CI (`ci.yml` → `pnpm test:coverage`) lo habría reventado. **Fix:** `63→65` con comentario.
+
+**Hallazgo material 2 (gap de cobertura):** cero tests unitarios de `usePwa`; la detección iOS (`isIos`/`isIosSafari`) no la ejercita ningún e2e (Chrome desktop) ni dispositivo. **Fix:** nuevo `usePwa.test.ts` (13 tests): detección de plataforma (iPhone Safari/CriOS/FxiOS/**EdgiOS**, iPadOS Macintosh+touch, Mac desktop, Android) + gating de CTAs en **ambas polaridades** (path positivo con `beforeinstallprompt` simulado → banner + `promptInstall`→accepted; offline → sin CTA; `dismissInstall()` apaga el hint). Suite completa: **131/131 PASS**.
+
+Iterado con B/C/D: B 8.5→(deducción = path positivo, ya cubierto); C 7→**9** (4 follow-ups cerrados); D 9→**9.5**.
+
+```
+DECISIÓN DE AVANCE CON AUTORIDAD HEREDADA
+Equipo con autoridad primaria activa: D (Kimi) — B (Codex) TEAM_UNAVAILABLE (proceso matado
+  repetidamente en esta sesión).
+Equipos que aprobaron la versión final: D 9.5, C 9.
+Estado de B: aprobó 8.5 la versión base; su única deducción (path positivo de instalación) fue
+  cubierta con el test Android+beforeinstallprompt.
+Riesgo asumido: bajo — delta test-only, branch sin PR/deploy.
+Decisión tomada por: Equipo A — decisión explícita documentada.
+Pendiente obligatorio: validación de B al retomar Codex (deducción ya cerrada).
+```
+
+Residual aceptado (no bloqueante, C): la rama supresora (app ya instalada/standalone → CTA off) no se ejercita — cobertura de branch adicional, no un término de gating permissivo.
