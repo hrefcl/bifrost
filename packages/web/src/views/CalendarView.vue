@@ -71,6 +71,16 @@ function removeAttendee(email: string) {
 // Modal de detalle (click en un evento).
 const detail = ref<CalendarEvent | null>(null);
 
+// Estado de sincronización con Google del evento abierto (para NO diagnosticar a ciegas cuando algo falla).
+// 'synced'/'pending'/'error' → fila informativa; undefined/'skipped'/'deleting' → no se muestra.
+const syncBadge = computed<{ cls: string; icon: 'check' | 'refresh' | 'x'; text: string } | null>(() => {
+  const s = detail.value?.googleSyncStatus;
+  if (s === 'synced') return { cls: 'ok', icon: 'check', text: t('calendar.google.syncSynced') };
+  if (s === 'pending') return { cls: 'pending', icon: 'refresh', text: t('calendar.google.syncPending') };
+  if (s === 'error') return { cls: 'err', icon: 'x', text: t('calendar.google.syncErrLine') };
+  return null;
+});
+
 // Reset defensivo: al cerrar el modal (cancel/X/click-fuera/guardar) se vuelve a modo "crear",
 // para que ningún reapertura futura herede el editingId de una edición previa (review B/D).
 watch(showCreate, (open) => {
@@ -116,6 +126,8 @@ const fcEvents = computed<EventInput[]>(() =>
       allDay: e.allDay,
       backgroundColor: colorFor(calNameOf(e)),
       borderColor: colorFor(calNameOf(e)),
+      // Estado de sync con Google → clase para marcar visualmente los que fallaron (ev-syncerr).
+      extendedProps: { syncStatus: e.googleSyncStatus },
     }))
 );
 
@@ -342,6 +354,17 @@ const calendarOptions = computed<CalendarOptions>(() => ({
   scrollTime: '08:00:00',
   slotLabelFormat: { hour: 'numeric', minute: '2-digit', omitZeroMinute: true },
   events: fcEvents.value,
+  // Marca visual sutil en los eventos que fallaron al sincronizar con Google.
+  eventClassNames: (arg) =>
+    arg.event.extendedProps.syncStatus === 'error' ? ['ev-syncerr'] : [],
+  // A11y: los eventos con error no dependen SÓLO del estilo — llevan title + aria-label (review B/D).
+  eventDidMount: (arg) => {
+    if (arg.event.extendedProps.syncStatus === 'error') {
+      const label = `${arg.event.title} — ${t('calendar.google.syncErrLine')}`;
+      arg.el.setAttribute('title', label);
+      arg.el.setAttribute('aria-label', label);
+    }
+  },
   datesSet: onDatesSet,
   select: onSelect,
   eventClick: onEventClick,
@@ -630,6 +653,17 @@ onMounted(async () => {
         </div>
         <div class="detail-row"><AppIcon name="tag" :size="15" />{{ detail.calendarName }}</div>
         <p v-if="detail.description" class="detail-desc">{{ detail.description }}</p>
+        <!-- Estado de sincronización con Google (sólo si el evento tenía que sincronizar). -->
+        <div v-if="syncBadge" class="detail-sync" :class="syncBadge.cls">
+          <AppIcon :name="syncBadge.icon" :size="15" />
+          <span>{{ syncBadge.text }}</span>
+        </div>
+        <p
+          v-if="detail.googleSyncStatus === 'error' && detail.googleSyncError"
+          class="detail-syncerr"
+        >
+          {{ detail.googleSyncError }}
+        </p>
         <div class="modal-foot">
           <button class="create-btn" @click="openEdit(detail)">{{ t('calendar.edit') }}</button>
           <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
@@ -1137,6 +1171,38 @@ onMounted(async () => {
   color: var(--text-1);
   white-space: pre-wrap;
   margin: 4px 0 12px;
+}
+/* Estado de sync con Google en el modal de detalle. */
+.detail-sync {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 500;
+  margin: 6px 0 2px;
+}
+.detail-sync.ok {
+  color: var(--success, #16a34a);
+}
+.detail-sync.pending {
+  color: var(--text-2);
+}
+.detail-sync.err {
+  color: var(--danger);
+}
+.detail-syncerr {
+  font-size: 12px;
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+/* Evento con sync fallido en la grilla: borde punteado sutil (indicador no intrusivo). */
+.cal-grid :deep(.ev-syncerr) {
+  outline: 1.5px dashed var(--danger);
+  outline-offset: -2px;
 }
 textarea.field {
   resize: vertical;
