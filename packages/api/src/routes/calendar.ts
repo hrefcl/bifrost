@@ -12,20 +12,25 @@ import { enqueue } from '../services/scheduling/queue.js';
 import type { ICalendarEvent } from '../models/CalendarEvent.js';
 import type { FastifyBaseLogger } from 'fastify';
 
-/** Encola UNA invitación por attendee (idempotente por jobId → no duplica al re-editar). Best-effort:
- *  un fallo de encolado NO aborta la operación (el evento ya se guardó). */
-async function enqueueInvites(event: ICalendarEvent, log: FastifyBaseLogger): Promise<void> {
+/** Encola UNA invitación por attendee. `skip` = emails ya invitados (en PATCH, los previos → sólo se
+ *  invita a los NUEVOS; review B). jobId idempotente + email normalizado a lowercase (review B — MED).
+ *  Best-effort: un fallo de encolado NO aborta la operación (el evento ya se guardó). */
+async function enqueueInvites(
+  event: ICalendarEvent,
+  log: FastifyBaseLogger,
+  skip?: Set<string>
+): Promise<void> {
   for (const a of event.attendees ?? []) {
+    const email = a.email.toLowerCase();
+    if (skip?.has(email)) continue;
     try {
       await enqueue(
         'send-event-invite',
-        { eventId: event._id.toString(), email: a.email },
-        { jobId: `event-invite-${event._id.toString()}-${a.email.toLowerCase()}` }
+        { eventId: event._id.toString(), email },
+        { jobId: `event-invite-${event._id.toString()}-${email}` }
       );
     } catch (err) {
-      log.warn(
-        `[calendar] no se pudo encolar la invitación a ${a.email}: ${(err as Error).message}`
-      );
+      log.warn(`[calendar] no se pudo encolar la invitación a ${email}: ${(err as Error).message}`);
     }
   }
 }
@@ -110,10 +115,10 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     const { withMeet, attendees, ...eventFields } = body;
     const event = await CalendarEvent.create({
       ...eventFields,
-      // Invitados: normalizados con estado/rol por default (Google-like).
+      // Invitados: email a lowercase (dedup/lookup consistente) + estado/rol default (Google-like).
       attendees: attendees?.map((a) => ({
         name: a.name,
-        email: a.email,
+        email: a.email.toLowerCase(),
         status: 'needs-action',
         role: 'required',
       })),
@@ -194,7 +199,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     if (patchAttendees) {
       update.attendees = patchAttendees.map((a) => ({
         name: a.name,
-        email: a.email,
+        email: a.email.toLowerCase(),
         status: 'needs-action',
         role: 'required',
       }));
@@ -240,8 +245,12 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         }
       }
     }
-    // Sólo si la edición cambió los invitados: invita a los nuevos (jobId dedup → no re-invita a los previos).
-    if (patchAttendees) await enqueueInvites(event, request.log);
+    // Sólo si la edición cambió los invitados: invita a los NUEVOS (los previos van en `skip` → no se
+    // re-invita a nadie ya invitado, sin depender del dedup del jobId — review B).
+    if (patchAttendees) {
+      const prev = new Set((existing.attendees ?? []).map((a) => a.email.toLowerCase()));
+      await enqueueInvites(event, request.log, prev);
+    }
     await enqueueGoogleSync(event._id); // refleja la edición en Google (fail-soft)
     return serializeCalendarEvent(event);
   });

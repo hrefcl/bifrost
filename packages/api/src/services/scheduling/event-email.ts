@@ -32,7 +32,11 @@ function fmt(d: Date): string {
 export async function sendEventInvite(eventId: string, attendeeEmail: string): Promise<void> {
   const event = await CalendarEvent.findById(eventId);
   if (!event) return; // evento borrado: nada que enviar.
-  const attendee = event.attendees?.find((a) => a.email === attendeeEmail);
+  // Soft-delete (con Google activo, DELETE deja cancelled + deleting): NO invitar a un evento borrado
+  // aunque el doc todavía exista mientras el sync lo elimina (review B — HIGH).
+  if (event.status === 'cancelled' || event.googleSyncStatus === 'deleting') return;
+  const target = attendeeEmail.toLowerCase();
+  const attendee = event.attendees?.find((a) => a.email.toLowerCase() === target);
   if (!attendee) return; // el invitado ya no está (fue removido en una edición): no invitar.
 
   // Cuenta primaria del host (de ahí sale el correo). Sin SMTP → el job falla y reintenta.

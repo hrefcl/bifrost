@@ -55,43 +55,61 @@ const meetLocked = ref(false);
 // Invitados (estilo Google): agregar por email, con autocompletado desde contactos.
 const attendeeInput = ref('');
 const attendeeSuggestions = ref<{ name: string; email: string }[]>([]);
+const attHighlight = ref(-1); // índice resaltado para navegación con teclado
 let suggestTimer: ReturnType<typeof setTimeout> | undefined;
-let suggestSeq = 0;
+let suggestAbort: AbortController | undefined;
 function onAttendeeInput() {
   const q = attendeeInput.value.trim();
   clearTimeout(suggestTimer);
+  attHighlight.value = -1;
   if (q.length < 1) {
+    suggestAbort?.abort();
     attendeeSuggestions.value = [];
     return;
   }
   suggestTimer = setTimeout(() => {
-    const seq = ++suggestSeq;
+    suggestAbort?.abort(); // cancela la petición en vuelo (review D): sin llamadas acumuladas al tipear
+    const ac = new AbortController();
+    suggestAbort = ac;
     void api
-      .get<{ name: string; email: string }[]>('/contacts/search', { params: { q } })
+      .get<{ name: string; email: string }[]>('/contacts/search', {
+        params: { q },
+        signal: ac.signal,
+      })
       .then(({ data }) => {
-        if (seq !== suggestSeq) return; // ignora respuestas viejas
-        // Filtra los ya agregados.
-        const added = new Set(createForm.value.attendees.map((a) => a.email));
-        attendeeSuggestions.value = data.filter((c) => !added.has(c.email)).slice(0, 6);
+        const added = new Set(createForm.value.attendees.map((a) => a.email.toLowerCase()));
+        attendeeSuggestions.value = data
+          .filter((c) => !added.has(c.email.toLowerCase()))
+          .slice(0, 6);
       })
       .catch(() => {
-        attendeeSuggestions.value = [];
+        /* abortada o error: no tocar las sugerencias */
       });
   }, 200);
 }
 function pushAttendee(email: string, name?: string) {
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-  if (!createForm.value.attendees.some((a) => a.email === email)) {
-    createForm.value.attendees.push(name ? { name, email } : { email });
+  const e = email.trim().toLowerCase();
+  if (!e || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return;
+  if (!createForm.value.attendees.some((a) => a.email.toLowerCase() === e)) {
+    createForm.value.attendees.push(name ? { name, email: e } : { email: e });
   }
   attendeeInput.value = '';
   attendeeSuggestions.value = [];
+  attHighlight.value = -1;
 }
 function addAttendee() {
-  pushAttendee(attendeeInput.value.trim());
+  // Enter con una sugerencia resaltada → la agrega; si no, agrega el texto libre (review D: nav teclado).
+  const i = attHighlight.value;
+  if (i >= 0 && i < attendeeSuggestions.value.length) pickSuggestion(attendeeSuggestions.value[i]);
+  else pushAttendee(attendeeInput.value);
 }
 function pickSuggestion(c: { name: string; email: string }) {
   pushAttendee(c.email, c.name);
+}
+function moveHighlight(delta: number) {
+  const n = attendeeSuggestions.value.length;
+  if (!n) return;
+  attHighlight.value = (attHighlight.value + delta + n) % n;
 }
 function removeAttendee(email: string) {
   createForm.value.attendees = createForm.value.attendees.filter((a) => a.email !== email);
@@ -102,13 +120,16 @@ const detail = ref<CalendarEvent | null>(null);
 
 // Estado de sincronización con Google del evento abierto (para NO diagnosticar a ciegas cuando algo falla).
 // 'synced'/'pending'/'error' → fila informativa; undefined/'skipped'/'deleting' → no se muestra.
-const syncBadge = computed<{ cls: string; icon: 'check' | 'refresh' | 'x'; text: string } | null>(() => {
-  const s = detail.value?.googleSyncStatus;
-  if (s === 'synced') return { cls: 'ok', icon: 'check', text: t('calendar.google.syncSynced') };
-  if (s === 'pending') return { cls: 'pending', icon: 'refresh', text: t('calendar.google.syncPending') };
-  if (s === 'error') return { cls: 'err', icon: 'x', text: t('calendar.google.syncErrLine') };
-  return null;
-});
+const syncBadge = computed<{ cls: string; icon: 'check' | 'refresh' | 'x'; text: string } | null>(
+  () => {
+    const s = detail.value?.googleSyncStatus;
+    if (s === 'synced') return { cls: 'ok', icon: 'check', text: t('calendar.google.syncSynced') };
+    if (s === 'pending')
+      return { cls: 'pending', icon: 'refresh', text: t('calendar.google.syncPending') };
+    if (s === 'error') return { cls: 'err', icon: 'x', text: t('calendar.google.syncErrLine') };
+    return null;
+  }
+);
 
 // Reset defensivo: al cerrar el modal (cancel/X/click-fuera/guardar) se vuelve a modo "crear",
 // para que ningún reapertura futura herede el editingId de una edición previa (review B/D).
@@ -384,8 +405,7 @@ const calendarOptions = computed<CalendarOptions>(() => ({
   slotLabelFormat: { hour: 'numeric', minute: '2-digit', omitZeroMinute: true },
   events: fcEvents.value,
   // Marca visual sutil en los eventos que fallaron al sincronizar con Google.
-  eventClassNames: (arg) =>
-    arg.event.extendedProps.syncStatus === 'error' ? ['ev-syncerr'] : [],
+  eventClassNames: (arg) => (arg.event.extendedProps.syncStatus === 'error' ? ['ev-syncerr'] : []),
   // A11y: los eventos con error no dependen SÓLO del estilo — llevan title + aria-label (review B/D).
   eventDidMount: (arg) => {
     if (arg.event.extendedProps.syncStatus === 'error') {
@@ -643,13 +663,18 @@ onMounted(async () => {
                 autocomplete="off"
                 @input="onAttendeeInput"
                 @keydown.enter.prevent="addAttendee"
+                @keydown.down.prevent="moveHighlight(1)"
+                @keydown.up.prevent="moveHighlight(-1)"
+                @keydown.esc="attendeeSuggestions = []"
               />
               <!-- Autocompletado desde contactos -->
               <ul v-if="attendeeSuggestions.length" class="att-suggest">
                 <li
-                  v-for="c in attendeeSuggestions"
+                  v-for="(c, i) in attendeeSuggestions"
                   :key="c.email"
+                  :class="{ hi: i === attHighlight }"
                   @mousedown.prevent="pickSuggestion(c)"
+                  @mousemove="attHighlight = i"
                 >
                   <span class="s-name">{{ c.name || c.email }}</span>
                   <span v-if="c.name" class="s-email">{{ c.email }}</span>
@@ -1196,8 +1221,9 @@ onMounted(async () => {
   border-radius: 6px;
   cursor: pointer;
 }
-.att-suggest li:hover {
-  background: color-mix(in srgb, var(--accent) 10%, transparent);
+.att-suggest li:hover,
+.att-suggest li.hi {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .s-name {
   font-size: 13px;
