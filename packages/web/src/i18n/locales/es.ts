@@ -510,6 +510,8 @@ export default {
       tls: 'TLS',
       imapHint:
         'Se verifican las credenciales IMAP reales antes de crear la cuenta. Si son incorrectas, no se crea.',
+      nativeHint:
+        'El buzón se crea en el servidor de correo propio. No hace falta configurar IMAP/SMTP.',
       create: 'Crear cuenta',
       creating: 'Creando…',
       colEmail: 'Cuenta',
