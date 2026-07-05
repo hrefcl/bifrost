@@ -92,6 +92,72 @@ export async function deleteEvent(
   throw await toError(res);
 }
 
+/** Evento tal como lo devuelve `events.list` (lectura, más rico que el resource de escritura). */
+export interface GoogleEventRead {
+  id: string;
+  status?: string; // 'confirmed' | 'tentative' | 'cancelled' (cancelled = borrado en el feed incremental)
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: GoogleEventTime;
+  end?: GoogleEventTime;
+  etag?: string;
+  updated?: string;
+  iCalUID?: string;
+  recurringEventId?: string;
+  eventType?: string; // 'default' | 'birthday' | 'fromGmail' | 'workingLocation' | 'focusTime' | 'outOfOffice'
+  extendedProperties?: { private?: Record<string, string> };
+}
+export interface GoogleEventsPage {
+  items: GoogleEventRead[];
+  nextPageToken?: string;
+  nextSyncToken?: string;
+}
+/** El `syncToken` venció (410 Gone) → el caller debe purgar lo local y hacer un sync inicial completo. */
+export class GoogleSyncTokenExpired extends Error {
+  constructor() {
+    super('google-synctoken-expired');
+    this.name = 'GoogleSyncTokenExpired';
+  }
+}
+
+/**
+ * Lista eventos del calendario (bidireccional). DOS modos EXCLUYENTES (Google no los combina):
+ *  - incremental: `{ syncToken }` → deltas desde la última vez (incl. status:'cancelled' = borrados).
+ *  - inicial: `{ timeMin, timeMax }` → ventana con `singleEvents` (recurrentes expandidos), sin borrados.
+ * Se pagina por `pageToken`; la última página trae `nextSyncToken`. 410 → `GoogleSyncTokenExpired`.
+ */
+export async function listEvents(
+  userId: Types.ObjectId | string,
+  calendarId: string,
+  opts: { syncToken?: string; timeMin?: string; timeMax?: string; pageToken?: string }
+): Promise<GoogleEventsPage> {
+  const enc = encodeURIComponent(calendarId);
+  const p = new URLSearchParams({ maxResults: '250' });
+  if (opts.syncToken) {
+    p.set('syncToken', opts.syncToken); // incremental: NO se combina con timeMin/singleEvents/showDeleted
+  } else {
+    p.set('singleEvents', 'true'); // inicial: expande recurrentes en instancias
+    p.set('showDeleted', 'false');
+    if (opts.timeMin) p.set('timeMin', opts.timeMin);
+    if (opts.timeMax) p.set('timeMax', opts.timeMax);
+  }
+  if (opts.pageToken) p.set('pageToken', opts.pageToken);
+  const res = await call(userId, 'GET', `/calendars/${enc}/events?${p.toString()}`);
+  if (res.status === 410) throw new GoogleSyncTokenExpired();
+  if (!res.ok) throw await toError(res);
+  const json = (await res.json()) as {
+    items?: GoogleEventRead[];
+    nextPageToken?: string;
+    nextSyncToken?: string;
+  };
+  return {
+    items: json.items ?? [],
+    nextPageToken: json.nextPageToken,
+    nextSyncToken: json.nextSyncToken,
+  };
+}
+
 async function toError(res: Response): Promise<Error> {
   // Un 401 tras un refresh reciente ⇒ credencial inservible de forma PERMANENTE: se envuelve como
   // OAuthError permanente para que el caller marque la conexión en error (y corte reintentos), no como
