@@ -8,6 +8,27 @@ import { enqueueGoogleSync } from '../services/google/dispatch.js';
 import { createCalendarMeetRoom } from '../services/meet/booking-meet.js';
 import { getStoredMeetSettings } from '../services/meet/settings.js';
 import { meetEnabled } from '../services/meet/token-service.js';
+import { enqueue } from '../services/scheduling/queue.js';
+import type { ICalendarEvent } from '../models/CalendarEvent.js';
+import type { FastifyBaseLogger } from 'fastify';
+
+/** Encola UNA invitación por attendee (idempotente por jobId → no duplica al re-editar). Best-effort:
+ *  un fallo de encolado NO aborta la operación (el evento ya se guardó). */
+async function enqueueInvites(event: ICalendarEvent, log: FastifyBaseLogger): Promise<void> {
+  for (const a of event.attendees ?? []) {
+    try {
+      await enqueue(
+        'send-event-invite',
+        { eventId: event._id.toString(), email: a.email },
+        { jobId: `event-invite-${event._id.toString()}-${a.email.toLowerCase()}` }
+      );
+    } catch (err) {
+      log.warn(
+        `[calendar] no se pudo encolar la invitación a ${a.email}: ${(err as Error).message}`
+      );
+    }
+  }
+}
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
@@ -124,6 +145,7 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         }
       }
     }
+    await enqueueInvites(event, request.log); // invitaciones por email a los attendees (best-effort)
     await enqueueGoogleSync(event._id); // sync a Google (no-op si la feature está apagada; fail-soft)
     return serializeCalendarEvent(event);
   });
@@ -218,6 +240,8 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         }
       }
     }
+    // Sólo si la edición cambió los invitados: invita a los nuevos (jobId dedup → no re-invita a los previos).
+    if (patchAttendees) await enqueueInvites(event, request.log);
     await enqueueGoogleSync(event._id); // refleja la edición en Google (fail-soft)
     return serializeCalendarEvent(event);
   });

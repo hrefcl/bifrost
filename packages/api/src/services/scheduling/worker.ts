@@ -1,5 +1,6 @@
 import type { Job } from 'bullmq';
 import { sendBookingEmail, type EmailKind } from './email.js';
+import { sendEventInvite } from './event-email.js';
 import { runReconcile } from './reconciler.js';
 import { syncEventToGoogle } from '../google/sync.js';
 
@@ -18,6 +19,14 @@ export function schedulingProcessor(job: Job): Promise<void> {
         return Promise.reject(new Error('send-email: bookingId y kind requeridos'));
       }
       return sendBookingEmail(data.bookingId, data.kind);
+    }
+    case 'send-event-invite': {
+      // Invitación de un evento de calendario a UN attendee (idempotente por jobId).
+      const data = job.data as { eventId?: string; email?: string };
+      if (!data.eventId || !data.email) {
+        return Promise.reject(new Error('send-event-invite: eventId y email requeridos'));
+      }
+      return sendEventInvite(data.eventId, data.email);
     }
     case 'gcal-sync': {
       // Sync de UN evento con Google Calendar (F-gcal). Idempotente: lee el evento fresco y converge.

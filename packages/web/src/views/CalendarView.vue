@@ -52,17 +52,46 @@ const createForm = ref({
 const createError = ref('');
 // El toggle de Meet se bloquea sólo si el evento YA tiene sala (no se puede quitar desde acá).
 const meetLocked = ref(false);
-// Invitados (estilo Google): agregar por email.
+// Invitados (estilo Google): agregar por email, con autocompletado desde contactos.
 const attendeeInput = ref('');
-function addAttendee() {
-  const email = attendeeInput.value.trim();
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
-  if (createForm.value.attendees.some((a) => a.email === email)) {
-    attendeeInput.value = '';
+const attendeeSuggestions = ref<{ name: string; email: string }[]>([]);
+let suggestTimer: ReturnType<typeof setTimeout> | undefined;
+let suggestSeq = 0;
+function onAttendeeInput() {
+  const q = attendeeInput.value.trim();
+  clearTimeout(suggestTimer);
+  if (q.length < 1) {
+    attendeeSuggestions.value = [];
     return;
   }
-  createForm.value.attendees.push({ email });
+  suggestTimer = setTimeout(() => {
+    const seq = ++suggestSeq;
+    void api
+      .get<{ name: string; email: string }[]>('/contacts/search', { params: { q } })
+      .then(({ data }) => {
+        if (seq !== suggestSeq) return; // ignora respuestas viejas
+        // Filtra los ya agregados.
+        const added = new Set(createForm.value.attendees.map((a) => a.email));
+        attendeeSuggestions.value = data.filter((c) => !added.has(c.email)).slice(0, 6);
+      })
+      .catch(() => {
+        attendeeSuggestions.value = [];
+      });
+  }, 200);
+}
+function pushAttendee(email: string, name?: string) {
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return;
+  if (!createForm.value.attendees.some((a) => a.email === email)) {
+    createForm.value.attendees.push(name ? { name, email } : { email });
+  }
   attendeeInput.value = '';
+  attendeeSuggestions.value = [];
+}
+function addAttendee() {
+  pushAttendee(attendeeInput.value.trim());
+}
+function pickSuggestion(c: { name: string; email: string }) {
+  pushAttendee(c.email, c.name);
 }
 function removeAttendee(email: string) {
   createForm.value.attendees = createForm.value.attendees.filter((a) => a.email !== email);
@@ -605,13 +634,28 @@ onMounted(async () => {
         <!-- Invitados -->
         <div class="attendees">
           <div class="att-add">
-            <input
-              v-model="attendeeInput"
-              type="email"
-              :placeholder="t('calendar.attendeePlaceholder')"
-              class="field"
-              @keydown.enter.prevent="addAttendee"
-            />
+            <div class="att-field">
+              <input
+                v-model="attendeeInput"
+                type="email"
+                :placeholder="t('calendar.attendeePlaceholder')"
+                class="field"
+                autocomplete="off"
+                @input="onAttendeeInput"
+                @keydown.enter.prevent="addAttendee"
+              />
+              <!-- Autocompletado desde contactos -->
+              <ul v-if="attendeeSuggestions.length" class="att-suggest">
+                <li
+                  v-for="c in attendeeSuggestions"
+                  :key="c.email"
+                  @mousedown.prevent="pickSuggestion(c)"
+                >
+                  <span class="s-name">{{ c.name || c.email }}</span>
+                  <span v-if="c.name" class="s-email">{{ c.email }}</span>
+                </li>
+              </ul>
+            </div>
             <button type="button" class="ghost-btn" @click="addAttendee">
               {{ t('calendar.addAttendee') }}
             </button>
@@ -1120,9 +1164,48 @@ onMounted(async () => {
   display: flex;
   gap: 8px;
 }
-.att-add .field {
+.att-field {
+  position: relative;
   flex: 1;
+}
+.att-field .field {
+  width: 100%;
   margin: 0;
+  box-sizing: border-box;
+}
+.att-suggest {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  top: calc(100% + 2px);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--surface-1, #fff);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+  max-height: 200px;
+  overflow: auto;
+}
+.att-suggest li {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.att-suggest li:hover {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+.s-name {
+  font-size: 13px;
+  font-weight: 600;
+}
+.s-email {
+  font-size: 12px;
+  color: var(--text-3);
 }
 .att-chips {
   display: flex;
