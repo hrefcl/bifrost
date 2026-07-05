@@ -4,6 +4,7 @@ import { GoogleConnection } from '../../models/GoogleConnection.js';
 import { CalendarEvent } from '../../models/CalendarEvent.js';
 import { Account } from '../../models/Account.js';
 import { listEvents, GoogleSyncTokenExpired } from './calendar-api.js';
+import { OAuthError } from './oauth.js';
 import { applyGoogleEvent, GOOGLE_CAL_ID } from './import.js';
 import { googleEnabled } from './creds.js';
 import { enqueue } from '../scheduling/queue.js';
@@ -38,8 +39,25 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
   if (!account) return; // sin cuenta primaria no se puede proyectar el import
   const accountId = account._id;
 
-  if (conn.syncToken && !opts.full) await runIncremental(userId, accountId, calId, conn.syncToken);
-  else await runFull(userId, accountId, calId);
+  try {
+    if (conn.syncToken && !opts.full)
+      await runIncremental(userId, accountId, calId, conn.syncToken);
+    else await runFull(userId, accountId, calId);
+  } catch (err) {
+    // Espejo del push (sync.ts): un fallo PERMANENTE de auth (401 de la API / invalid_grant) marca la
+    // CONEXIÓN en 'error' para cortar YA el martilleo — sin esto `enqueueGooglePolls` (que filtra por
+    // status:'connected') seguiría encolando este usuario cada 5 min contra Google, y la UI nunca pediría
+    // reconectar. Un transitorio (5xx/red) deja la conexión intacta y BullMQ reintenta. Self-healing:
+    // al reconectar, el flujo OAuth vuelve a status 'connected'. Guardado por status:'connected' para no
+    // pisar un 'revoked' explícito (auditoría de revocación/no-martilleo).
+    if (err instanceof OAuthError && err.permanent) {
+      await GoogleConnection.updateOne(
+        { userId, status: 'connected' },
+        { $set: { status: 'error', syncError: 'La conexión con Google fue rechazada. Reconectá.' } }
+      );
+    }
+    throw err; // BullMQ reintenta (acotado: en el retry doPoll corta porque conn ya no es 'connected')
+  }
 }
 
 async function runIncremental(

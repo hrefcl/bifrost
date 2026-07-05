@@ -18,7 +18,8 @@ vi.mock('../calendar-api.js', async (imp) => {
 
 import * as api from '../calendar-api.js';
 import type { GoogleEventRead } from '../calendar-api.js';
-import { pollUserCalendar } from '../poll.js';
+import { OAuthError } from '../oauth.js';
+import { pollUserCalendar, enqueueGooglePolls } from '../poll.js';
 import { GoogleConnection } from '../../../models/GoogleConnection.js';
 import { Account } from '../../../models/Account.js';
 import { CalendarEvent } from '../../../models/CalendarEvent.js';
@@ -136,6 +137,24 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
 
     expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'c' })).toBe(1);
     expect((await GoogleConnection.findOne({ userId }))?.syncToken).toBe('tokFull');
+  });
+
+  it('401 permanente de la API (acceso revocado) → marca conn en error y NO se re-encola (anti-martilleo)', async () => {
+    const { userId } = await seedConnected('tokZ');
+    vi.mocked(api.listEvents).mockRejectedValueOnce(new OAuthError('401', true));
+    await expect(pollUserCalendar(userId)).rejects.toBeInstanceOf(OAuthError); // el job falla (observabilidad)
+
+    const conn = await GoogleConnection.findOne({ userId });
+    expect(conn?.status).toBe('error'); // cortó el martilleo
+    // enqueueGooglePolls filtra por status:'connected' → este usuario ya no se encola.
+    expect(await enqueueGooglePolls(false)).toBe(0);
+  });
+
+  it('error TRANSITORIO (5xx) → NO marca la conexión en error (BullMQ reintenta)', async () => {
+    const { userId } = await seedConnected('tokT');
+    vi.mocked(api.listEvents).mockRejectedValueOnce(new api.GoogleApiError('Google API 503', 503));
+    await expect(pollUserCalendar(userId)).rejects.toBeTruthy();
+    expect((await GoogleConnection.findOne({ userId }))?.status).toBe('connected'); // intacta
   });
 
   it('conexión NO conectada → no llama a Google', async () => {
