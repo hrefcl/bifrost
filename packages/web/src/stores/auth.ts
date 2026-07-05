@@ -4,6 +4,33 @@ import { type AxiosError, type InternalAxiosRequestConfig } from 'axios';
 import { api } from '@/lib/http';
 import type { LoginRequest, LoginResponse, User } from '@webmail6/shared';
 
+// Flag NO sensible (sólo un booleano, como `pwa:install-dismissed`) que marca un logout cuya revocación
+// server-side quedó PENDIENTE (típico offline: el POST /auth/logout es NetworkOnly y no llega). Persiste en
+// localStorage para sobrevivir al cierre de la app instalada y BLOQUEAR la auto-restauración en la próxima
+// apertura hasta completar la revocación (dispositivo compartido/perdido — review MED-1).
+const PENDING_LOGOUT_KEY = 'auth:pendingLogout';
+function setPendingLogout(): void {
+  try {
+    localStorage.setItem(PENDING_LOGOUT_KEY, '1');
+  } catch {
+    /* storage no disponible (modo privado/deshabilitado): degradamos al comportamiento anterior */
+  }
+}
+function clearPendingLogout(): void {
+  try {
+    localStorage.removeItem(PENDING_LOGOUT_KEY);
+  } catch {
+    /* no-op */
+  }
+}
+function hasPendingLogout(): boolean {
+  try {
+    return localStorage.getItem(PENDING_LOGOUT_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
 export const useAuthStore = defineStore('auth', () => {
   // Token SÓLO en memoria (no localStorage): evita exfiltración por XSS al renderizar
   // HTML de emails. La sesión sobrevive al reload vía la cookie httpOnly de refresh.
@@ -25,6 +52,7 @@ export const useAuthStore = defineStore('auth', () => {
 
   async function login(payload: LoginRequest) {
     const { data } = await api.post<LoginResponse>('/auth/login', payload);
+    clearPendingLogout(); // un login exitoso supera cualquier logout pendiente previo
     setSession(data.accessToken, data.user);
     return data;
   }
@@ -36,12 +64,15 @@ export const useAuthStore = defineStore('auth', () => {
     // (p.ej. ComplianceGateView) no llegarían al redirect y la vista privada quedaría montada
     // (review B). Al no rechazar, todos redirigen. El access token muere en memoria al limpiar; la
     // revocación server-side de la cookie httpOnly ocurre cuando el POST sí llega (online).
-    // LIMITACIÓN offline conocida: si el POST no llega, la cookie de refresh sigue válida en el
-    // server → una reapertura ONLINE podría restaurar sesión (ver docs/pwa: limitaciones).
+    // Offline: marcamos el logout como PENDIENTE ANTES del POST. Si el POST no llega, el flag persiste y
+    // `restore()` NO reabre la sesión en la próxima apertura (completa la revocación al reconectar). Sólo
+    // limpiamos el flag cuando la revocación server-side se confirma (POST 2xx) — cierra MED-1.
+    setPendingLogout();
     try {
       await api.post('/auth/logout');
+      clearPendingLogout(); // cookie de refresh revocada en el server → ya no hay sesión que restaurar
     } catch {
-      /* sin red / error de red: la revocación server-side se hará al reconectar; el logout local procede */
+      /* sin red: el flag queda; restore() completa la revocación al reconectar. El logout local procede. */
     } finally {
       clearSession();
     }
@@ -68,6 +99,19 @@ export const useAuthStore = defineStore('auth', () => {
 
   /** Restaura la sesión al cargar la página usando la cookie httpOnly de refresh. */
   async function restore(): Promise<boolean> {
+    // Logout PENDIENTE de una sesión anterior sin conexión: NO restaurar. Ahora que (posiblemente) hay red,
+    // completamos la revocación server-side de la cookie de refresh y quedamos deslogueados. El flag sólo se
+    // limpia si el POST confirma; si sigue offline, persiste para reintentar en la próxima apertura (MED-1).
+    if (hasPendingLogout()) {
+      clearSession();
+      try {
+        await api.post('/auth/logout');
+        clearPendingLogout();
+      } catch {
+        /* aún sin red: el flag persiste → se reintenta la próxima apertura */
+      }
+      return false;
+    }
     try {
       await refresh();
       const { data } = await api.get<User>('/auth/me');
