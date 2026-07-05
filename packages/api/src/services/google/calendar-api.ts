@@ -23,6 +23,9 @@ export interface GoogleEventResource {
   start: GoogleEventTime;
   end: GoogleEventTime;
   status?: 'confirmed' | 'tentative' | 'cancelled';
+  // Marca anti-loop para la bidireccional: identifica los eventos que empujó Bifrost, para que el poller
+  // NO los re-importe (ver diseño §Anti-loop). Google no la setea en eventos nativos.
+  extendedProperties?: { private?: Record<string, string> };
 }
 
 export class GoogleApiError extends Error {
