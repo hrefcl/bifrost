@@ -220,4 +220,32 @@ describe('admin: alta turnkey (Bifrost crea el buzón real)', () => {
       .accounts.find((a: { email: string }) => a.email === 'legacy@cleverty.info');
     expect(legacy.linked).toBe(false);
   });
+
+  it('suspende un buzón IMPORTADO (sin credenciales) sin ValidationError → quita la línea real', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    // Buzón brownfield importado (shell con credenciales de webmail VACÍAS).
+    await fs.writeFile(accountsFile, 'legacy@cleverty.info|{BLF-CRYPT}$2y$10$hash\n');
+    await app.inject({ method: 'POST', url: '/api/admin/accounts/import', headers });
+    const acc = await Account.findOne({ email: 'legacy@cleverty.info' }).lean();
+
+    // Regresión: antes esto tiraba 502 (save() del shell fallaba por creds vacías required).
+    const off = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(off.statusCode).toBe(200);
+    expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('legacy@cleverty.info');
+
+    const on = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'active' },
+    });
+    expect(on.statusCode).toBe(200);
+    expect(await fs.readFile(accountsFile, 'utf8')).toContain('legacy@cleverty.info');
+  });
 });
