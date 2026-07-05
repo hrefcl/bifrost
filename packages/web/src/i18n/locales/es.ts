@@ -437,7 +437,8 @@ export default {
       desc: 'Conectá tu proyecto de Google para que los usuarios puedan sincronizar sus eventos con Google Calendar.',
       guideTitle: '¿Cómo obtengo las credenciales? (guía paso a paso)',
       guide1: 'Entrá a Google Cloud Console y creá o elegí un proyecto:',
-      guideEnableApi: 'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
+      guideEnableApi:
+        'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
       guide2:
         'Abrí "Pantalla de consentimiento de OAuth": tipo "Externo"; en "Público" / modo Testing, agregá tu Gmail en "Usuarios de prueba".',
       guide3:
@@ -812,6 +813,28 @@ export default {
       shareScreen: 'Compartir pantalla',
       copyLink: 'Copiar enlace',
       leave: 'Salir',
+    },
+  },
+  pwa: {
+    offline: {
+      title: 'Sin conexión',
+      body: 'El correo requiere conexión a internet. Revisá tu red y volvé a intentar.',
+    },
+    update: {
+      title: 'Hay una versión nueva de Bifrost.',
+      action: 'Actualizar',
+    },
+    install: {
+      title: 'Instalar Bifrost',
+      body: 'Agregá el correo a tu pantalla de inicio y usalo como una app.',
+      action: 'Instalar',
+      dismiss: 'Ahora no',
+    },
+    ios: {
+      title: 'Instalar Bifrost en tu iPhone',
+      step1: 'Tocá el botón Compartir en Safari.',
+      step2: 'Elegí “Agregar a pantalla de inicio”.',
+      dismiss: 'Entendido',
     },
   },
 };

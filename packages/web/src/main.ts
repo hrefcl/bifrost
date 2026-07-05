@@ -6,7 +6,12 @@ import router from './router';
 import SetupWizard from './views/SetupWizard.vue';
 import { i18n, initLocaleAttr } from './i18n';
 import { applyBrand, loadRemoteBrand } from './config/brand';
+import { initPwa } from './composables/usePwa';
 import './assets/main.css';
+
+// PWA: registrar el service worker y los listeners de instalación lo ANTES posible (sincrónico,
+// antes del bootstrap async) para no perder `beforeinstallprompt`. En dev es no-op (devOptions off).
+initPwa();
 
 async function bootstrap() {
   // Marca (white-label) + idioma: aplicar antes de montar para evitar parpadeo.

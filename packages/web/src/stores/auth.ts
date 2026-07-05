@@ -30,8 +30,21 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   async function logout() {
-    await api.post('/auth/logout');
-    clearSession();
+    // Logout best-effort: la sesión LOCAL se limpia SIEMPRE y el método NUNCA rechaza, aunque el
+    // POST falle (típico en PWA sin conexión: el endpoint es NetworkOnly y rechaza offline). Si
+    // rechazara, los callers que hacen `await auth.logout(); router.push('/login')` sin `finally`
+    // (p.ej. ComplianceGateView) no llegarían al redirect y la vista privada quedaría montada
+    // (review B). Al no rechazar, todos redirigen. El access token muere en memoria al limpiar; la
+    // revocación server-side de la cookie httpOnly ocurre cuando el POST sí llega (online).
+    // LIMITACIÓN offline conocida: si el POST no llega, la cookie de refresh sigue válida en el
+    // server → una reapertura ONLINE podría restaurar sesión (ver docs/pwa: limitaciones).
+    try {
+      await api.post('/auth/logout');
+    } catch {
+      /* sin red / error de red: la revocación server-side se hará al reconectar; el logout local procede */
+    } finally {
+      clearSession();
+    }
   }
 
   // Single-flight: si ya hay un refresh en vuelo, todas las llamadas comparten la

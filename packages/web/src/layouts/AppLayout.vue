@@ -243,7 +243,10 @@ async function onLogout() {
 .shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  /* `--pwa-top-inset` = alto del banner PWA "sin conexión" (0px online). Empuja la app hacia abajo
+     para no quedar tapada por ese banner fixed. Online no cambia nada (calc con 0). */
+  height: calc(100vh - var(--pwa-top-inset, 0px));
+  margin-top: var(--pwa-top-inset, 0px);
   background: var(--bg);
 }
 .topbar {

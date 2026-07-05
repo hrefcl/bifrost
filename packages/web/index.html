@@ -3,7 +3,17 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- PWA: color de barra/tema (marca base Bifrost; el white-label del admin es runtime). El link
+         al manifest lo inyecta vite-plugin-pwa en el build. -->
+    <meta name="theme-color" content="#1b66ff" />
+    <!-- iOS/Safari: Safari NO soporta el manifest para instalar → estos meta dan el ícono, el
+         nombre y el modo standalone al "Agregar a pantalla de inicio". -->
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Bifrost" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <!-- Sin fuentes externas: la CSP de nginx (script/style/font 'self') bloquea CDNs, así que se
          usa el stack de sistema (-apple-system, Segoe UI, Roboto…) definido en theme.css. Esto evita
          depender de una fuente que en producción nunca cargaba. (Rediseño: B-HIGH-1 / D-002.) -->

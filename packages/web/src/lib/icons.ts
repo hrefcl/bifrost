@@ -72,6 +72,8 @@ import {
   PhMicrophoneSlash,
   PhVideoCameraSlash,
   PhScreencast,
+  PhWifiSlash,
+  PhShareNetwork,
 } from '@phosphor-icons/vue';
 
 // Mapa nombre-lógico → componente Phosphor. Las claves son la API pública estable (mismas del set
@@ -141,6 +143,9 @@ export const ICONS = {
   micOff: PhMicrophoneSlash,
   videoOff: PhVideoCameraSlash,
   screenShare: PhScreencast,
+  // PWA: sin conexión / compartir (hint de instalación en iOS).
+  wifiSlash: PhWifiSlash,
+  share: PhShareNetwork,
 } as const satisfies Record<string, Component>;
 
 /** Nombres válidos de icono (unión cerrada del mapa). El nuevo código debe usar este tipo. */
