@@ -930,6 +930,10 @@ export default function adminRoutes(fastify: FastifyInstance) {
     // Total REAL de buzones en el servidor (accounts.cf) para detectar los que aún no están en Bifrost
     // (brownfield: migrados/creados fuera del panel). null si el provisioning no aplica o falla la lectura.
     const serverMailboxCount = await countServerMailboxes();
+    // Modo de provisioning EXPLÍCITO: en modo nativo (docker-mailserver) el alta NO pide IMAP/SMTP —
+    // el buzón se crea en el mailserver propio. El front lo usa para ocultar esos campos (antes lo
+    // infería de `serverMailboxCount !== null`, que también es null si la lectura del accounts.cf falla).
+    const provisioning = await provisioningEnabled();
     const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } })
       .select('displayName primaryEmail role customRoleId jobTitle department')
@@ -978,6 +982,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
         };
       }),
       serverMailboxCount,
+      provisioning,
     };
   });
 

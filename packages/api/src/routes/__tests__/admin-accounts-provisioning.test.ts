@@ -219,6 +219,8 @@ describe('admin: alta turnkey (Bifrost crea el buzón real)', () => {
       .json()
       .accounts.find((a: { email: string }) => a.email === 'legacy@cleverty.info');
     expect(legacy.linked).toBe(false);
+    // El flag de modo va explícito en la respuesta → el front oculta IMAP/SMTP en el alta (modo nativo).
+    expect(list.json().provisioning).toBe(true);
   });
 
   it('suspende un buzón IMPORTADO (sin credenciales) sin ValidationError → quita la línea real', async () => {

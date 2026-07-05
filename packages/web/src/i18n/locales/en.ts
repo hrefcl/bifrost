@@ -508,6 +508,7 @@ export default {
       tls: 'TLS',
       imapHint:
         'Real IMAP credentials are verified before the account is created. If they are wrong, it is not created.',
+      nativeHint: 'The mailbox is created on your own mail server. No IMAP/SMTP setup needed.',
       create: 'Create account',
       creating: 'Creating…',
       colEmail: 'Account',

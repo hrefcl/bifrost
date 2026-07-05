@@ -252,6 +252,9 @@ const accLoading = ref(true);
 const accError = ref('');
 // Total real de buzones en el servidor de correo (accounts.cf). null = provisioning no aplica.
 const serverMailboxCount = ref<number | null>(null);
+// Modo servidor NATIVO (docker-mailserver): el buzón se crea en el mailserver propio → el alta NO pide
+// IMAP/SMTP. En modo trae-tu-propio (provisioning=false) sí se conecta a un IMAP/SMTP externo.
+const provisioning = ref(false);
 const importing = ref(false);
 // Cuántos buzones existen en el servidor pero aún NO están registrados en Bifrost (brownfield).
 const unregisteredCount = computed(() =>
@@ -264,11 +267,14 @@ async function loadAccounts() {
   accLoading.value = true;
   accError.value = '';
   try {
-    const { data } = await api.get<{ accounts: AdminAccount[]; serverMailboxCount: number | null }>(
-      '/admin/accounts'
-    );
+    const { data } = await api.get<{
+      accounts: AdminAccount[];
+      serverMailboxCount: number | null;
+      provisioning?: boolean;
+    }>('/admin/accounts');
     accounts.value = data.accounts;
     serverMailboxCount.value = data.serverMailboxCount;
+    provisioning.value = data.provisioning ?? false;
   } catch {
     accError.value = t('admin.accounts.errLoad');
   } finally {
@@ -315,8 +321,8 @@ const createIncomplete = computed(
   () =>
     !form.value.email.trim() ||
     !form.value.password ||
-    !form.value.imapHost.trim() ||
-    !form.value.smtpHost.trim()
+    // IMAP/SMTP sólo son obligatorios en modo trae-tu-propio; en modo nativo el mailserver los provee.
+    (!provisioning.value && (!form.value.imapHost.trim() || !form.value.smtpHost.trim()))
 );
 
 async function createAccount() {
@@ -330,12 +336,17 @@ async function createAccount() {
       email: form.value.email.trim(),
       password: form.value.password,
       ...(form.value.displayName.trim() ? { displayName: form.value.displayName.trim() } : {}),
-      imapHost: form.value.imapHost.trim(),
-      imapPort: form.value.imapPort,
-      imapSecure: form.value.imapSecure,
-      smtpHost: form.value.smtpHost.trim(),
-      smtpPort: form.value.smtpPort,
-      smtpSecure: form.value.smtpSecure,
+      // Modo nativo: el backend ignora IMAP/SMTP (crea el buzón en el mailserver propio) → ni los mandamos.
+      ...(provisioning.value
+        ? {}
+        : {
+            imapHost: form.value.imapHost.trim(),
+            imapPort: form.value.imapPort,
+            imapSecure: form.value.imapSecure,
+            smtpHost: form.value.smtpHost.trim(),
+            smtpPort: form.value.smtpPort,
+            smtpSecure: form.value.smtpSecure,
+          }),
       ...(hasQuota ? { quotaBytes: Math.max(0, Math.round(q)) * 1024 * 1024 } : {}),
     });
     showCreate.value = false;
@@ -1332,36 +1343,48 @@ async function save() {
                       class="adminput"
                       :placeholder="t('admin.accounts.quotaDefaultPh')"
                   /></label>
-                  <label class="fld"
-                    ><span>{{ t('admin.accounts.imapHost') }}</span
-                    ><input v-model="form.imapHost" class="adminput" placeholder="imap.empresa.com"
-                  /></label>
-                  <div class="grid2 tight">
+                  <!-- IMAP/SMTP sólo en modo trae-tu-propio. En modo servidor NATIVO el buzón se crea en
+                       el mailserver propio y estos campos no aplican (bug: antes se mostraban siempre). -->
+                  <template v-if="!provisioning">
                     <label class="fld"
-                      ><span>{{ t('admin.accounts.imapPort') }}</span
-                      ><input v-model.number="form.imapPort" type="number" class="adminput"
+                      ><span>{{ t('admin.accounts.imapHost') }}</span
+                      ><input
+                        v-model="form.imapHost"
+                        class="adminput"
+                        placeholder="imap.empresa.com"
                     /></label>
-                    <label class="fld check2"
-                      ><input v-model="form.imapSecure" type="checkbox" />
-                      {{ t('admin.accounts.tls') }}
-                    </label>
-                  </div>
-                  <label class="fld"
-                    ><span>{{ t('admin.accounts.smtpHost') }}</span
-                    ><input v-model="form.smtpHost" class="adminput" placeholder="smtp.empresa.com"
-                  /></label>
-                  <div class="grid2 tight">
+                    <div class="grid2 tight">
+                      <label class="fld"
+                        ><span>{{ t('admin.accounts.imapPort') }}</span
+                        ><input v-model.number="form.imapPort" type="number" class="adminput"
+                      /></label>
+                      <label class="fld check2"
+                        ><input v-model="form.imapSecure" type="checkbox" />
+                        {{ t('admin.accounts.tls') }}
+                      </label>
+                    </div>
                     <label class="fld"
-                      ><span>{{ t('admin.accounts.smtpPort') }}</span
-                      ><input v-model.number="form.smtpPort" type="number" class="adminput"
+                      ><span>{{ t('admin.accounts.smtpHost') }}</span
+                      ><input
+                        v-model="form.smtpHost"
+                        class="adminput"
+                        placeholder="smtp.empresa.com"
                     /></label>
-                    <label class="fld check2"
-                      ><input v-model="form.smtpSecure" type="checkbox" />
-                      {{ t('admin.accounts.tls') }}
-                    </label>
-                  </div>
+                    <div class="grid2 tight">
+                      <label class="fld"
+                        ><span>{{ t('admin.accounts.smtpPort') }}</span
+                        ><input v-model.number="form.smtpPort" type="number" class="adminput"
+                      /></label>
+                      <label class="fld check2"
+                        ><input v-model="form.smtpSecure" type="checkbox" />
+                        {{ t('admin.accounts.tls') }}
+                      </label>
+                    </div>
+                  </template>
                 </div>
-                <p class="hint">{{ t('admin.accounts.imapHint') }}</p>
+                <p class="hint">
+                  {{ provisioning ? t('admin.accounts.nativeHint') : t('admin.accounts.imapHint') }}
+                </p>
                 <div class="actions">
                   <button
                     class="btn-primary"
