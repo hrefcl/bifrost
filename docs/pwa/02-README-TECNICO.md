@@ -50,9 +50,10 @@ Con el shell precacheado, la app **abre** sin conexión; un banner claro indica 
 ## Limitaciones conocidas
 
 - **Sin lectura offline de correo** (por diseño, etapa 1). Offline sólo abre el shell + aviso.
-- **iOS**: Safari no tiene prompt automático de instalación → se guía manualmente. `theme_color` del manifest no aplica en iOS (usa la meta status-bar-style).
-- **Manifest estático**: `theme_color` e íconos usan la **marca base Bifrost**, no el white-label runtime del admin (`/api/branding`). Follow-up posible: manifest servido dinámicamente por el backend.
-- **Recarga de actualización**: el usuario debe tocar "Actualizar" (o recargar) para tomar el shell nuevo; el correo real nunca queda viejo (no se cachea `/api`).
+- **iOS**: Safari no tiene prompt automático de instalación → se guía manualmente. Almacenamiento de iOS puede evictar datos tras ~7 días de no uso (limitación de WebKit): si la cookie de refresh se evicta, el usuario deberá reloguear. La cookie httpOnly la controla el backend (fuera del alcance de la PWA).
+- **White-label de la PWA (build-time):** el manifest (`name`, `short_name`, `theme_color`) y las metas Apple honran `VITE_BRAND_NAME`/`VITE_BRAND_ACCENT` — la PWA instalada usa la marca del tenant. Los **íconos** son binarios pre-generados (marca base Bifrost); un tenant regenera los suyos con `node scripts/gen-pwa-icons.mjs` tras reemplazar `public/favicon.svg`. El white-label **runtime** del admin (`/api/branding`) no afecta al manifest (es estático por diseño; el shell/CSS sí lo aplican).
+- **Recarga de actualización**: el usuario debe tocar "Actualizar" (o recargar) para tomar el shell nuevo; el correo real nunca queda viejo (no se cachea `/api`). No hay chequeo periódico de actualización dentro de una sesión SPA larga (se detecta al recargar; `index.html` es `no-cache`).
+- **Sin kill-switch remoto del SW**: para forzar la baja del SW en todos los clientes (incidente), desplegar un `sw.js` que se auto-desregistre o instruir `caches` + `unregister` (ver QA). El diseño `prompt` sin `clientsClaim` evita SW zombies bajo sesión abierta.
 
 ## Archivos
 
