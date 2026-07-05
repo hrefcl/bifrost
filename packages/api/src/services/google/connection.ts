@@ -7,6 +7,7 @@ import {
   type GoogleConnectionStatus,
   type IGoogleConnection,
 } from '../../models/GoogleConnection.js';
+import { CalendarEvent } from '../../models/CalendarEvent.js';
 import {
   refreshAccessToken,
   revokeToken,
@@ -127,6 +128,14 @@ export async function getStatus(userId: UserId): Promise<GoogleConnectionStatus>
 /**
  * Desconexión: revoca en Google (best-effort) y borra los tokens localmente (soft: el doc queda con
  * `status:'revoked'` como histórico). Idempotente.
+ *
+ * Además PURGA el calendario importado (`source:'google'`) y limpia el `syncToken` (auto-auditoría de
+ * desconexión): sin el purge, los eventos importados quedaban HUÉRFANOS para siempre (calendario "Google"
+ * con datos stale que ya no se actualizan ni borran). El "Google" es un espejo de la cuenta conectada: al
+ * cortar la conexión, desaparece. Se limpia el `syncToken` para que un futuro reconnect haga un FULL
+ * re-import (con un token viejo, el incremental sólo traería deltas y NO repoblaría lo purgado).
+ * Nota: sólo la desconexión EXPLÍCITA purga; el estado 'error' (auth transitorio/revocado) NO — se
+ * recupera al reconectar sin perder el espejo.
  */
 export async function disconnect(userId: UserId): Promise<void> {
   const conn = await GoogleConnection.findOne({ userId });
@@ -136,7 +145,11 @@ export async function disconnect(userId: UserId): Promise<void> {
     .map((t) => decrypt(t));
   await GoogleConnection.updateOne(
     { userId },
-    { $set: { status: 'revoked' }, $unset: { accessTokenEnc: '', refreshTokenEnc: '' } }
+    {
+      $set: { status: 'revoked' },
+      $unset: { accessTokenEnc: '', refreshTokenEnc: '', syncToken: '' },
+    }
   );
+  await CalendarEvent.deleteMany({ userId, source: 'google' }); // el espejo se va con la conexión
   for (const token of toRevoke) await revokeToken(token); // best-effort, no bloquea la desconexión
 }

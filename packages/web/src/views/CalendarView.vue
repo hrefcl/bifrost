@@ -428,6 +428,11 @@ const calendarOptions = computed<CalendarOptions>(() => ({
 /** Desconecta Google y refresca el estado. */
 async function disconnectGoogle(): Promise<void> {
   await gcal.disconnect();
+  // El backend purga el calendario importado (source:'google') al desconectar → refrescamos el rango
+  // visible para que esos eventos desaparezcan YA de la grilla (si no, quedaban hasta navegar/recargar).
+  const api = fcApi();
+  if (api)
+    await store.fetchEvents(api.view.activeStart.toISOString(), api.view.activeEnd.toISOString());
 }
 
 /** El error a nivel conexión (refresh revocado/expirado) se resuelve reconectando con Google.
