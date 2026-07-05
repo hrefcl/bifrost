@@ -139,6 +139,19 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
     expect((await GoogleConnection.findOne({ userId }))?.syncToken).toBe('tokFull');
   });
 
+  it('410 → full SIN nextSyncToken → LIMPIA el token vencido (no loop de 410, review)', async () => {
+    const { userId } = await seedConnected('expired');
+    vi.mocked(api.listEvents).mockImplementation(async (_u, _c, opts) => {
+      if (opts.syncToken) throw new api.GoogleSyncTokenExpired(); // incremental 410
+      return { items: [gEvent('d')] }; // full posterior SIN nextSyncToken
+    });
+    await pollUserCalendar(userId);
+
+    // El token vencido se limpió → el próximo poll hará full limpio, no otro incremental que 410ea.
+    expect((await GoogleConnection.findOne({ userId }))?.syncToken).toBeFalsy();
+    expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'd' })).toBe(1);
+  });
+
   it('401 permanente de la API (acceso revocado) → marca conn en error y NO se re-encola (anti-martilleo)', async () => {
     const { userId } = await seedConnected('tokZ');
     vi.mocked(api.listEvents).mockRejectedValueOnce(new OAuthError('401', true));

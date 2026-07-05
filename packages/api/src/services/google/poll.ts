@@ -146,19 +146,33 @@ async function runFull(
     if (l.googleEventId && !seen.has(l.googleEventId))
       await CalendarEvent.deleteOne({ _id: l._id });
   }
+  // Persistir el cursor nuevo — o LIMPIAR el viejo si no llegó ninguno. Sin el `$unset` (review): cuando
+  // `runFull` se alcanza por el 410 (token vencido) y Google no devuelve `nextSyncToken`, el token EXPIRADO
+  // quedaba en la DB → el próximo poll haría incremental con él → 410 otra vez → full otra vez → loop de
+  // full-syncs cada 5 min. Limpiándolo, el próximo poll hace full limpio (converge) en vez de martillar 410.
   if (nextSyncToken)
     await GoogleConnection.updateOne({ userId }, { $set: { syncToken: nextSyncToken } });
+  else await GoogleConnection.updateOne({ userId }, { $unset: { syncToken: '' } });
 }
 
 /** Encola un `gcal-poll` por cada usuario conectado (con jitter). Lo llama el job repetible `gcal-poll-all`. */
 export async function enqueueGooglePolls(full = false): Promise<number> {
   if (!(await googleEnabled())) return 0;
   const userIds = await GoogleConnection.find({ status: 'connected' }).distinct('userId');
+  // jobId idempotente bucketeado por minuto (review): si `gcal-poll-all` falla a mitad de camino y BullMQ
+  // lo reintenta, re-encolaría polls para usuarios ya en cola. Con jobId `gcal-poll-<uid>-<inc|full>-<min>`
+  // el reintento (mismo minuto) los dedupe. El próximo ciclo (5 min → otro minuto) encola fresco. Los
+  // duplicados igual eran benignos (el `withLock waitMs:0` los saltea), pero esto evita el bloat de cola.
+  const bucket = Math.floor(Date.now() / 60_000);
+  const kind = full ? 'full' : 'inc';
   for (const uid of userIds) {
     await enqueue(
       'gcal-poll',
       { userId: String(uid), full },
-      { delay: Math.floor(Math.random() * POLL_JITTER_MS) }
+      {
+        delay: Math.floor(Math.random() * POLL_JITTER_MS),
+        jobId: `gcal-poll-${String(uid)}-${kind}-${String(bucket)}`,
+      }
     );
   }
   return userIds.length;
