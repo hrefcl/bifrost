@@ -538,6 +538,14 @@ export default {
       unlinked: 'Unlinked',
       unlinkedHint:
         'Server mailbox imported into Bifrost. Nobody has signed into webmail with this account yet; you can still manage it (suspend, delete or change its password). It links automatically on first sign-in.',
+      pwChange: 'Change password',
+      pwHint:
+        'Set a password or leave it empty to generate a strong one. It is applied on the mail server (cuts current sessions) and links the account if it was imported.',
+      pwNewPh: 'New password (empty = generate)',
+      pwApply: 'Apply',
+      pwApplying: 'Applying…',
+      pwGenerated: 'New password (copy it, it will not be shown again):',
+      pwErr: 'Could not change the password',
     },
     branding: {
       title: 'Company branding',

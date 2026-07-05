@@ -545,6 +545,14 @@ export default {
       unlinked: 'Sin vincular',
       unlinkedHint:
         'Buzón del servidor importado a Bifrost. Todavía nadie inició sesión en el webmail con esta cuenta; podés gestionarla igual (suspender, eliminar o cambiarle la clave). Se vincula sola al primer inicio de sesión.',
+      pwChange: 'Cambiar contraseña',
+      pwHint:
+        'Fijá una contraseña o dejala vacía para generar una fuerte. Se aplica en el servidor de correo (corta las sesiones actuales) y vincula la cuenta si estaba importada.',
+      pwNewPh: 'Nueva contraseña (vacío = generar)',
+      pwApply: 'Aplicar',
+      pwApplying: 'Aplicando…',
+      pwGenerated: 'Contraseña nueva (copiala, no se vuelve a mostrar):',
+      pwErr: 'No se pudo cambiar la contraseña',
     },
     branding: {
       title: 'Marca de la empresa',

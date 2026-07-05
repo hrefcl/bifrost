@@ -15,6 +15,11 @@ import {
 } from '../services/mailbox/index.js';
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
 import { reconcileMailboxes, countServerMailboxes } from '../services/mailbox/reconcile.js';
+import {
+  patchMailbox,
+  resetMailboxPassword,
+  MailboxNotFoundError,
+} from '../services/mailbox/manage.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import {
   createProvisionKey,
@@ -1098,7 +1103,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
     async (request, reply) => {
       const { id } = z.object({ id: objectId }).parse(request.params);
       const body = updateAccountSchema.parse(request.body);
-      const account = await Account.findById(id).select('userId').lean();
+      const account = await Account.findById(id).select('userId email').lean();
       if (!account) {
         return reply
           .code(404)
@@ -1124,9 +1129,31 @@ export default function adminRoutes(fastify: FastifyInstance) {
           });
         }
       }
+      // Estado (active⇄disabled): con provisioning, deshabilitar debe SUSPENDER el buzón REAL (quitar la
+      // línea del accounts.cf → corta IMAP/SMTP), no sólo marcar Mongo. Antes sólo escribía `status` en
+      // Mongo: el buzón seguía recibiendo y logueando en cualquier cliente IMAP (bug real). patchMailbox
+      // guarda la línea `email|hash` para restaurar la MISMA contraseña al reactivar. Sin provisioning
+      // (bring-your-own) no hay buzón que suspender → flip sólo en Mongo.
+      if (body.status !== undefined && (await provisioningEnabled())) {
+        try {
+          await patchMailbox(account.email, { active: body.status === 'active' });
+        } catch (err) {
+          if (err instanceof MailboxNotFoundError) {
+            return reply
+              .code(404)
+              .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+          }
+          return reply.code(502).send({
+            statusCode: 502,
+            error: 'Bad Gateway',
+            message: 'No se pudo aplicar el cambio de estado en el servidor de correo. Reintentá.',
+          });
+        }
+      }
       const set: Record<string, unknown> = {};
       if (body.quotaBytes !== undefined) set.quotaBytes = body.quotaBytes;
-      if (body.status !== undefined) set.status = body.status;
+      // Sin provisioning, el estado se refleja sólo en Mongo (con provisioning ya lo hizo patchMailbox).
+      if (body.status !== undefined && !(await provisioningEnabled())) set.status = body.status;
       if (Object.keys(set).length > 0) await Account.updateOne({ _id: id }, { $set: set });
       // Campos del usuario (nombre + perfil de firmas). '' en jobTitle/department limpia el campo.
       const uSet: Record<string, unknown> = {};
@@ -1144,6 +1171,63 @@ export default function adminRoutes(fastify: FastifyInstance) {
         await User.updateOne({ _id: account.userId }, uUpdate);
       }
       return { ok: true };
+    }
+  );
+
+  // Cambia/resetea la contraseña del buzón (sólo con provisioning: Bifrost es autoridad). El admin puede
+  // fijar una contraseña concreta (`password`) o dejar que se GENERE una fuerte (se devuelve UNA vez).
+  // Escribe el hash en el mailserver (corta sesiones IMAP viejas) y sincroniza las credenciales cifradas
+  // del webmail → una cuenta importada "sin vincular" queda vinculada tras esto. Anti-privilegio: un
+  // delegado no-admin NO puede resetear la clave de un admin (sería un takeover del superusuario).
+  fastify.post(
+    '/accounts/:id/reset-password',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const { id } = z.object({ id: objectId }).parse(request.params);
+      const body = z
+        .object({ password: z.string().min(8).max(200).optional() })
+        .strict()
+        .parse(request.body ?? {});
+      if (!(await provisioningEnabled())) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'El cambio de contraseña requiere provisioning activo (mailserver propio).',
+        });
+      }
+      const account = await Account.findById(id).select('userId email').lean();
+      if (!account) {
+        return reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+      }
+      if (request.adminAccess?.role !== 'admin') {
+        const target = await User.findById(account.userId).select('role').lean();
+        if (target?.role === 'admin') {
+          return reply.code(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            message: 'No podés cambiar la contraseña de un administrador.',
+          });
+        }
+      }
+      try {
+        const res = await resetMailboxPassword(account.email, body.password);
+        // Sólo devolvemos la contraseña cuando la GENERAMOS nosotros (el admin no la escribió) → para que
+        // la copie una vez. Si la fijó él, no hace falta reflejarla.
+        return body.password ? { ok: true } : { ok: true, password: res.password };
+      } catch (err) {
+        if (err instanceof MailboxNotFoundError) {
+          return reply
+            .code(404)
+            .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo cambiar la contraseña en el servidor de correo. Reintentá.',
+        });
+      }
     }
   );
 

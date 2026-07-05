@@ -400,6 +400,44 @@ async function removeAccount(a: AdminAccount) {
   }
 }
 
+// --- Cambiar/resetear la contraseña del buzón (sólo con provisioning) ---
+const showPwReset = ref(false);
+const pwNew = ref('');
+const pwResult = ref(''); // contraseña generada: se muestra UNA vez
+const pwError = ref('');
+const pwBusy = ref(false);
+function openPwReset() {
+  showPwReset.value = true;
+  pwNew.value = '';
+  pwResult.value = '';
+  pwError.value = '';
+}
+async function submitPwReset() {
+  const target = selectedUser.value;
+  if (!target) return;
+  pwBusy.value = true;
+  pwError.value = '';
+  pwResult.value = '';
+  try {
+    const { data } = await api.post<{ ok: boolean; password?: string }>(
+      `/admin/accounts/${target.id}/reset-password`,
+      pwNew.value ? { password: pwNew.value } : {}
+    );
+    await loadAccounts();
+    // Re-vincular la ficha (la cuenta importada pasa a "vinculada" tras fijarle la clave).
+    selectedUser.value = accounts.value.find((x) => x.id === target.id) ?? selectedUser.value;
+    if (data.password) {
+      pwResult.value = data.password; // generada → mostrarla para copiar
+    } else {
+      showPwReset.value = false; // el admin fijó una → nada que mostrar
+    }
+  } catch {
+    pwError.value = t('admin.accounts.pwErr');
+  } finally {
+    pwBusy.value = false;
+  }
+}
+
 // ── Presentación de usuarios (maqueta admin.html): avatar de color + badge de rol + barra de uso ──
 /** Iniciales para el avatar (1–2 letras a partir del nombre visible o el email). */
 function initials(a: AdminAccount): string {
@@ -440,6 +478,10 @@ function openUser(a: AdminAccount) {
   editName.value = a.displayName;
   editQuotaMb.value = Math.round(a.quotaBytes / (1024 * 1024));
   assignRoleId.value = a.customRoleId ?? '';
+  // Reset del panel de contraseña al abrir otra ficha (no arrastrar una clave generada entre usuarios).
+  showPwReset.value = false;
+  pwResult.value = '';
+  pwError.value = '';
 }
 function closeUser() {
   selectedUser.value = null;
@@ -1168,6 +1210,38 @@ async function save() {
                             : t('admin.accounts.disable')
                         }}
                       </button>
+                      <button
+                        v-if="selectedUser.role !== 'admin'"
+                        class="btn-ghost"
+                        :disabled="pwBusy"
+                        @click="showPwReset ? (showPwReset = false) : openPwReset()"
+                      >
+                        {{ t('admin.accounts.pwChange') }}
+                      </button>
+                    </div>
+
+                    <!-- Cambiar/generar contraseña del buzón (sólo provisioning; vincula las importadas). -->
+                    <div v-if="showPwReset" class="pw-reset">
+                      <p class="hint">{{ t('admin.accounts.pwHint') }}</p>
+                      <div class="pw-row">
+                        <input
+                          v-model="pwNew"
+                          type="text"
+                          class="adminput"
+                          autocomplete="off"
+                          :placeholder="t('admin.accounts.pwNewPh')"
+                        />
+                        <button class="btn-primary" :disabled="pwBusy" @click="submitPwReset">
+                          {{
+                            pwBusy ? t('admin.accounts.pwApplying') : t('admin.accounts.pwApply')
+                          }}
+                        </button>
+                      </div>
+                      <p v-if="pwError" class="err-text">{{ pwError }}</p>
+                      <div v-if="pwResult" class="pw-result">
+                        <span>{{ t('admin.accounts.pwGenerated') }}</span>
+                        <code>{{ pwResult }}</code>
+                      </div>
                     </div>
                     <p v-if="accError" class="err-text">{{ accError }}</p>
                   </section>
@@ -2758,6 +2832,37 @@ async function save() {
   padding: 7px 14px;
   font-size: 13px;
   flex-shrink: 0;
+}
+.pw-reset {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-1);
+}
+.pw-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.pw-row .adminput {
+  flex: 1;
+}
+.pw-result {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.pw-result code {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1);
+  background: var(--surface-2);
+  padding: 8px 12px;
+  border-radius: 8px;
+  user-select: all;
+  word-break: break-all;
 }
 
 /* Barra de uso de almacenamiento */
