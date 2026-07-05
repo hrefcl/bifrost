@@ -822,4 +822,26 @@ export default {
       leave: 'Leave',
     },
   },
+  pwa: {
+    offline: {
+      title: 'No connection',
+      body: 'Email needs an internet connection. Check your network and try again.',
+    },
+    update: {
+      title: 'A new version of Bifrost is available.',
+      action: 'Update',
+    },
+    install: {
+      title: 'Install Bifrost',
+      body: 'Add your email to the home screen and use it like an app.',
+      action: 'Install',
+      dismiss: 'Not now',
+    },
+    ios: {
+      title: 'Install Bifrost on your iPhone',
+      step1: 'Tap the Share button in Safari.',
+      step2: 'Choose “Add to Home Screen”.',
+      dismiss: 'Got it',
+    },
+  },
 };

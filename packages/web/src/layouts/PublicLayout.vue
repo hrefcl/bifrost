@@ -23,7 +23,10 @@ const accentStyle = computed(() => ({ '--accent': brand.accent }));
 
 <style scoped>
 .pub {
-  min-height: 100vh;
+  /* Igual que .shell: el banner PWA "sin conexión" (fixed) empuja el contenido. 0px online. Se resta
+     el inset del min-height para no generar scroll extra offline (consistencia con .shell, review C-LOW-1). */
+  min-height: calc(100vh - var(--pwa-top-inset, 0px));
+  margin-top: var(--pwa-top-inset, 0px);
   background: var(--bg, #f5f6f8);
   color: var(--text-1, #1a1a1a);
   display: flex;
