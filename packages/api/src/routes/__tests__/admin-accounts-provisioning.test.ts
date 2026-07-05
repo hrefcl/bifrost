@@ -138,4 +138,114 @@ describe('admin: alta turnkey (Bifrost crea el buzón real)', () => {
     });
     expect(second.statusCode).toBe(409);
   });
+
+  it('PATCH status=disabled SUSPENDE el buzón real (fuera del accounts.cf) y active lo restaura', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email: 'susp@cleverty.info', password: 'x' },
+    });
+    const acc = await Account.findOne({ email: 'susp@cleverty.info' }).lean();
+    expect(await fs.readFile(accountsFile, 'utf8')).toContain('susp@cleverty.info');
+
+    const off = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(off.statusCode).toBe(200);
+    // La línea REAL se quitó del accounts.cf (corta IMAP/SMTP), no sólo el status en Mongo.
+    expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('susp@cleverty.info');
+    expect((await Account.findOne({ email: 'susp@cleverty.info' }))?.status).toBe('disabled');
+
+    const on = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'active' },
+    });
+    expect(on.statusCode).toBe(200);
+    // Restaurada la MISMA línea (misma password).
+    expect(await fs.readFile(accountsFile, 'utf8')).toContain('susp@cleverty.info');
+    expect((await Account.findOne({ email: 'susp@cleverty.info' }))?.status).toBe('active');
+  });
+
+  it('POST reset-password genera una clave, la aplica al accounts.cf y la devuelve una vez', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email: 'pw@cleverty.info', password: 'orig' },
+    });
+    const acc = await Account.findOne({ email: 'pw@cleverty.info' }).lean();
+    const before = await fs.readFile(accountsFile, 'utf8');
+
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/admin/accounts/${String(acc?._id)}/reset-password`,
+      headers,
+      payload: {},
+    });
+    expect(res.statusCode).toBe(200);
+    expect(typeof res.json().password).toBe('string');
+    // El hash del accounts.cf cambió (clave nueva realmente aplicada).
+    const after = await fs.readFile(accountsFile, 'utf8');
+    expect(after).not.toBe(before);
+    expect(after).toContain('pw@cleverty.info|{BLF-CRYPT}$2y$');
+  });
+
+  it('POST /accounts/import importa buzones existentes del servidor no registrados', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    // Buzón que existe en el servidor pero NO en Bifrost (brownfield).
+    await fs.writeFile(accountsFile, 'legacy@cleverty.info|{BLF-CRYPT}$2y$10$hash\n');
+
+    const res = await app.inject({ method: 'POST', url: '/api/admin/accounts/import', headers });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().imported).toBeGreaterThanOrEqual(1);
+    const imported = await Account.findOne({ email: 'legacy@cleverty.info' });
+    expect(imported).not.toBeNull();
+    // Shell sin credenciales de webmail → aparece "sin vincular" en el listado.
+    expect(imported?.imap.authCredentialsEncrypted.ciphertext).toBe('');
+
+    const list = await app.inject({ method: 'GET', url: '/api/admin/accounts', headers });
+    const legacy = list
+      .json()
+      .accounts.find((a: { email: string }) => a.email === 'legacy@cleverty.info');
+    expect(legacy.linked).toBe(false);
+  });
+
+  it('suspende un buzón IMPORTADO (sin credenciales) sin ValidationError → quita la línea real', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    // Buzón brownfield importado (shell con credenciales de webmail VACÍAS).
+    await fs.writeFile(accountsFile, 'legacy@cleverty.info|{BLF-CRYPT}$2y$10$hash\n');
+    await app.inject({ method: 'POST', url: '/api/admin/accounts/import', headers });
+    const acc = await Account.findOne({ email: 'legacy@cleverty.info' }).lean();
+
+    // Regresión: antes esto tiraba 502 (save() del shell fallaba por creds vacías required).
+    const off = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'disabled' },
+    });
+    expect(off.statusCode).toBe(200);
+    expect(await fs.readFile(accountsFile, 'utf8')).not.toContain('legacy@cleverty.info');
+
+    const on = await app.inject({
+      method: 'PATCH',
+      url: `/api/admin/accounts/${String(acc?._id)}`,
+      headers,
+      payload: { status: 'active' },
+    });
+    expect(on.statusCode).toBe(200);
+    expect(await fs.readFile(accountsFile, 'utf8')).toContain('legacy@cleverty.info');
+  });
 });

@@ -168,17 +168,25 @@ function toggleCal(name: string): void {
 const fcEvents = computed<EventInput[]>(() =>
   store.events
     .filter((e) => !hiddenCals.value.has(calNameOf(e)))
-    .map((e) => ({
-      id: e.id,
-      title: e.summary,
-      start: e.startDate,
-      end: e.endDate,
-      allDay: e.allDay,
-      backgroundColor: colorFor(calNameOf(e)),
-      borderColor: colorFor(calNameOf(e)),
-      // Estado de sync con Google → clase para marcar visualmente los que fallaron (ev-syncerr).
-      extendedProps: { syncStatus: e.googleSyncStatus },
-    }))
+    .map((e) => {
+      // All-day IMPORTADO de Google: se guarda a medianoche UTC (T00:00Z). Si se lo pasáramos a
+      // FullCalendar como ISO con hora, en zonas UTC-negativas (p.ej. Chile UTC-4) lo parsearía como
+      // las 20:00 del día ANTERIOR → el evento se vería un día antes. Pasando sólo la fecha (YYYY-MM-DD)
+      // FullCalendar lo trata como all-day flotante, sin conversión de zona → día correcto en todas partes.
+      // Los all-day MANUALES se dejan tal cual (usan medianoche LOCAL; date-slicing los rompería en UTC+).
+      const importedAllDay = e.allDay && e.source === 'google';
+      return {
+        id: e.id,
+        title: e.summary,
+        start: importedAllDay ? e.startDate.slice(0, 10) : e.startDate,
+        end: importedAllDay ? e.endDate.slice(0, 10) : e.endDate,
+        allDay: e.allDay,
+        backgroundColor: colorFor(calNameOf(e)),
+        borderColor: colorFor(calNameOf(e)),
+        // Estado de sync con Google → clase para marcar visualmente los que fallaron (ev-syncerr).
+        extendedProps: { syncStatus: e.googleSyncStatus },
+      };
+    })
 );
 
 // ── Mini-calendario (navegador de mes, Monday-first) ──
@@ -384,6 +392,25 @@ function fmtDetail(iso: string): string {
   return new Date(iso).toLocaleString(locale.value, { dateStyle: 'medium', timeStyle: 'short' });
 }
 
+/**
+ * Rango legible del evento abierto. Los all-day se muestran como FECHA (sin hora): el fin es EXCLUSIVO,
+ * así que el último día real es `end - 1`; si coincide con el inicio → una sola fecha. Para los importados
+ * de Google (guardados a medianoche UTC) se ancla al mediodía de la fecha literal para no correr el día en
+ * zonas UTC-negativas (mismo motivo que en la grilla); los manuales usan medianoche LOCAL → parse directo.
+ */
+function fmtWhen(e: CalendarEvent): string {
+  if (!e.allDay) return `${fmtDetail(e.startDate)} – ${fmtDetail(e.endDate)}`;
+  const toDay = (iso: string): Date =>
+    e.source === 'google' ? new Date(`${iso.slice(0, 10)}T12:00:00`) : new Date(iso);
+  const fmtDay = (d: Date): string => d.toLocaleDateString(locale.value, { dateStyle: 'medium' });
+  const start = toDay(e.startDate);
+  const lastIncl = toDay(e.endDate);
+  lastIncl.setDate(lastIncl.getDate() - 1); // fin EXCLUSIVO → último día real (resta de día calendario, DST-safe)
+  return start.toDateString() === lastIncl.toDateString()
+    ? fmtDay(start)
+    : `${fmtDay(start)} – ${fmtDay(lastIncl)}`;
+}
+
 function setView(v: typeof currentView.value): void {
   currentView.value = v;
   fcApi()?.changeView(v);
@@ -428,6 +455,11 @@ const calendarOptions = computed<CalendarOptions>(() => ({
 /** Desconecta Google y refresca el estado. */
 async function disconnectGoogle(): Promise<void> {
   await gcal.disconnect();
+  // El backend purga el calendario importado (source:'google') al desconectar → refrescamos el rango
+  // visible para que esos eventos desaparezcan YA de la grilla (si no, quedaban hasta navegar/recargar).
+  const api = fcApi();
+  if (api)
+    await store.fetchEvents(api.view.activeStart.toISOString(), api.view.activeEnd.toISOString());
 }
 
 /** El error a nivel conexión (refresh revocado/expirado) se resuelve reconectando con Google.
@@ -713,10 +745,7 @@ onMounted(async () => {
             <AppIcon name="x" :size="18" />
           </button>
         </div>
-        <div class="detail-row">
-          <AppIcon name="clock" :size="15" />{{ fmtDetail(detail.startDate) }} –
-          {{ fmtDetail(detail.endDate) }}
-        </div>
+        <div class="detail-row"><AppIcon name="clock" :size="15" />{{ fmtWhen(detail) }}</div>
         <div v-if="detail.location" class="detail-row">
           <AppIcon name="mapPin" :size="15" />{{ detail.location }}
         </div>
@@ -733,8 +762,14 @@ onMounted(async () => {
         >
           {{ detail.googleSyncError }}
         </p>
+        <!-- Los eventos importados de Google son read-only en Bifrost (se editan en Google). -->
+        <p v-if="detail.source === 'google'" class="detail-google" role="note">
+          <AppIcon name="globe" :size="14" />{{ t('calendar.google.readonlyNote') }}
+        </p>
         <div class="modal-foot">
-          <button class="create-btn" @click="openEdit(detail)">{{ t('calendar.edit') }}</button>
+          <button v-if="detail.source !== 'google'" class="create-btn" @click="openEdit(detail)">
+            {{ t('calendar.edit') }}
+          </button>
           <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
         </div>
       </div>
@@ -1288,6 +1323,14 @@ onMounted(async () => {
   gap: 8px;
   font-size: 12.5px;
   font-weight: 500;
+  margin: 6px 0 2px;
+}
+.detail-google {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-2);
   margin: 6px 0 2px;
 }
 .detail-sync.ok {

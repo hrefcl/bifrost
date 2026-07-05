@@ -223,6 +223,7 @@ export default {
       syncSynced: 'Sincronizado con tu Google Calendar',
       syncPending: 'Sincronizando con Google…',
       syncErrLine: 'No se pudo sincronizar con Google (reintenta solo cada pocos minutos)',
+      readonlyNote: 'Evento de tu Google Calendar (se edita en Google).',
     },
     eventTitle: 'Título del evento',
     location: 'Ubicación',
@@ -537,6 +538,22 @@ export default {
       errSave: 'No se pudieron guardar los cambios',
       errDelete: 'No se pudo eliminar la cuenta',
       errSelf: 'No podés deshabilitar ni eliminar tu propia cuenta de administrador.',
+      errImport: 'No se pudieron importar los buzones del servidor',
+      importBanner:
+        'El servidor tiene {total} buzones, pero {n} no están registrados en Bifrost (creados fuera del panel o migrados). Importalos para poder gestionarlos.',
+      importBtn: 'Importar buzones',
+      importing: 'Importando…',
+      unlinked: 'Sin vincular',
+      unlinkedHint:
+        'Buzón del servidor importado a Bifrost. Todavía nadie inició sesión en el webmail con esta cuenta; podés gestionarla igual (suspender, eliminar o cambiarle la clave). Se vincula sola al primer inicio de sesión.',
+      pwChange: 'Cambiar contraseña',
+      pwHint:
+        'Fijá una contraseña o dejala vacía para generar una fuerte. Se aplica en el servidor de correo (corta las sesiones actuales) y vincula la cuenta si estaba importada.',
+      pwNewPh: 'Nueva contraseña (vacío = generar)',
+      pwApply: 'Aplicar',
+      pwApplying: 'Aplicando…',
+      pwGenerated: 'Contraseña nueva (copiala, no se vuelve a mostrar):',
+      pwErr: 'No se pudo cambiar la contraseña',
     },
     branding: {
       title: 'Marca de la empresa',

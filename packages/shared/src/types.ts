@@ -281,8 +281,8 @@ export interface CalendarEvent {
   inviteStatus?: 'needs-action' | 'accepted' | 'declined' | 'tentative';
   status: 'confirmed' | 'tentative' | 'cancelled';
   sourceEmailId?: string;
-  /** Origen del evento. 'booking' = bloque creado por una reserva de la agenda (proyección). */
-  source?: 'manual' | 'booking';
+  /** Origen del evento. 'booking' = bloque de una reserva; 'google' = importado de Google (read-only en Bifrost). */
+  source?: 'manual' | 'booking' | 'google';
   /** Si `source==='booking'`: id de la Booking que lo originó (para reconciler/cancelación). */
   bookingId?: string;
   /** Si el evento tiene una sala Bifrost Meet asociada: id de la `MeetRoom`. */

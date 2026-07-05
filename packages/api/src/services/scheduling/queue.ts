@@ -16,7 +16,14 @@ import { env } from '../../config/env.js';
 
 export const SCHEDULING_QUEUE = 'scheduling';
 
-export type SchedulingJobName = 'send-email' | 'reconcile' | 'gcal-sync' | 'send-event-invite';
+export type SchedulingJobName =
+  | 'send-email'
+  | 'reconcile'
+  | 'gcal-sync'
+  | 'send-event-invite'
+  | 'gcal-poll'
+  | 'gcal-poll-all'
+  | 'gcal-window-refresh';
 
 const isMock = (): boolean => env.REDIS_URL === 'mock';
 
@@ -75,6 +82,23 @@ export async function scheduleReconciler(): Promise<void> {
       removeOnComplete: true,
       removeOnFail: 50,
     }
+  );
+}
+
+/** Programa el poll bidireccional de Google (F-gcal BD3): `gcal-poll-all` cada 5 min (incremental) +
+ *  `gcal-window-refresh` diario (full de ventana rolling). No-op en mock/test. Llamar en el boot. */
+export async function scheduleGooglePoll(): Promise<void> {
+  const q = getQueue();
+  if (!q) return;
+  await q.add(
+    'gcal-poll-all',
+    {},
+    { repeat: { every: 300_000 }, jobId: 'gcal-poll-all', removeOnComplete: true, removeOnFail: 50 }
+  );
+  await q.add(
+    'gcal-window-refresh',
+    {},
+    { repeat: { every: 86_400_000 }, jobId: 'gcal-window-refresh', removeOnComplete: true, removeOnFail: 50 }
   );
 }
 

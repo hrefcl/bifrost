@@ -223,6 +223,7 @@ export default {
       syncSynced: 'Synced to your Google Calendar',
       syncPending: 'Syncing with Google…',
       syncErrLine: 'Could not sync with Google (auto-retries every few minutes)',
+      readonlyNote: 'Event from your Google Calendar (edit it in Google).',
     },
     eventTitle: 'Event title',
     location: 'Location',
@@ -530,6 +531,22 @@ export default {
       errSave: 'Failed to save changes',
       errDelete: 'Failed to delete the account',
       errSelf: 'You cannot disable or delete your own admin account.',
+      errImport: 'Failed to import mailboxes from the server',
+      importBanner:
+        'The server has {total} mailboxes, but {n} are not registered in Bifrost (created outside the panel or migrated). Import them to manage them.',
+      importBtn: 'Import mailboxes',
+      importing: 'Importing…',
+      unlinked: 'Unlinked',
+      unlinkedHint:
+        'Server mailbox imported into Bifrost. Nobody has signed into webmail with this account yet; you can still manage it (suspend, delete or change its password). It links automatically on first sign-in.',
+      pwChange: 'Change password',
+      pwHint:
+        'Set a password or leave it empty to generate a strong one. It is applied on the mail server (cuts current sessions) and links the account if it was imported.',
+      pwNewPh: 'New password (empty = generate)',
+      pwApply: 'Apply',
+      pwApplying: 'Applying…',
+      pwGenerated: 'New password (copy it, it will not be shown again):',
+      pwErr: 'Could not change the password',
     },
     branding: {
       title: 'Company branding',

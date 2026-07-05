@@ -17,7 +17,12 @@ export interface IGoogleConnection extends Document {
   googleUserEmail?: string; // email de la cuenta Google (sólo para mostrar el estado)
   status: 'connected' | 'error' | 'revoked';
   syncError?: string; // último error legible a nivel conexión
-  syncToken?: string; // reservado para la fase 2 (polling bidireccional); no se usa en v1
+  syncToken?: string; // cursor incremental del polling bidireccional (Google→Bifrost)
+  // Epoch MONOTÓNICO de la conexión: se incrementa en cada connect/reconnect y en cada disconnect. El
+  // poller lo captura al iniciar y lo re-verifica al terminar; si cambió (hubo disconnect ± reconnect
+  // mientras importaba), purga sus imports (source:'google') → cierra la carrera disconnect-vs-poll de
+  // forma monotónica (status por sí solo no basta: revoked→connected vuelve — review B).
+  generation?: number;
   connectedAt: Date;
   lastSyncedAt?: Date;
   createdAt: Date;
@@ -51,6 +56,7 @@ const GoogleConnectionSchema = new Schema<IGoogleConnection>(
     },
     syncError: { type: String },
     syncToken: { type: String },
+    generation: { type: Number, default: 0 },
     connectedAt: { type: Date, default: () => new Date() },
     lastSyncedAt: { type: Date },
   },
