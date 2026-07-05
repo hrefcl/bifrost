@@ -72,7 +72,14 @@ export async function syncAccount(
 export async function syncStaleAccounts(
   batchSize = 20
 ): Promise<{ accounts: number; synced: number }> {
-  const accounts = await Account.find({ status: { $ne: 'disabled' } })
+  // Excluir cuentas SIN credenciales de webmail (ciphertext vacío): son buzones importados del servidor
+  // (reconcileMailboxes) que nadie vinculó todavía. Sin esta guarda, sincronizarían con credenciales
+  // inexistentes, fallarían a 'error' sin actualizar lastSyncedAt (queda null) y —al ordenar null primero—
+  // monopolizarían el barrido para siempre, dejando sin sincronizar a las cuentas reales.
+  const accounts = await Account.find({
+    status: { $ne: 'disabled' },
+    'imap.authCredentialsEncrypted.ciphertext': { $ne: '' },
+  })
     .sort({ lastSyncedAt: 1 })
     .limit(batchSize);
   let synced = 0;

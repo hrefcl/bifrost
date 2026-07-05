@@ -27,11 +27,16 @@ export interface IAccount extends Document {
   getSmtpCredentials(): string;
 }
 
+// Credencial cifrada. Los campos NO son `required`: una cuenta puede existir SIN credenciales de webmail
+// (buzón importado del servidor por reconcileMailboxes que nadie vinculó todavía → ciphertext:''). Con
+// `required:true`, Mongoose rechaza el string vacío y un `account.save()` sobre ese shell (p.ej. al
+// suspenderlo) tiraba ValidationError→502. El estado "sin credenciales" es legítimo y se rellena al
+// primer login o al fijar la contraseña. Default '' mantiene el shape para docs nuevos.
 const EncryptedFieldSchema = new Schema(
   {
-    ciphertext: { type: String, required: true },
-    iv: { type: String, required: true },
-    tag: { type: String, required: true },
+    ciphertext: { type: String, default: '' },
+    iv: { type: String, default: '' },
+    tag: { type: String, default: '' },
   },
   { _id: false }
 );
