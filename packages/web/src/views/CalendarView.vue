@@ -733,8 +733,14 @@ onMounted(async () => {
         >
           {{ detail.googleSyncError }}
         </p>
+        <!-- Los eventos importados de Google son read-only en Bifrost (se editan en Google). -->
+        <p v-if="detail.source === 'google'" class="detail-google" role="note">
+          <AppIcon name="globe" :size="14" />{{ t('calendar.google.readonlyNote') }}
+        </p>
         <div class="modal-foot">
-          <button class="create-btn" @click="openEdit(detail)">{{ t('calendar.edit') }}</button>
+          <button v-if="detail.source !== 'google'" class="create-btn" @click="openEdit(detail)">
+            {{ t('calendar.edit') }}
+          </button>
           <button class="ghost-btn danger" @click="deleteDetail">{{ t('calendar.delete') }}</button>
         </div>
       </div>
@@ -1288,6 +1294,14 @@ onMounted(async () => {
   gap: 8px;
   font-size: 12.5px;
   font-weight: 500;
+  margin: 6px 0 2px;
+}
+.detail-google {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  color: var(--text-2);
   margin: 6px 0 2px;
 }
 .detail-sync.ok {

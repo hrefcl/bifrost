@@ -181,6 +181,16 @@ export default function calendarRoutes(fastify: FastifyInstance) {
         .code(404)
         .send({ statusCode: 404, error: 'Not Found', message: 'Event not found' });
     }
+    // Los eventos importados de Google (source:'google') son READ-ONLY en Bifrost: se editan en Google
+    // (fuente de verdad). Enforcement en el BACKEND, no sólo ocultando el botón (review B/D bidireccional).
+    if (existing.source === 'google') {
+      return reply.code(409).send({
+        statusCode: 409,
+        error: 'Conflict',
+        message: 'Los eventos de Google se editan en Google Calendar.',
+        code: 'GOOGLE_READONLY',
+      });
+    }
     // Invariante fin>inicio validada contra las fechas EFECTIVAS (las nuevas que vengan + las
     // existentes para las que no), no sólo cuando llegan ambas — así un PATCH parcial no puede
     // dejar el evento inválido contra su otra fecha ya guardada (review B).
@@ -263,10 +273,13 @@ export default function calendarRoutes(fastify: FastifyInstance) {
     // el doc local (evita huérfanos en Google). Se tombstonea SIEMPRE —no sólo si ya tiene googleEventId—
     // porque un evento aún 'pending' (sync en vuelo, id no guardado todavía) igual puede terminar en
     // Google; el motor de sync resuelve el resto (si nunca se creó, el 404 del delete es un no-op).
+    // `googleDeletePending` marca el borrado bidireccional para que el POLLER (import Google→Bifrost) no
+    // re-cree el evento entre el tombstone y la confirmación del delete remoto (review B/D). Es inocuo para
+    // los Bifrost-origen (el poller sólo importa source:'google').
     const tomb = (await googleEnabled())
       ? await CalendarEvent.findOneAndUpdate(
           { _id: eventId, userId: request.user.userId },
-          { $set: { status: 'cancelled', googleSyncStatus: 'deleting' } }
+          { $set: { status: 'cancelled', googleSyncStatus: 'deleting', googleDeletePending: true } }
         )
       : null;
     if (tomb) {

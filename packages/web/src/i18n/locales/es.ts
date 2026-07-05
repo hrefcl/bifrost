@@ -223,6 +223,7 @@ export default {
       syncSynced: 'Sincronizado con tu Google Calendar',
       syncPending: 'Sincronizando con Google…',
       syncErrLine: 'No se pudo sincronizar con Google (reintenta solo cada pocos minutos)',
+      readonlyNote: 'Evento de tu Google Calendar (se edita en Google).',
     },
     eventTitle: 'Título del evento',
     location: 'Ubicación',
@@ -437,7 +438,8 @@ export default {
       desc: 'Conectá tu proyecto de Google para que los usuarios puedan sincronizar sus eventos con Google Calendar.',
       guideTitle: '¿Cómo obtengo las credenciales? (guía paso a paso)',
       guide1: 'Entrá a Google Cloud Console y creá o elegí un proyecto:',
-      guideEnableApi: 'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
+      guideEnableApi:
+        'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
       guide2:
         'Abrí "Pantalla de consentimiento de OAuth": tipo "Externo"; en "Público" / modo Testing, agregá tu Gmail en "Usuarios de prueba".',
       guide3:
