@@ -143,6 +143,7 @@ export async function disconnect(userId: UserId): Promise<void> {
   const toRevoke = [conn.refreshTokenEnc, conn.accessTokenEnc]
     .filter((t): t is NonNullable<typeof t> => Boolean(t))
     .map((t) => decrypt(t));
+  // 1) Cortar la conexión PRIMERO: cualquier poll FUTURO lee 'revoked' (doPoll corta) y no importa nada.
   await GoogleConnection.updateOne(
     { userId },
     {
@@ -150,6 +151,21 @@ export async function disconnect(userId: UserId): Promise<void> {
       $unset: { accessTokenEnc: '', refreshTokenEnc: '', syncToken: '' },
     }
   );
-  await CalendarEvent.deleteMany({ userId, source: 'google' }); // el espejo se va con la conexión
-  for (const token of toRevoke) await revokeToken(token); // best-effort, no bloquea la desconexión
+  // 2) Purgar el espejo TOMANDO el mismo lock del poller (review B — carrera con poll en vuelo): así el
+  //    deleteMany corre DESPUÉS de que cualquier import ya iniciado haya drenado, y no quedan huérfanos
+  //    re-creados. Si el lock no se puede tomar (poll muy largo), se purga igual best-effort.
+  const purge = (): Promise<unknown> => CalendarEvent.deleteMany({ userId, source: 'google' });
+  const outcome = await withLock(`gcal:poll:${String(userId)}`, purge, {
+    ttlSeconds: 30,
+    waitMs: 15000,
+  });
+  if (outcome.skipped) await purge();
+  // 3) Revoca en Google (best-effort): un fallo aquí NO debe tumbar la desconexión ya aplicada localmente.
+  for (const token of toRevoke) {
+    try {
+      await revokeToken(token);
+    } catch {
+      /* best-effort: el estado local ya quedó desconectado y purgado */
+    }
+  }
 }
