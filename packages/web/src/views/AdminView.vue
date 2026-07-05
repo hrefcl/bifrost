@@ -243,22 +243,51 @@ interface AdminAccount {
   quotaBytes: number;
   usedBytes: number;
   lastSyncedAt: string | null;
+  // false ⇒ buzón importado del servidor sin sesión iniciada aún (sin credenciales de webmail).
+  linked?: boolean;
 }
 
 const accounts = ref<AdminAccount[]>([]);
 const accLoading = ref(true);
 const accError = ref('');
+// Total real de buzones en el servidor de correo (accounts.cf). null = provisioning no aplica.
+const serverMailboxCount = ref<number | null>(null);
+const importing = ref(false);
+// Cuántos buzones existen en el servidor pero aún NO están registrados en Bifrost (brownfield).
+const unregisteredCount = computed(() =>
+  serverMailboxCount.value === null
+    ? 0
+    : Math.max(0, serverMailboxCount.value - accounts.value.length)
+);
 
 async function loadAccounts() {
   accLoading.value = true;
   accError.value = '';
   try {
-    const { data } = await api.get<{ accounts: AdminAccount[] }>('/admin/accounts');
+    const { data } = await api.get<{ accounts: AdminAccount[]; serverMailboxCount: number | null }>(
+      '/admin/accounts'
+    );
     accounts.value = data.accounts;
+    serverMailboxCount.value = data.serverMailboxCount;
   } catch {
     accError.value = t('admin.accounts.errLoad');
   } finally {
     accLoading.value = false;
+  }
+}
+
+// Importa a Bifrost los buzones que existen en el servidor pero no están registrados (brownfield:
+// migrados de otro webmail o creados a mano). Tras importar, quedan gestionables (suspender/borrar/clave).
+async function importAccounts() {
+  importing.value = true;
+  accError.value = '';
+  try {
+    await api.post('/admin/accounts/import');
+    await loadAccounts();
+  } catch {
+    accError.value = t('admin.accounts.errImport');
+  } finally {
+    importing.value = false;
   }
 }
 
@@ -1271,6 +1300,20 @@ async function save() {
                 </div>
               </div>
 
+              <!-- Aviso brownfield: el servidor tiene buzones que Bifrost no registra todavía. -->
+              <div v-if="unregisteredCount > 0" class="import-banner">
+                <AppIcon name="database" :size="18" />
+                <span class="import-banner-text">{{
+                  t('admin.accounts.importBanner', {
+                    n: unregisteredCount,
+                    total: serverMailboxCount,
+                  })
+                }}</span>
+                <button class="btn-primary sm" :disabled="importing" @click="importAccounts">
+                  {{ importing ? t('admin.accounts.importing') : t('admin.accounts.importBtn') }}
+                </button>
+              </div>
+
               <div class="card users-card">
                 <p v-if="accLoading" class="muted">{{ t('common.loading') }}</p>
                 <p v-else-if="accError" class="err-text">{{ accError }}</p>
@@ -1305,6 +1348,12 @@ async function save() {
                     <span class="ucell ucell-status">
                       <span class="status-dot" :class="a.status"
                         ><i />{{ t('admin.accounts.st.' + a.status) }}</span
+                      >
+                      <span
+                        v-if="a.linked === false"
+                        class="unlinked-badge"
+                        :title="t('admin.accounts.unlinkedHint')"
+                        >{{ t('admin.accounts.unlinked') }}</span
                       >
                     </span>
                     <span class="ucell ucell-storage">
@@ -2677,6 +2726,38 @@ async function save() {
 }
 .status-dot.syncing i {
   background: var(--accent);
+}
+.unlinked-badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+  background: color-mix(in srgb, var(--amber) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--amber) 32%, transparent);
+  white-space: nowrap;
+}
+.import-banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, transparent);
+}
+.import-banner-text {
+  flex: 1;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.btn-primary.sm {
+  padding: 7px 14px;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 
 /* Barra de uso de almacenamiento */

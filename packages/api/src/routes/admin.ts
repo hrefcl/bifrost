@@ -14,6 +14,7 @@ import {
   setMailboxConfig,
 } from '../services/mailbox/index.js';
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
+import { reconcileMailboxes, countServerMailboxes } from '../services/mailbox/reconcile.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import {
   createProvisionKey,
@@ -916,9 +917,14 @@ export default function adminRoutes(fastify: FastifyInstance) {
   // (suma de blobs del usuario) — no un número inventado.
   fastify.get('/accounts', { config: { permission: 'accounts.manage' } }, async () => {
     const accounts = await Account.find()
-      .select('email name isPrimary status lastSyncedAt quotaBytes userId')
+      .select(
+        'email name isPrimary status lastSyncedAt quotaBytes userId imap.authCredentialsEncrypted.ciphertext'
+      )
       .sort({ createdAt: 1 })
       .lean();
+    // Total REAL de buzones en el servidor (accounts.cf) para detectar los que aún no están en Bifrost
+    // (brownfield: migrados/creados fuera del panel). null si el provisioning no aplica o falla la lectura.
+    const serverMailboxCount = await countServerMailboxes();
     const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } })
       .select('displayName primaryEmail role customRoleId jobTitle department')
@@ -961,10 +967,32 @@ export default function adminRoutes(fastify: FastifyInstance) {
           quotaBytes: a.quotaBytes ?? 0,
           usedBytes: usedByUser.get(a.userId.toString()) ?? 0,
           lastSyncedAt: a.lastSyncedAt ? a.lastSyncedAt.toISOString() : null,
+          // `linked`=false ⇒ buzón importado del servidor que nadie inició sesión aún (sin credenciales
+          // de webmail). Se puede gestionar igual (suspender/borrar/cambiar clave); se vincula al 1er login.
+          linked: a.imap.authCredentialsEncrypted.ciphertext !== '',
         };
       }),
+      serverMailboxCount,
     };
   });
+
+  // Importa a Bifrost los buzones que existen en el servidor de correo pero no están registrados
+  // (brownfield: migrados desde otro webmail o creados a mano). Idempotente. Ver reconcileMailboxes.
+  fastify.post(
+    '/accounts/import',
+    { config: { permission: 'accounts.manage' } },
+    async (_request, reply) => {
+      try {
+        return await reconcileMailboxes();
+      } catch (err) {
+        return reply.code(503).send({
+          statusCode: 503,
+          error: 'Service Unavailable',
+          message: (err as Error).message,
+        });
+      }
+    }
+  );
 
   // Crea una cuenta (verifica credenciales IMAP reales vía loginOrRegister antes de persistir).
   fastify.post(

@@ -435,7 +435,8 @@ export default {
       desc: 'Connect your Google project so users can sync their events with Google Calendar.',
       guideTitle: 'How do I get the credentials? (step by step)',
       guide1: 'Go to Google Cloud Console and create or pick a project:',
-      guideEnableApi: 'IMPORTANT: enable the "Google Calendar API" for your project (Enable). Without this, Google rejects writes and events do not sync:',
+      guideEnableApi:
+        'IMPORTANT: enable the "Google Calendar API" for your project (Enable). Without this, Google rejects writes and events do not sync:',
       guide2:
         'Open "OAuth consent screen": type "External"; under Audience / Testing mode add your Gmail under "Test users".',
       guide3:
@@ -529,6 +530,14 @@ export default {
       errSave: 'Failed to save changes',
       errDelete: 'Failed to delete the account',
       errSelf: 'You cannot disable or delete your own admin account.',
+      errImport: 'Failed to import mailboxes from the server',
+      importBanner:
+        'The server has {total} mailboxes, but {n} are not registered in Bifrost (created outside the panel or migrated). Import them to manage them.',
+      importBtn: 'Import mailboxes',
+      importing: 'Importing…',
+      unlinked: 'Unlinked',
+      unlinkedHint:
+        'Server mailbox imported into Bifrost. Nobody has signed into webmail with this account yet; you can still manage it (suspend, delete or change its password). It links automatically on first sign-in.',
     },
     branding: {
       title: 'Company branding',

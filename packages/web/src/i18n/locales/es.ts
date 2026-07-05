@@ -437,7 +437,8 @@ export default {
       desc: 'Conectá tu proyecto de Google para que los usuarios puedan sincronizar sus eventos con Google Calendar.',
       guideTitle: '¿Cómo obtengo las credenciales? (guía paso a paso)',
       guide1: 'Entrá a Google Cloud Console y creá o elegí un proyecto:',
-      guideEnableApi: 'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
+      guideEnableApi:
+        'IMPORTANTE: habilitá la "Google Calendar API" en tu proyecto (Enable). Sin esto, Google rechaza las escrituras y los eventos no se sincronizan:',
       guide2:
         'Abrí "Pantalla de consentimiento de OAuth": tipo "Externo"; en "Público" / modo Testing, agregá tu Gmail en "Usuarios de prueba".',
       guide3:
@@ -536,6 +537,14 @@ export default {
       errSave: 'No se pudieron guardar los cambios',
       errDelete: 'No se pudo eliminar la cuenta',
       errSelf: 'No podés deshabilitar ni eliminar tu propia cuenta de administrador.',
+      errImport: 'No se pudieron importar los buzones del servidor',
+      importBanner:
+        'El servidor tiene {total} buzones, pero {n} no están registrados en Bifrost (creados fuera del panel o migrados). Importalos para poder gestionarlos.',
+      importBtn: 'Importar buzones',
+      importing: 'Importando…',
+      unlinked: 'Sin vincular',
+      unlinkedHint:
+        'Buzón del servidor importado a Bifrost. Todavía nadie inició sesión en el webmail con esta cuenta; podés gestionarla igual (suspender, eliminar o cambiarle la clave). Se vincula sola al primer inicio de sesión.',
     },
     branding: {
       title: 'Marca de la empresa',
