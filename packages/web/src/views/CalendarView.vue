@@ -404,7 +404,8 @@ function fmtWhen(e: CalendarEvent): string {
     e.source === 'google' ? new Date(`${iso.slice(0, 10)}T12:00:00`) : new Date(iso);
   const fmtDay = (d: Date): string => d.toLocaleDateString(locale.value, { dateStyle: 'medium' });
   const start = toDay(e.startDate);
-  const lastIncl = new Date(toDay(e.endDate).getTime() - 24 * 3600 * 1000); // fin exclusivo → último día
+  const lastIncl = toDay(e.endDate);
+  lastIncl.setDate(lastIncl.getDate() - 1); // fin EXCLUSIVO → último día real (resta de día calendario, DST-safe)
   return start.toDateString() === lastIncl.toDateString()
     ? fmtDay(start)
     : `${fmtDay(start)} – ${fmtDay(lastIncl)}`;
