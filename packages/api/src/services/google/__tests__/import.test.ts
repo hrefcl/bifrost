@@ -68,9 +68,9 @@ describe('applyGoogleEvent — motor de import bidireccional (F-gcal BD2)', () =
   });
 
   it('eventType especial (birthday) → ignored', async () => {
-    expect(await applyGoogleEvent(userId, accountId, gEvent({ id: 'g5', eventType: 'birthday' }))).toBe(
-      'ignored'
-    );
+    expect(
+      await applyGoogleEvent(userId, accountId, gEvent({ id: 'g5', eventType: 'birthday' }))
+    ).toBe('ignored');
     expect(await CalendarEvent.countDocuments({ userId, source: 'google' })).toBe(0);
   });
 
@@ -78,7 +78,9 @@ describe('applyGoogleEvent — motor de import bidireccional (F-gcal BD2)', () =
     const ev = gEvent({ id: 'g6' });
     await applyGoogleEvent(userId, accountId, ev);
     expect(await CalendarEvent.countDocuments({ userId, googleEventId: ev.id })).toBe(1);
-    expect(await applyGoogleEvent(userId, accountId, { ...ev, status: 'cancelled' })).toBe('deleted');
+    expect(await applyGoogleEvent(userId, accountId, { ...ev, status: 'cancelled' })).toBe(
+      'deleted'
+    );
     expect(await CalendarEvent.countDocuments({ userId, googleEventId: ev.id })).toBe(0);
   });
 
@@ -90,10 +92,45 @@ describe('applyGoogleEvent — motor de import bidireccional (F-gcal BD2)', () =
       { $set: { googleDeletePending: true, status: 'cancelled' } }
     );
     // Un update del feed no debe resucitarlo mientras el borrado remoto está pendiente.
-    expect(await applyGoogleEvent(userId, accountId, { ...ev, summary: 'resucita?' })).toBe('skipped');
+    expect(await applyGoogleEvent(userId, accountId, { ...ev, summary: 'resucita?' })).toBe(
+      'skipped'
+    );
     const doc = await CalendarEvent.findOne({ userId, googleEventId: ev.id });
     expect(doc?.googleDeletePending).toBe(true);
     expect(doc?.summary).not.toBe('resucita?');
+  });
+
+  it('limpiar la descripción/ubicación EN Google se refleja localmente (review D)', async () => {
+    const ev = gEvent({ id: 'g9', description: 'con desc', location: 'Oficina' });
+    await applyGoogleEvent(userId, accountId, ev);
+    // El usuario borra ambos campos en Google → llegan como undefined.
+    await applyGoogleEvent(userId, accountId, {
+      ...ev,
+      description: undefined,
+      location: undefined,
+    });
+    const doc = await CalendarEvent.findOne({ userId, googleEventId: ev.id });
+    expect(doc?.description).toBe('');
+    expect(doc?.location).toBe('');
+  });
+
+  it('anti-loop capa 2 con legacy sin `source` (campo ausente) → skipped (review B)', async () => {
+    // Evento Bifrost-origen viejo, anterior al campo `source` → se inserta sin él.
+    await CalendarEvent.collection.insertOne({
+      userId,
+      accountId,
+      calendarId: 'c',
+      calendarName: 'Personal',
+      uid: 'u-legacy',
+      summary: 'legacy',
+      startDate: new Date(),
+      endDate: new Date(Date.now() + 3600000),
+      googleEventId: 'g10',
+    });
+    expect(await applyGoogleEvent(userId, accountId, gEvent({ id: 'g10' }))).toBe('skipped');
+    expect(
+      await CalendarEvent.countDocuments({ userId, googleEventId: 'g10', source: 'google' })
+    ).toBe(0);
   });
 
   it('all-day (start.date) → allDay true', async () => {

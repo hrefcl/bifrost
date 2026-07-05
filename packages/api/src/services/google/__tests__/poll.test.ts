@@ -57,14 +57,19 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
 
   it('incremental: usa el syncToken, importa el delta y guarda el nextSyncToken', async () => {
     const { userId } = await seedConnected('tok1');
-    vi.mocked(api.listEvents).mockResolvedValueOnce({ items: [gEvent('a')], nextSyncToken: 'tok2' });
+    vi.mocked(api.listEvents).mockResolvedValueOnce({
+      items: [gEvent('a')],
+      nextSyncToken: 'tok2',
+    });
     await pollUserCalendar(userId);
 
     expect(api.listEvents).toHaveBeenCalledWith(userId, 'primary', {
       syncToken: 'tok1',
       pageToken: undefined,
     });
-    expect(await CalendarEvent.countDocuments({ userId, source: 'google', googleEventId: 'a' })).toBe(1);
+    expect(
+      await CalendarEvent.countDocuments({ userId, source: 'google', googleEventId: 'a' })
+    ).toBe(1);
     expect((await GoogleConnection.findOne({ userId }))?.syncToken).toBe('tok2');
   });
 
@@ -83,12 +88,42 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
       source: 'google',
       googleEventId: 'stale',
     });
-    vi.mocked(api.listEvents).mockResolvedValueOnce({ items: [gEvent('b')], nextSyncToken: 'tokA' });
+    vi.mocked(api.listEvents).mockResolvedValueOnce({
+      items: [gEvent('b')],
+      nextSyncToken: 'tokA',
+    });
     await pollUserCalendar(userId);
 
     expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'b' })).toBe(1); // importado
     expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'stale' })).toBe(0); // reconciliado
     expect((await GoogleConnection.findOne({ userId }))?.syncToken).toBe('tokA');
+  });
+
+  it('full RECONCILE NO borra un source:google fuera de la ventana [now-30d, now+12m] (review B/D HIGH)', async () => {
+    const { userId } = await seedConnected(); // full
+    // source:google legítimo a +13 meses (fuera del techo de +12m): el feed windowed no lo trae, pero
+    // sigue existiendo en Google → NO debe purgarse.
+    const farFuture = new Date(Date.now() + 400 * 24 * 60 * 60 * 1000);
+    await CalendarEvent.create({
+      userId,
+      accountId: new Types.ObjectId(),
+      calendarId: 'google',
+      calendarName: 'Google',
+      uid: 'faraway',
+      summary: 'lejano',
+      startDate: farFuture,
+      endDate: new Date(farFuture.getTime() + 3600000),
+      source: 'google',
+      googleEventId: 'faraway',
+    });
+    vi.mocked(api.listEvents).mockResolvedValueOnce({
+      items: [gEvent('x')],
+      nextSyncToken: 'tokX',
+    });
+    await pollUserCalendar(userId);
+
+    expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'faraway' })).toBe(1); // sobrevive
+    expect(await CalendarEvent.countDocuments({ userId, googleEventId: 'x' })).toBe(1); // importado
   });
 
   it('410 (syncToken vencido) → cae a full re-sync', async () => {
@@ -105,7 +140,11 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
 
   it('conexión NO conectada → no llama a Google', async () => {
     const { user } = await seedUserWithAccount({ email: 'off@test.com' });
-    await GoogleConnection.create({ userId: user._id, status: 'error', googleCalendarId: 'primary' });
+    await GoogleConnection.create({
+      userId: user._id,
+      status: 'error',
+      googleCalendarId: 'primary',
+    });
     await pollUserCalendar(user._id);
     expect(api.listEvents).not.toHaveBeenCalled();
   });

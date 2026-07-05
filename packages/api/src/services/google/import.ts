@@ -61,10 +61,12 @@ export async function applyGoogleEvent(
 
   // Anti-loop capa 2 (defensa en profundidad): si ya existe un Bifrost-origen con ese googleEventId, no
   // importar (cubre eventos empujados antes de tener la marca).
+  // `$ne:'google'` (no `$in`): trata también los docs legacy con `source` ausente como Bifrost-origen
+  // ($ne matchea el campo faltante), evitando re-importar como copia un evento nuestro sin `source` (review B).
   const bifOrigin = await CalendarEvent.findOne({
     userId,
     googleEventId: ev.id,
-    source: { $in: ['manual', 'booking'] },
+    source: { $ne: 'google' },
   }).select('_id');
   if (bifOrigin) return 'skipped';
 
@@ -88,8 +90,10 @@ export async function applyGoogleEvent(
     uid: ev.id, // satisface el índice único {accountId,calendarId,uid}
     googleEventId: ev.id,
     summary: ev.summary ?? '(sin título)',
-    description: ev.description,
-    location: ev.location,
+    // Normalizados a '' cuando Google los omite: con `$set` Mongoose ignora `undefined`, así que sin esto
+    // borrar la descripción/ubicación EN Google no se reflejaría (quedaba el valor viejo) — review D.
+    description: ev.description ?? '',
+    location: ev.location ?? '',
     startDate: d.startDate,
     endDate: d.endDate,
     startTimezone: d.startTimezone,
@@ -101,10 +105,21 @@ export async function applyGoogleEvent(
     recurringEventId: ev.recurringEventId,
     googleLastSyncedAt: new Date(),
   };
-  await CalendarEvent.findOneAndUpdate(
-    { userId, googleEventId: ev.id, source: 'google' },
-    { $set: set },
-    { upsert: true }
-  );
+  try {
+    await CalendarEvent.findOneAndUpdate(
+      { userId, googleEventId: ev.id, source: 'google' },
+      { $set: set },
+      { upsert: true }
+    );
+  } catch (err) {
+    // Race del upsert bajo el índice único (dos upserts concurrentes insertan a la vez): el 2º da E11000.
+    // Reintento SIN upsert → ahora el doc existe y sólo actualiza; converge sin duplicar (review B-MED).
+    if ((err as { code?: number }).code === 11000) {
+      await CalendarEvent.updateOne(
+        { userId, googleEventId: ev.id, source: 'google' },
+        { $set: set }
+      );
+    } else throw err;
+  }
   return 'imported';
 }

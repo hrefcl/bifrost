@@ -57,7 +57,8 @@ async function runIncremental(
       pageToken = page.nextPageToken;
       if (page.nextSyncToken) nextSyncToken = page.nextSyncToken;
     } while (pageToken);
-    if (nextSyncToken) await GoogleConnection.updateOne({ userId }, { $set: { syncToken: nextSyncToken } });
+    if (nextSyncToken)
+      await GoogleConnection.updateOne({ userId }, { $set: { syncToken: nextSyncToken } });
   } catch (err) {
     if (err instanceof GoogleSyncTokenExpired) {
       await runFull(userId, accountId, calId); // 410 → purge + full re-sync
@@ -73,8 +74,10 @@ async function runFull(
   calId: string
 ): Promise<void> {
   const now = Date.now();
-  const timeMin = new Date(now - WINDOW_PAST_MS).toISOString();
-  const timeMax = new Date(now + WINDOW_FUTURE_MS).toISOString();
+  const winMin = new Date(now - WINDOW_PAST_MS);
+  const winMax = new Date(now + WINDOW_FUTURE_MS);
+  const timeMin = winMin.toISOString();
+  const timeMax = winMax.toISOString();
   const seen = new Set<string>();
   let pageToken: string | undefined;
   let nextSyncToken: string | undefined;
@@ -90,16 +93,23 @@ async function runFull(
 
   // Reconcile: borra los source:'google' locales que YA NO están en el feed (borrados en Google sin token),
   // EXCEPTO los tombstones de borrado bidireccional pendientes (review B/D: no pisar un delete en curso).
+  // ACOTADO A LA VENTANA (review B/D HIGH): el feed full sólo cubre [timeMin, timeMax]; la ausencia de un
+  // evento FUERA de la ventana no prueba que se borró en Google → sólo purgamos los que intersectan la
+  // ventana (start<=winMax && end>=winMin). Así los eventos legítimos fuera de rango no "desaparecen".
   const locals = await CalendarEvent.find({
     userId,
     source: 'google',
     calendarId: GOOGLE_CAL_ID,
     googleDeletePending: { $ne: true },
+    startDate: { $lte: winMax },
+    endDate: { $gte: winMin },
   }).select('googleEventId');
   for (const l of locals) {
-    if (l.googleEventId && !seen.has(l.googleEventId)) await CalendarEvent.deleteOne({ _id: l._id });
+    if (l.googleEventId && !seen.has(l.googleEventId))
+      await CalendarEvent.deleteOne({ _id: l._id });
   }
-  if (nextSyncToken) await GoogleConnection.updateOne({ userId }, { $set: { syncToken: nextSyncToken } });
+  if (nextSyncToken)
+    await GoogleConnection.updateOne({ userId }, { $set: { syncToken: nextSyncToken } });
 }
 
 /** Encola un `gcal-poll` por cada usuario conectado (con jitter). Lo llama el job repetible `gcal-poll-all`. */

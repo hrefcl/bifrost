@@ -118,9 +118,11 @@ CalendarEventSchema.index(
 );
 // Bidireccional: upsert idempotente del import por dueño+id de Google. PARCIAL a source:'google' (sólo los
 // importados) → índice chico + aislamiento por userId (review B-HIGH: no reusar {accountId,calendarId,uid}).
+// UNIQUE (review B-MED): si el lock por-usuario del poller expira a mitad de un full largo y otro worker
+// arranca, el upsert concurrente NO puede duplicar el import (E11000 en vez de doc doble); converge.
 CalendarEventSchema.index(
   { userId: 1, googleEventId: 1 },
-  { partialFilterExpression: { source: 'google' } }
+  { unique: true, partialFilterExpression: { source: 'google' } }
 );
 
 export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
