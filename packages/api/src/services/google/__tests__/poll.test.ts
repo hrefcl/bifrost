@@ -181,13 +181,31 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
 
   it('post-guard: si el usuario DESCONECTÓ mientras el poll importaba, purga los imports (carrera, review B)', async () => {
     const { userId } = await seedConnected('tokPG');
-    // El feed trae un evento, pero DURANTE el import el usuario desconecta (status→revoked).
+    // El feed trae un evento, pero DURANTE el import el usuario desconecta (status→revoked, generation++).
     vi.mocked(api.listEvents).mockImplementationOnce(async () => {
-      await GoogleConnection.updateOne({ userId }, { $set: { status: 'revoked' } });
+      await GoogleConnection.updateOne(
+        { userId },
+        { $set: { status: 'revoked' }, $inc: { generation: 1 } }
+      );
       return { items: [gEvent('pg')], nextSyncToken: 'tokPG2' };
     });
     await pollUserCalendar(userId);
-    // El post-guard detecta el 'revoked' y purga lo que el poll importó → cero huérfanos.
+    // El post-guard detecta el cambio de generación y purga lo que el poll importó → cero huérfanos.
+    expect(await CalendarEvent.countDocuments({ userId, source: 'google' })).toBe(0);
+  });
+
+  it('post-guard con disconnect+RECONNECT rápido (status vuelve a connected): la generación NO retrocede → purga (review B)', async () => {
+    const { userId } = await seedConnected('tokRR');
+    // Durante el import: disconnect (gen++) y reconnect inmediato (gen++). status queda 'connected' otra vez,
+    // pero la generación avanzó 2 → los imports del poll VIEJO deben purgarse igual.
+    vi.mocked(api.listEvents).mockImplementationOnce(async () => {
+      await GoogleConnection.updateOne(
+        { userId },
+        { $set: { status: 'connected' }, $inc: { generation: 2 } }
+      );
+      return { items: [gEvent('rr')], nextSyncToken: 'tokRR2' };
+    });
+    await pollUserCalendar(userId);
     expect(await CalendarEvent.countDocuments({ userId, source: 'google' })).toBe(0);
   });
 

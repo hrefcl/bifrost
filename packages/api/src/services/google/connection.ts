@@ -39,9 +39,11 @@ export async function saveConnection(userId: UserId, tokens: GoogleTokens): Prom
   // Google devuelve refresh_token en el consentimiento (prompt=consent). Si por algo no viniera, se
   // conserva el anterior (no se pisa con vacío).
   if (tokens.refreshToken) set.refreshTokenEnc = encrypt(tokens.refreshToken);
+  // `$inc generation`: cada connect/reconnect abre un epoch nuevo → un poll de la conexión ANTERIOR que
+  // aún esté en vuelo detectará el cambio al terminar y descartará sus imports (carrera — review B).
   await GoogleConnection.updateOne(
     { userId },
-    { $set: set, $unset: { syncError: '' } },
+    { $set: set, $inc: { generation: 1 }, $unset: { syncError: '' } },
     { upsert: true }
   );
 }
@@ -144,10 +146,13 @@ export async function disconnect(userId: UserId): Promise<void> {
     .filter((t): t is NonNullable<typeof t> => Boolean(t))
     .map((t) => decrypt(t));
   // 1) Cortar la conexión PRIMERO: cualquier poll FUTURO lee 'revoked' (doPoll corta) y no importa nada.
+  //    `$inc generation` cierra el epoch → un poll en vuelo (aunque el usuario reconecte enseguida) verá
+  //    el cambio de generación al terminar y purgará sus imports (carrera disconnect-vs-poll — review B).
   await GoogleConnection.updateOne(
     { userId },
     {
       $set: { status: 'revoked' },
+      $inc: { generation: 1 },
       $unset: { accessTokenEnc: '', refreshTokenEnc: '', syncToken: '' },
     }
   );

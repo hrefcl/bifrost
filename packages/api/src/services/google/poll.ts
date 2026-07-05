@@ -39,6 +39,7 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
   if (!account) return; // sin cuenta primaria no se puede proyectar el import
   const accountId = account._id;
   const connRev = conn.updatedAt; // CAS: sólo marcamos error si la conexión NO cambió bajo nuestros pies
+  const genStart = conn.generation ?? 0; // epoch al iniciar: si cambia, este poll pertenece a una conexión severada
 
   try {
     if (conn.syncToken && !opts.full)
@@ -62,13 +63,21 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
     throw err; // BullMQ reintenta (acotado: en el retry doPoll corta porque conn ya no es 'connected')
   }
 
-  // POST-GUARD anti-carrera disconnect-vs-poll-en-vuelo (review B): si el usuario DESCONECTÓ mientras
-  // este poll importaba, sus upserts quedaron huérfanos. Re-leemos el status al terminar; si pasó a
-  // 'revoked', purgamos lo que este poll pudo haber creado. Cierra la carrera de forma INDEPENDIENTE del
-  // lock/TTL del disconnect: quien termina último (disconnect.deleteMany o este post-guard) converge al
-  // estado correcto (cero eventos source:'google'). Sólo 'revoked' (disconnect explícito); 'error' conserva el espejo.
-  const after = await GoogleConnection.findOne({ userId }).select('status');
-  if (after?.status === 'revoked') await CalendarEvent.deleteMany({ userId, source: 'google' });
+  // POST-GUARD anti-carrera disconnect-vs-poll-en-vuelo (review B): si hubo un disconnect (± reconnect)
+  // mientras este poll importaba, sus upserts pertenecen a un epoch YA cerrado. Comparamos la GENERACIÓN
+  // (monotónica) contra la del inicio; si cambió, este poll es de una conexión severada → purgamos sus
+  // imports. Es INDEPENDIENTE del lock/TTL y robusto ante reconnect rápido (status volvería a 'connected',
+  // pero la generación NO retrocede). El serializado por-usuario (withLock waitMs:0) garantiza que el poll
+  // del epoch nuevo aún no corrió, así que no pisamos imports legítimos suyos. 'error' NO cambia generation
+  // → conserva el espejo. Tras purgar, el próximo poll del epoch vigente re-importa full (syncToken limpio).
+  const after = await GoogleConnection.findOne({ userId }).select('generation');
+  if ((after?.generation ?? 0) !== genStart) {
+    await CalendarEvent.deleteMany({ userId, source: 'google' });
+    // También limpiamos el syncToken que este poll pudo haber escrito en el epoch nuevo: si no, el próximo
+    // incremental usaría un cursor viejo y NO re-importaría el set completo tras el purge. Seguro dentro del
+    // lock (ningún poll del epoch nuevo corrió aún) → el próximo poll hará full. (idem disconnect: ya lo limpia).
+    await GoogleConnection.updateOne({ userId }, { $unset: { syncToken: '' } });
+  }
 }
 
 async function runIncremental(
