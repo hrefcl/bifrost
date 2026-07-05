@@ -38,6 +38,7 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
   const account = await Account.findOne({ userId, isPrimary: true }).select('_id');
   if (!account) return; // sin cuenta primaria no se puede proyectar el import
   const accountId = account._id;
+  const connRev = conn.updatedAt; // CAS: sólo marcamos error si la conexión NO cambió bajo nuestros pies
 
   try {
     if (conn.syncToken && !opts.full)
@@ -50,9 +51,11 @@ async function doPoll(userId: Types.ObjectId | string, opts: { full?: boolean })
     // reconectar. Un transitorio (5xx/red) deja la conexión intacta y BullMQ reintenta. Self-healing:
     // al reconectar, el flujo OAuth vuelve a status 'connected'. Guardado por status:'connected' para no
     // pisar un 'revoked' explícito (auditoría de revocación/no-martilleo).
+    // CAS por `updatedAt` (review B): si el usuario RECONECTÓ entre nuestro read y este update (mismo doc,
+    // 1-por-usuario), `updatedAt` cambió → NO pisamos la conexión nueva y sana con un 'error' de un poll viejo.
     if (err instanceof OAuthError && err.permanent) {
       await GoogleConnection.updateOne(
-        { userId, status: 'connected' },
+        { userId, status: 'connected', updatedAt: connRev },
         { $set: { status: 'error', syncError: 'La conexión con Google fue rechazada. Reconectá.' } }
       );
     }

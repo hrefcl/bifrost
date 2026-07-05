@@ -150,6 +150,28 @@ describe('pollUserCalendar — poller bidireccional (F-gcal BD3)', () => {
     expect(await enqueueGooglePolls(false)).toBe(0);
   });
 
+  it('carrera stale-poll vs reconnect: si la conexión cambió (updatedAt) NO se pisa con error (CAS, review B)', async () => {
+    const { userId } = await seedConnected('tokR');
+    // Simula: el poll falla con 401, pero el usuario YA reconectó (updatedAt avanzó) antes del updateOne.
+    vi.mocked(api.listEvents).mockImplementationOnce(async () => {
+      await GoogleConnection.updateOne(
+        { userId },
+        {
+          $set: {
+            status: 'connected',
+            syncToken: 'fresh',
+            updatedAt: new Date(Date.now() + 60_000),
+          },
+        },
+        { timestamps: false }
+      );
+      throw new OAuthError('401', true);
+    });
+    await expect(pollUserCalendar(userId)).rejects.toBeInstanceOf(OAuthError);
+    // La conexión reconectada sigue sana: el CAS por updatedAt evitó pisarla.
+    expect((await GoogleConnection.findOne({ userId }))?.status).toBe('connected');
+  });
+
   it('error TRANSITORIO (5xx) → NO marca la conexión en error (BullMQ reintenta)', async () => {
     const { userId } = await seedConnected('tokT');
     vi.mocked(api.listEvents).mockRejectedValueOnce(new api.GoogleApiError('Google API 503', 503));
