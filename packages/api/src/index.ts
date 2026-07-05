@@ -13,6 +13,7 @@ import {
   startSchedulingWorker,
   closeScheduling,
   scheduleReconciler,
+  scheduleGooglePoll,
 } from './services/scheduling/queue.js';
 import { schedulingProcessor } from './services/scheduling/worker.js';
 
@@ -75,6 +76,10 @@ async function main() {
   // contrato de ciclo de vida (review B HIGH de Fase 3.0). El cierre va en doShutdown.
   startSchedulingWorker(schedulingProcessor);
   await scheduleReconciler().catch((err: unknown) => {
+    app.log.error(err);
+  });
+  // Poll bidireccional de Google Calendar (import Google→Bifrost). No-op si la feature está apagada.
+  await scheduleGooglePoll().catch((err: unknown) => {
     app.log.error(err);
   });
 

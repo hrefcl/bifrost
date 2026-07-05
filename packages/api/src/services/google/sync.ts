@@ -41,6 +41,8 @@ function toGoogleResource(ev: ICalendarEvent, id: string): GoogleEventResource {
     start,
     end,
     status: ev.status === 'tentative' ? 'tentative' : 'confirmed',
+    // Marca anti-loop (bidireccional): estos eventos los originó Bifrost → el poller no debe re-importarlos.
+    extendedProperties: { private: { bifrostOrigin: '1' } },
   };
 }
 

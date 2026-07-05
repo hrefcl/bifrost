@@ -223,6 +223,7 @@ export default {
       syncSynced: 'Synced to your Google Calendar',
       syncPending: 'Syncing with Google…',
       syncErrLine: 'Could not sync with Google (auto-retries every few minutes)',
+      readonlyNote: 'Event from your Google Calendar (edit it in Google).',
     },
     eventTitle: 'Event title',
     location: 'Location',

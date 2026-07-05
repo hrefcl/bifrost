@@ -16,6 +16,7 @@ vi.mock('../oauth.js', async (importOriginal) => {
 import * as oauth from '../oauth.js';
 import { saveConnection, getValidAccessToken, disconnect, getStatus } from '../connection.js';
 import { GoogleConnection, type IGoogleConnection } from '../../../models/GoogleConnection.js';
+import { CalendarEvent } from '../../../models/CalendarEvent.js';
 import { decrypt } from '../../../config/crypto.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/calendar.events';
@@ -129,5 +130,61 @@ describe('Google connection service (F-gcal G2)', () => {
     expect(doc?.accessTokenEnc).toBeUndefined();
     expect(doc?.refreshTokenEnc).toBeUndefined();
     expect((await getStatus(userId)).connected).toBe(false);
+  });
+
+  it('disconnect PURGA el calendario importado (source:google) y limpia el syncToken (auditoría desconexión)', async () => {
+    const userId = new Types.ObjectId();
+    await saveConnection(userId, {
+      accessToken: 'a',
+      refreshToken: 'r',
+      expiresAt: future(),
+      scope: SCOPE,
+    });
+    await GoogleConnection.updateOne({ userId }, { $set: { syncToken: 'tok-viejo' } });
+    // Dos eventos importados de Google + uno manual del usuario (NO debe tocarse).
+    const accountId = new Types.ObjectId();
+    await CalendarEvent.create([
+      {
+        userId,
+        accountId,
+        calendarId: 'google',
+        calendarName: 'Google',
+        uid: 'g1',
+        summary: 'g1',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 3600000),
+        source: 'google',
+        googleEventId: 'g1',
+      },
+      {
+        userId,
+        accountId,
+        calendarId: 'google',
+        calendarName: 'Google',
+        uid: 'g2',
+        summary: 'g2',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 3600000),
+        source: 'google',
+        googleEventId: 'g2',
+      },
+      {
+        userId,
+        accountId,
+        calendarId: 'c',
+        calendarName: 'Personal',
+        uid: 'm1',
+        summary: 'mío',
+        startDate: new Date(),
+        endDate: new Date(Date.now() + 3600000),
+        source: 'manual',
+      },
+    ]);
+    await disconnect(userId);
+
+    expect(await CalendarEvent.countDocuments({ userId, source: 'google' })).toBe(0); // espejo purgado
+    expect(await CalendarEvent.countDocuments({ userId, source: 'manual' })).toBe(1); // los míos intactos
+    const doc = await GoogleConnection.findOne({ userId }).lean<IGoogleConnection>();
+    expect(doc?.syncToken).toBeUndefined(); // reconnect → full re-import
   });
 });

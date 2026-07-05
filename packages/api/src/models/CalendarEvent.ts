@@ -23,8 +23,9 @@ export interface ICalendarEvent extends Document {
   inviteStatus?: string;
   status: 'confirmed' | 'tentative' | 'cancelled';
   sourceEmailId?: mongoose.Types.ObjectId;
-  /** 'booking' = bloque busy creado por una reserva de la agenda (proyección reparable). Default 'manual'. */
-  source?: 'manual' | 'booking';
+  /** 'booking' = bloque busy de una reserva; 'google' = IMPORTADO de Google (bidireccional, read-only en
+   *  Bifrost salvo borrar). Default 'manual'. */
+  source?: 'manual' | 'booking' | 'google';
   bookingId?: mongoose.Types.ObjectId;
   meetRoomId?: mongoose.Types.ObjectId;
   meetUrl?: string;
@@ -33,6 +34,11 @@ export interface ICalendarEvent extends Document {
   googleSyncStatus?: 'pending' | 'synced' | 'error' | 'skipped' | 'deleting' | 'deleted';
   googleSyncError?: string; // último error de sync de ESTE evento
   googleLastSyncedAt?: Date;
+  // ── Bidireccional (Google → Bifrost, source:'google'). ──
+  googleEtag?: string; // etag del recurso Google (debug + orden de cambios)
+  googleICalUid?: string; // iCalUID del evento en Google (debug/dedup de instancias)
+  recurringEventId?: string; // si es una instancia de una serie, el id de la serie madre
+  googleDeletePending?: boolean; // tombstone de borrado bidireccional aún sin confirmar en Google
   createdAt: Date;
   updatedAt: Date;
 }
@@ -72,7 +78,7 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
     status: { type: String, enum: ['confirmed', 'tentative', 'cancelled'], default: 'confirmed' },
     sourceEmailId: { type: Schema.Types.ObjectId },
     // Aditivos para la agenda (no rompen eventos existentes: opcionales, default 'manual').
-    source: { type: String, enum: ['manual', 'booking'], default: 'manual' },
+    source: { type: String, enum: ['manual', 'booking', 'google'], default: 'manual' },
     bookingId: { type: Schema.Types.ObjectId },
     meetRoomId: { type: Schema.Types.ObjectId },
     meetUrl: { type: String, maxlength: 2048 },
@@ -84,6 +90,11 @@ const CalendarEventSchema = new Schema<ICalendarEvent>(
     },
     googleSyncError: { type: String },
     googleLastSyncedAt: { type: Date },
+    // Bidireccional (source:'google').
+    googleEtag: { type: String },
+    googleICalUid: { type: String },
+    recurringEventId: { type: String },
+    googleDeletePending: { type: Boolean },
   },
   { timestamps: true }
 );
@@ -104,6 +115,14 @@ CalendarEventSchema.index({ accountId: 1, calendarId: 1, uid: 1 }, { unique: tru
 CalendarEventSchema.index(
   { userId: 1, googleSyncStatus: 1, updatedAt: 1 },
   { partialFilterExpression: { googleSyncStatus: { $exists: true } } }
+);
+// Bidireccional: upsert idempotente del import por dueño+id de Google. PARCIAL a source:'google' (sólo los
+// importados) → índice chico + aislamiento por userId (review B-HIGH: no reusar {accountId,calendarId,uid}).
+// UNIQUE (review B-MED): si el lock por-usuario del poller expira a mitad de un full largo y otro worker
+// arranca, el upsert concurrente NO puede duplicar el import (E11000 en vez de doc doble); converge.
+CalendarEventSchema.index(
+  { userId: 1, googleEventId: 1 },
+  { unique: true, partialFilterExpression: { source: 'google' } }
 );
 
 export function serializeCalendarEvent(doc: ICalendarEvent): CalendarEventDto {
