@@ -161,6 +161,22 @@ export class DockerMailserverProvider implements MailboxProvider {
       .map((p) => p[0].toLowerCase());
   }
 
+  /** Todos los aliases como mapa `alias → destino` (una sola lectura del postfix-virtual.cf). */
+  async getAllAliases(): Promise<Map<string, string>> {
+    const content = await fs.readFile(this.virtualFile, 'utf8').catch((e: unknown) => {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw e;
+    });
+    const map = new Map<string, string>();
+    for (const line of content.split('\n')) {
+      const l = line.trim();
+      if (!l || l.startsWith('#')) continue;
+      const [alias, target] = l.split(/\s+/);
+      if (alias && target) map.set(alias.toLowerCase(), target.toLowerCase());
+    }
+    return map;
+  }
+
   /** Reemplaza el set de aliases que apuntan a `email` en postfix-virtual.cf (escritura atómica). */
   async setAliases(email: string, aliases: string[]): Promise<void> {
     const target = email.trim().toLowerCase();

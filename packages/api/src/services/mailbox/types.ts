@@ -28,6 +28,8 @@ export interface MailboxProvider {
   addRawLine(rawLine: string): Promise<void>;
   /** Aliases que apuntan a `email`. */
   getAliases(email: string): Promise<string[]>;
+  /** Todos los aliases del sistema como mapa `alias → buzón destino` (lectura única del archivo). */
+  getAllAliases(): Promise<Map<string, string>>;
   /** Reemplaza el set de aliases que apuntan a `email`. Lanza `AliasConflictError` si un alias ya
    *  pertenece a OTRO buzón (unicidad global; Bifrost es la autoridad). */
   setAliases(email: string, aliases: string[]): Promise<void>;

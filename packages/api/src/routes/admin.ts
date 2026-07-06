@@ -17,9 +17,11 @@ import { provisionMailboxAccount } from '../services/mailbox/provision-account.j
 import { reconcileMailboxes, countServerMailboxes } from '../services/mailbox/reconcile.js';
 import {
   patchMailbox,
+  getMailbox,
   resetMailboxPassword,
   MailboxNotFoundError,
 } from '../services/mailbox/manage.js';
+import { AliasConflictError } from '../services/mailbox/types.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import {
   createProvisionKey,
@@ -1071,6 +1073,14 @@ export default function adminRoutes(fastify: FastifyInstance) {
             message: 'Ya existe un buzón con ese email en el servidor de correo.',
           });
         }
+        // El email pedido ya es un ALIAS de otro buzón → no se puede crear como dirección real.
+        if (err instanceof AliasConflictError) {
+          return reply.code(409).send({
+            statusCode: 409,
+            error: 'Conflict',
+            message: 'Ese email ya está en uso como alias de otro buzón.',
+          });
+        }
         throw err;
       }
       if (!isNew) {
@@ -1285,6 +1295,109 @@ export default function adminRoutes(fastify: FastifyInstance) {
         throw err;
       }
       return { ok: true };
+    }
+  );
+
+  // ---- Aliases del buzón (delivery-only; SÓLO modo nativo) ----
+  // Un alias entrega el correo entrante a ESTE buzón. NO permite login ni enviar-como (scope delivery-only).
+  // Fuente de verdad: postfix-virtual.cf (el provider, con unicidad global atómica). Acá se valida y se
+  // materializa vía patchMailbox. En modo bring-your-own no aplica (provider no-op) → 409.
+  fastify.get(
+    '/accounts/:id/aliases',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const { id } = z.object({ id: objectId }).parse(request.params);
+      const account = await Account.findById(id).select('email').lean();
+      if (!account) {
+        return reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+      }
+      if (!(await provisioningEnabled())) return { aliases: [] as string[] }; // BYO: no aplican
+      const mb = await getMailbox(account.email);
+      return { aliases: mb?.aliases ?? [] };
+    }
+  );
+
+  fastify.put(
+    '/accounts/:id/aliases',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const { id } = z.object({ id: objectId }).parse(request.params);
+      const { aliases } = z
+        .object({ aliases: z.array(z.string()).max(50) })
+        .strict()
+        .parse(request.body);
+      const account = await Account.findById(id).select('userId email').lean();
+      if (!account) {
+        return reply
+          .code(404)
+          .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+      }
+      // Anti-privilegio (RBAC F8): un delegado no-admin no puede tocar la cuenta de un admin.
+      if (request.adminAccess?.role !== 'admin') {
+        const target = await User.findById(account.userId).select('role').lean();
+        if (target?.role === 'admin') {
+          return reply.code(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            message: 'No podés modificar la cuenta de un administrador.',
+          });
+        }
+      }
+      if (!(await provisioningEnabled())) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Los alias requieren provisioning activo (mailserver propio).',
+        });
+      }
+      // Normalizar (lowercase+trim), quitar vacíos y duplicados.
+      const norm = [...new Set(aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+      const emailRe = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+      const invalid = norm.find((a) => !emailRe.test(a));
+      if (invalid) {
+        return reply
+          .code(400)
+          .send({ statusCode: 400, error: 'Bad Request', message: `Alias inválido: ${invalid}` });
+      }
+      // Un alias no puede ser la PROPIA dirección del buzón.
+      if (norm.includes(account.email.toLowerCase())) {
+        return reply.code(400).send({
+          statusCode: 400,
+          error: 'Bad Request',
+          message: 'Un alias no puede ser la dirección propia del buzón.',
+        });
+      }
+      // Un alias no puede colisionar con la dirección REAL (email primario) de otra cuenta.
+      const clash = await Account.findOne({ email: { $in: norm } })
+        .select('email')
+        .lean();
+      if (clash) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: `${clash.email} ya es una dirección real; no puede ser un alias.`,
+        });
+      }
+      try {
+        await patchMailbox(account.email, { aliases: norm });
+      } catch (err) {
+        if (err instanceof AliasConflictError) {
+          return reply.code(409).send({ statusCode: 409, error: 'Conflict', message: err.message });
+        }
+        if (err instanceof MailboxNotFoundError) {
+          return reply
+            .code(404)
+            .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+        }
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo aplicar los alias en el servidor de correo. Reintentá.',
+        });
+      }
+      return { ok: true, aliases: norm };
     }
   );
 

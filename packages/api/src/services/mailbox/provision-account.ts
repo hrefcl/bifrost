@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { loginOrRegister, type LoginInput } from '../auth.js';
 import { getActiveMailboxProvider } from './index.js';
-import { ProvisioningDisabledError } from './types.js';
+import { ProvisioningDisabledError, AliasConflictError } from './types.js';
 
 /**
  * Orquestación de alta de cuenta CON provisioning real del buzón. La usan por igual el panel /admin y
@@ -74,6 +74,11 @@ export async function provisionMailboxAccount(
   const email = input.email.trim().toLowerCase();
   const provider = await getActiveMailboxProvider();
   if (provider.type === 'none') throw new ProvisioningDisabledError();
+
+  // El email del buzón nuevo no puede ser YA un alias de otro buzón (colisión dirección real ↔ alias):
+  // Postfix quedaría ambiguo. Se rechaza como conflicto de alias (el caller lo mapea a 409).
+  const existingAliases = await provider.getAllAliases();
+  if (existingAliases.has(email)) throw new AliasConflictError(email);
 
   const transport = resolveLocalTransport(email);
   if (!transport) {

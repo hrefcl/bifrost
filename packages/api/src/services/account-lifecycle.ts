@@ -37,6 +37,9 @@ export async function deleteAccountCascade(account: {
     try {
       const provider = await getActiveMailboxProvider();
       await provider.deleteMailbox(account.email);
+      // Quitar sus aliases del postfix-virtual.cf → no dejar aliases HUÉRFANOS apuntando a un buzón que
+      // ya no existe (rebotarían). Idempotente (setAliases con []); mismo try → un fallo aborta antes de la DB.
+      await provider.setAliases(account.email, []);
     } catch (err) {
       throw new MailboxRevokeError(err);
     }

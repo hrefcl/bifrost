@@ -165,6 +165,14 @@ export default function provisionRoutes(fastify: FastifyInstance) {
           message: 'Ya existe un buzón con ese email.',
         });
       }
+      // El email pedido ya es un ALIAS de otro buzón → no se puede crear como dirección real.
+      if (err instanceof AliasConflictError) {
+        return reply.code(409).send({
+          statusCode: 409,
+          error: 'Conflict',
+          message: 'Ese email ya está en uso como alias de otro buzón.',
+        });
+      }
       throw err; // atómico con rollback → sin buzón creado; el retry es seguro (→ 500 sin side-effect)
     }
     const quotaBytes = body.quotaBytes ?? (await getStorageDefaults()).defaultQuotaBytes;
