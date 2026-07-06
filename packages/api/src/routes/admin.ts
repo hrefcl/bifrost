@@ -53,6 +53,7 @@ import {
 import { SIGNATURE_TEMPLATES } from '../lib/signature-templates.js';
 import { renderAllTemplates, renderDraftPreview } from '../services/user-signature.js';
 import { env } from '../config/env.js';
+import { storeDataImage } from '../services/signature-images.js';
 import { Group, serializeGroup, type IGroup } from '../models/Group.js';
 import { isValidZone } from '../lib/scheduling/time.js';
 
@@ -183,6 +184,9 @@ const updateAccountSchema = z
     // Perfil (firmas F3): el admin edita Cargo/Departamento desde la ficha. '' limpia.
     jobTitle: z.string().trim().max(120).optional(),
     department: z.string().trim().max(120).optional(),
+    // Foto de perfil del usuario (= avatar + foto de la firma). data URL o clearPhoto para quitarla.
+    photoDataUrl: z.string().max(3_000_000).optional(),
+    clearPhoto: z.boolean().optional(),
   })
   .strict();
 
@@ -938,7 +942,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
     const provisioning = await provisioningEnabled();
     const userIds = [...new Set(accounts.map((a) => a.userId.toString()))];
     const users = await User.find({ _id: { $in: userIds } })
-      .select('displayName primaryEmail role customRoleId jobTitle department')
+      .select('displayName primaryEmail role customRoleId jobTitle department photoUrl')
       .lean();
     const userById = new Map(users.map((u) => [u._id.toString(), u]));
     // Nombres de los roles custom asignados (para mostrarlos en la lista de cuentas).
@@ -973,6 +977,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
             : null,
           jobTitle: u?.jobTitle ?? null,
           department: u?.department ?? null,
+          photoUrl: u?.photoUrl ?? null,
           isPrimary: a.isPrimary,
           status: a.status,
           quotaBytes: a.quotaBytes ?? 0,
@@ -1178,6 +1183,24 @@ export default function adminRoutes(fastify: FastifyInstance) {
         if (body[k] === undefined) continue;
         if (body[k]) uSet[k] = body[k];
         else uUnset[k] = '';
+      }
+      // Foto de perfil del usuario (avatar + foto de la firma). El admin puede fijarla o quitarla.
+      if (body.clearPhoto) {
+        uUnset.photoUrl = '';
+      } else if (body.photoDataUrl !== undefined) {
+        const url = await storeDataImage(
+          account.userId.toString(),
+          body.photoDataUrl,
+          env.FRONTEND_URL
+        );
+        if (!url) {
+          return reply.code(400).send({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: 'Foto inválida (usá PNG/JPG/WEBP/GIF de hasta 2 MB).',
+          });
+        }
+        uSet.photoUrl = url;
       }
       const uUpdate: Record<string, unknown> = {};
       if (Object.keys(uSet).length > 0) uUpdate.$set = uSet;

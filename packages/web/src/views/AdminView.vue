@@ -243,6 +243,7 @@ interface AdminAccount {
   quotaBytes: number;
   usedBytes: number;
   lastSyncedAt: string | null;
+  photoUrl?: string | null;
   // false ⇒ buzón importado del servidor sin sesión iniciada aún (sin credenciales de webmail).
   linked?: boolean;
 }
@@ -517,6 +518,47 @@ async function saveProfile() {
   } finally {
     rowBusy.value = null;
   }
+}
+
+// Foto de perfil del usuario (avatar + foto de la firma) — el admin la fija/quita desde la ficha.
+const ADMIN_PHOTO_MAX = 2 * 1024 * 1024;
+async function patchAdminPhoto(payload: { photoDataUrl?: string; clearPhoto?: boolean }) {
+  const a = selectedUser.value;
+  if (!a) return;
+  rowBusy.value = a.id;
+  accError.value = '';
+  try {
+    await api.patch(`/admin/accounts/${a.id}`, payload);
+    await loadAccounts();
+    selectedUser.value = accounts.value.find((x) => x.id === a.id) ?? null;
+  } catch {
+    accError.value = t('admin.accounts.errSave');
+  } finally {
+    rowBusy.value = null;
+  }
+}
+function onAdminPhotoPick(e: Event) {
+  accError.value = '';
+  const file = (e.target as HTMLInputElement).files?.[0];
+  (e.target as HTMLInputElement).value = '';
+  if (!file) return;
+  if (!/^image\/(png|jpe?g|webp|gif)$/.test(file.type)) {
+    accError.value = t('admin.users.photoType');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = typeof reader.result === 'string' ? reader.result : '';
+    if (!dataUrl || dataUrl.length * 0.75 > ADMIN_PHOTO_MAX) {
+      accError.value = t('admin.users.photoSize');
+      return;
+    }
+    void patchAdminPhoto({ photoDataUrl: dataUrl });
+  };
+  reader.readAsDataURL(file);
+}
+function clearAdminPhoto() {
+  void patchAdminPhoto({ clearPhoto: true });
 }
 
 // ── Alias del buzón (delivery-only; sólo modo nativo) ──
@@ -1158,6 +1200,13 @@ async function save() {
               <span v-if="apiBuild" class="bi-dim" data-testid="build-api">api {{ apiBuild }}</span>
             </div>
           </div>
+          <div class="admin-links">
+            <a href="https://bifrostmail.org" target="_blank" rel="noopener noreferrer"
+              >bifrostmail.org</a
+            >
+            <span class="admin-links-sep">·</span>
+            <a href="https://href.cl" target="_blank" rel="noopener noreferrer">href.cl</a>
+          </div>
         </footer>
       </nav>
 
@@ -1214,7 +1263,27 @@ async function save() {
                 <aside class="card user-hero">
                   <div class="user-hero-band" :style="{ background: avatarColor(selectedUser) }" />
                   <div class="user-hero-avatar" :style="{ background: avatarColor(selectedUser) }">
-                    {{ initials(selectedUser) }}
+                    <img v-if="selectedUser.photoUrl" :src="selectedUser.photoUrl" alt="foto" />
+                    <template v-else>{{ initials(selectedUser) }}</template>
+                  </div>
+                  <div class="user-hero-photo-actions">
+                    <label class="link-btn file-btn">
+                      {{ t('admin.users.changePhoto') }}
+                      <input
+                        type="file"
+                        accept="image/png,image/jpeg,image/webp,image/gif"
+                        hidden
+                        @change="onAdminPhotoPick"
+                      />
+                    </label>
+                    <button
+                      v-if="selectedUser.photoUrl"
+                      class="link-btn"
+                      :disabled="rowBusy === selectedUser.id"
+                      @click="clearAdminPhoto"
+                    >
+                      {{ t('admin.users.removePhoto') }}
+                    </button>
                   </div>
                   <h2 class="user-hero-name">{{ selectedUser.displayName }}</h2>
                   <p class="user-hero-email">{{ selectedUser.email }}</p>
@@ -2095,6 +2164,25 @@ async function save() {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface-dim);
+}
+.admin-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.admin-links a {
+  color: var(--text-3);
+  text-decoration: none;
+}
+.admin-links a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.admin-links-sep {
+  color: var(--text-3);
 }
 .admin-verchip :deep(svg) {
   color: var(--accent);
@@ -3098,6 +3186,18 @@ async function save() {
   color: #fff;
   font-size: 30px;
   font-weight: 700;
+  overflow: hidden;
+}
+.user-hero-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.user-hero-photo-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  margin-top: 8px;
 }
 .user-hero-name {
   margin: 12px 0 2px;

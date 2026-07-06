@@ -466,17 +466,56 @@ export async function moveEmailToFolder(
   });
 }
 
-/** Mueve un mensaje a la carpeta Trash (por specialUse; fallback 'Trash'). */
+/** Nombre convencional de cada carpeta especial (para crearla si el servidor no la trae). */
+const SPECIAL_FOLDER_NAMES: Record<SpecialUse, string> = {
+  inbox: 'INBOX',
+  sent: 'Sent',
+  drafts: 'Drafts',
+  trash: 'Trash',
+  junk: 'Junk',
+  archive: 'Archive',
+};
+
+/**
+ * Devuelve el path de la carpeta especial de la cuenta, CREÁNDOLA si no existe (típico: docker-mailserver
+ * no crea "Archive" por defecto → archivar daba 404). Crea la mailbox en el servidor (idempotente) y el doc
+ * Folder local marcado con su `specialUse`, para que el move/resolución la encuentre. La suscripción es
+ * best-effort. El próximo list-sync reconcilia el resto de metadatos.
+ */
+export async function ensureSpecialFolder(
+  account: IAccount,
+  specialUse: SpecialUse
+): Promise<string> {
+  const existing = await Folder.findOne({ accountId: account._id.toString(), specialUse });
+  if (existing) return existing.path;
+  const name = SPECIAL_FOLDER_NAMES[specialUse];
+  await withClient(account, async (client) => {
+    try {
+      await client.mailboxCreate(name);
+    } catch {
+      /* ya existe en el servidor: idempotente */
+    }
+    try {
+      await client.mailboxSubscribe(name);
+    } catch {
+      /* suscripción best-effort */
+    }
+  });
+  const folder = await Folder.findOneAndUpdate(
+    { accountId: account._id.toString(), path: name },
+    { $setOnInsert: { accountId: account._id.toString(), name, path: name }, $set: { specialUse } },
+    { upsert: true, new: true }
+  );
+  return folder.path;
+}
+
+/** Mueve un mensaje a la carpeta Trash (por specialUse; la crea si falta). */
 export async function moveEmailToTrash(
   account: IAccount,
   folderPath: string,
   uid: number
 ): Promise<void> {
-  const trash = await Folder.findOne({
-    accountId: account._id.toString(),
-    specialUse: 'trash',
-  });
-  const trashPath = trash?.path ?? 'Trash';
+  const trashPath = await ensureSpecialFolder(account, 'trash');
   await moveEmailToFolder(account, folderPath, uid, trashPath);
 }
 

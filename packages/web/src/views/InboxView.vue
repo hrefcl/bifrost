@@ -401,6 +401,9 @@ async function selectFolder(folderId: string) {
   } finally {
     if (token === loadToken) loading.value = false;
   }
+  // Al ABRIR la carpeta, sincronizarla en background y traer lo que falte localmente (p.ej. correos
+  // recién movidos a Papelera/Archivo que el poll de 45s aún no importó). No bloquea el render inicial.
+  if (token === loadToken) void pollNewMail();
 }
 
 /** Cursor keyset = (date,uid) del ÚLTIMO email CRUDO de la página (no del filtrado), para que la

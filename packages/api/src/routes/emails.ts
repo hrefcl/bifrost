@@ -7,6 +7,7 @@ import {
   setEmailFlagged,
   moveEmailToTrash,
   moveEmailToFolder,
+  ensureSpecialFolder,
   type ParsedAttachment,
 } from '../services/imap.js';
 import { requireOwnedEmail, OwnershipError } from '../lib/authz.js';
@@ -316,9 +317,15 @@ export default function emailRoutes(fastify: FastifyInstance) {
     const body = moveSchema.parse(request.body);
     const { email, account } = await requireOwnedEmail(request.user.userId, emailId);
 
-    const target = body.folderId
+    let target = body.folderId
       ? await Folder.findOne({ _id: body.folderId, accountId: account._id.toString() })
       : await Folder.findOne({ accountId: account._id.toString(), specialUse: body.specialUse });
+    // Carpeta especial que el servidor no trae (típico: Archive en docker-mailserver) → crearla al vuelo
+    // en vez de fallar. Sólo para specialUse (un folderId inexistente sí es 404 real).
+    if (!target && body.specialUse) {
+      const path = await ensureSpecialFolder(account, body.specialUse);
+      target = await Folder.findOne({ accountId: account._id.toString(), path });
+    }
     if (!target) {
       return reply
         .code(404)
