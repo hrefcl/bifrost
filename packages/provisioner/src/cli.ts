@@ -6,7 +6,8 @@ import { CloudFormationClient } from '@aws-sdk/client-cloudformation';
 import { Route53Client } from '@aws-sdk/client-route-53';
 import { SSMClient, PutParameterCommand } from '@aws-sdk/client-ssm';
 import { listVpcs, listSubnets } from './aws/vpc.js';
-import { listPublicHostedZones, matchHostedZone } from './aws/route53.js';
+import { listPublicHostedZones, matchHostedZone, listResourceRecordSets } from './aws/route53.js';
+import { plannedDnsRecords, findDnsConflicts } from './wizard/dns-preflight.js';
 import { ensureKeyPair } from './aws/compute.js';
 import { buildUserData } from './mailserver/user-data.js';
 import { buildLivekitUserData } from './meet/livekit-media-user-data.js';
@@ -455,15 +456,44 @@ async function main(): Promise<void> {
     pem = kp.privateKeyPem;
 
     // DNS: si detecto una zona Route53 del dominio, ofrezco gestionar los registros desde el stack.
-    const zones = await listPublicHostedZones(new Route53Client({ region }));
+    const r53 = new Route53Client({ region });
+    const zones = await listPublicHostedZones(r53);
     const m = matchHostedZone(zones, domain);
     const zone = m.exact ?? m.parent;
     if (zone) {
-      const manage = await confirm({
-        message: `Detecté la zona Route53 ${zone.name} (${zone.id}). ¿Creo los registros DNS (A/MX/SPF/DMARC) desde el stack? OJO: si tu zona YA tiene MX/TXT en el dominio puede chocar.`,
-        default: false,
-      });
-      if (manage) hostedZoneId = zone.id;
+      // PRE-FLIGHT DNS (cierra TD-DNS-EXISTING-RECORDS-ROLLBACK): el stack crea los registros con un
+      // `AWS::Route53::RecordSetGroup` que FALLA si un (name,type) ya existe → CloudFormation hace rollback
+      // de TODO el stack. En vez de avisar "puede chocar" a ciegas, LISTAMOS los registros reales de la zona
+      // y mostramos EXACTAMENTE cuáles chocan, para que el operador decida informado.
+      const manageMeetDns = meetMode === 'bundled' || meetMode === 'twobox';
+      const planned = plannedDnsRecords(domain, { manageMeetDns });
+      const existing = (await listResourceRecordSets(r53, zone.id))
+        .filter((r) => r.type === 'A' || r.type === 'MX' || r.type === 'TXT')
+        .map((r) => ({ name: r.name, type: r.type as 'A' | 'MX' | 'TXT' }));
+      const conflicts = findDnsConflicts(planned, existing);
+      if (conflicts.length > 0) {
+        console.log(
+          `\n⚠ La zona ${zone.name} YA tiene ${String(conflicts.length)} de los registros que el stack crearía:`
+        );
+        for (const c of conflicts) console.log(`   • ${c.type.padEnd(4)} ${c.name}`);
+        console.log(
+          '  Si gestionás el DNS desde el stack, CloudFormation FALLA al crearlos y hace ROLLBACK de TODO el stack.'
+        );
+        console.log(
+          '  Recomendado: borrá esos registros en Route53 y reintentá, o NO gestiones el DNS desde el stack (cargá los registros a mano).\n'
+        );
+        const manageAnyway = await confirm({
+          message: `¿Gestionar el DNS igual, con ${String(conflicts.length)} conflicto(s)? (NO recomendado — el deploy puede hacer rollback)`,
+          default: false,
+        });
+        if (manageAnyway) hostedZoneId = zone.id;
+      } else {
+        const manage = await confirm({
+          message: `Detecté la zona Route53 ${zone.name} (${zone.id}) y NO hay conflictos con los registros del stack. ¿Creo los registros DNS (A/MX/SPF/DMARC) desde el stack?`,
+          default: true,
+        });
+        if (manage) hostedZoneId = zone.id;
+      }
     }
   } else {
     keyName = await input({
