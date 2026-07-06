@@ -1307,11 +1307,22 @@ export default function adminRoutes(fastify: FastifyInstance) {
     { config: { permission: 'accounts.manage' } },
     async (request, reply) => {
       const { id } = z.object({ id: objectId }).parse(request.params);
-      const account = await Account.findById(id).select('email').lean();
+      const account = await Account.findById(id).select('userId email').lean();
       if (!account) {
         return reply
           .code(404)
           .send({ statusCode: 404, error: 'Not Found', message: 'Cuenta no encontrada' });
+      }
+      // Anti-privilegio (igual que el PUT): un delegado no-admin no ve los alias de una cuenta admin.
+      if (request.adminAccess?.role !== 'admin') {
+        const target = await User.findById(account.userId).select('role').lean();
+        if (target?.role === 'admin') {
+          return reply.code(403).send({
+            statusCode: 403,
+            error: 'Forbidden',
+            message: 'No podés ver la cuenta de un administrador.',
+          });
+        }
       }
       if (!(await provisioningEnabled())) return { aliases: [] as string[] }; // BYO: no aplican
       const mb = await getMailbox(account.email);
@@ -1369,17 +1380,8 @@ export default function adminRoutes(fastify: FastifyInstance) {
           message: 'Un alias no puede ser la dirección propia del buzón.',
         });
       }
-      // Un alias no puede colisionar con la dirección REAL (email primario) de otra cuenta.
-      const clash = await Account.findOne({ email: { $in: norm } })
-        .select('email')
-        .lean();
-      if (clash) {
-        return reply.code(409).send({
-          statusCode: 409,
-          error: 'Conflict',
-          message: `${clash.email} ya es una dirección real; no puede ser un alias.`,
-        });
-      }
+      // La colisión alias ↔ dirección REAL de otro buzón la valida el PROVIDER de forma atómica (contra el
+      // accounts.cf real, no Mongo que puede estar desincronizado con buzones importados) → AliasConflictError.
       try {
         await patchMailbox(account.email, { aliases: norm });
       } catch (err) {

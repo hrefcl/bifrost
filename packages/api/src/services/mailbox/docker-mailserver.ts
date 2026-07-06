@@ -72,6 +72,9 @@ export class DockerMailserverProvider implements MailboxProvider {
     await this.withLock(async () => {
       const lines = await this.readLines();
       if (lines.some((l) => emailOf(l) === target)) throw new MailboxExistsError(target);
+      // Atómico (bajo el MISMO lock que setAliases): el email no puede ser YA un alias de otro buzón
+      // (colisión dirección real ↔ alias). Cierra el race create-vs-setAliases (review B).
+      if ((await this.getAllAliases()).has(target)) throw new AliasConflictError(target);
       lines.push(line);
       await this.writeLines(lines);
     });
@@ -200,6 +203,12 @@ export class DockerMailserverProvider implements MailboxProvider {
       );
       const conflict = clean.find((a) => ownedByOthers.has(a));
       if (conflict) throw new AliasConflictError(conflict);
+      // Un alias tampoco puede ser una dirección REAL de OTRO buzón (línea en accounts.cf). Autoritativo
+      // contra el archivo real (no Mongo, que puede estar desincronizado con buzones importados) y atómico
+      // bajo el mismo lock (review B). El propio `target` se excluye (la ruta ya veta alias==dirección propia).
+      const realMailboxes = new Set((await this.readLines()).map(emailOf).filter(Boolean));
+      const realClash = clean.find((a) => a !== target && realMailboxes.has(a));
+      if (realClash) throw new AliasConflictError(realClash);
       // Conserva las líneas que NO apuntan a este email; agrega las nuevas.
       const kept = rows.filter(
         (l) => l.startsWith('#') || l.split(/\s+/)[1]?.toLowerCase() !== target

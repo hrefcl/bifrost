@@ -536,10 +536,14 @@ async function loadAliases(id: string) {
   if (!provisioning.value) return;
   try {
     const { data } = await api.get<{ aliases: string[] }>(`/admin/accounts/${id}/aliases`);
+    // Guard anti-respuesta-vieja (review B): si el admin ya abrió OTRA ficha mientras esta petición
+    // volaba, NO pisar aliasList con datos de la cuenta anterior (un Guardar posterior borraría los del
+    // buzón equivocado). Sólo aplicar si sigue seleccionada la misma cuenta.
+    if (selectedUser.value?.id !== id) return;
     aliasList.value = data.aliases;
     aliasLoaded.value = true;
   } catch {
-    aliasError.value = t('admin.accounts.aliasLoadErr'); // no se marca `loaded` → Guardar bloqueado
+    if (selectedUser.value?.id === id) aliasError.value = t('admin.accounts.aliasLoadErr');
   }
 }
 function addAliasChip() {
