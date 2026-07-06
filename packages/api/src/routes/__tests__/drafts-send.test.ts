@@ -104,6 +104,20 @@ describe('envío de drafts (F3.5)', () => {
     expect(after?.sentAt).toBeTruthy();
   });
 
+  it('el From usa el displayName del usuario, no el email (regresión: "Nombre <email>")', async () => {
+    const { user, account } = await seedUserWithAccount({ email: 'fran@test.com' });
+    await User.updateOne({ _id: user._id }, { $set: { displayName: 'Francisco Arenas' } });
+    const draft = await makeDraft(user._id.toString(), account._id.toString());
+    const res = await app.inject({
+      method: 'POST',
+      url: `/api/drafts/${draft._id.toString()}/send`,
+      headers: authHeaders(app, user._id.toString()),
+    });
+    expect(res.statusCode).toBe(200);
+    // El header From del correo crudo lleva el nombre visible + el email.
+    expect(h.lastRaw).toMatch(/From:\s*Francisco Arenas <fran@test\.com>/);
+  });
+
   it('tras enviar, SINCRONIZA el folder Sent (regresión: el enviado debe aparecer en Enviados)', async () => {
     const { user, account } = await seedUserWithAccount({ email: 'me@test.com' });
     // El APPEND deja el mensaje en IMAP Sent, pero la vista Enviados lee de Mongo → el handler debe

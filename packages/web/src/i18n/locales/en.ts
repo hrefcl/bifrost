@@ -382,6 +382,10 @@ export default {
     users: {
       back: 'Back to users',
       profile: 'Profile',
+      changePhoto: 'Change photo',
+      removePhoto: 'Remove photo',
+      photoType: 'Unsupported format (use PNG, JPG, WEBP or GIF).',
+      photoSize: 'Image exceeds 2 MB.',
       roleSection: 'Role & permissions',
       adminRoleNote:
         'This user is a super administrator: they have all permissions and cannot be assigned a role.',

@@ -314,27 +314,42 @@ describe('endpoints con IMAP (F3.1, mocks)', () => {
     // El uid cambia en el destino → el doc local se quita (se re-sincroniza al sincronizar Archive).
     expect(await Email.findById(email._id)).toBeNull();
 
-    // Carpeta destino inexistente → 404 (no se pierde el email).
+    // Carpeta ESPECIAL inexistente (junk) → se AUTO-CREA y el move procede (antes daba 404: bug de
+    // archivar en docker-mailserver sin carpeta Archive). El email se mueve (doc local removido).
     const email2 = await seedEmail(account._id, inbox._id, { uid: 21 });
-    const noTarget = await app.inject({
+    const autocreate = await app.inject({
       method: 'POST',
       url: `/api/emails/${email2._id.toString()}/move`,
       headers: authHeaders(app, user._id.toString()),
-      payload: { specialUse: 'junk' }, // no hay carpeta junk sembrada
+      payload: { specialUse: 'junk' }, // no hay carpeta junk sembrada → se crea al vuelo
     });
-    expect(noTarget.statusCode).toBe(404);
-    expect(await Email.findById(email2._id)).not.toBeNull();
+    expect(autocreate.statusCode).toBe(200);
+    expect(await Email.findById(email2._id)).toBeNull();
+    expect(
+      await Folder.findOne({ accountId: account._id.toString(), specialUse: 'junk' })
+    ).not.toBeNull();
 
-    // Owner-bound: OTRO usuario no puede mover este email (no fuga cross-tenant).
+    // folderId EXPLÍCITO inexistente → 404 real (no se auto-crea: sólo las carpetas especiales).
+    const email3 = await seedEmail(account._id, inbox._id, { uid: 22 });
+    const badFolder = await app.inject({
+      method: 'POST',
+      url: `/api/emails/${email3._id.toString()}/move`,
+      headers: authHeaders(app, user._id.toString()),
+      payload: { folderId: '6a46a06968de9ab9c9603700' },
+    });
+    expect(badFolder.statusCode).toBe(404);
+    expect(await Email.findById(email3._id)).not.toBeNull();
+
+    // Owner-bound: OTRO usuario no puede mover este email (no fuga cross-tenant). Usa email3, que sobrevive.
     const { user: other } = await seedUserWithAccount({ email: 'mv-other@test.com' });
     const cross = await app.inject({
       method: 'POST',
-      url: `/api/emails/${email2._id.toString()}/move`,
+      url: `/api/emails/${email3._id.toString()}/move`,
       headers: authHeaders(app, other._id.toString()),
       payload: { specialUse: 'archive' },
     });
     expect([403, 404]).toContain(cross.statusCode);
-    expect(await Email.findById(email2._id)).not.toBeNull();
+    expect(await Email.findById(email3._id)).not.toBeNull();
   });
 
   it('POST /api/emails/:id/move por folderId — mueve a una carpeta-etiqueta; folderId de otra cuenta → 404', async () => {

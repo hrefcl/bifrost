@@ -384,6 +384,10 @@ export default {
     users: {
       back: 'Volver a usuarios',
       profile: 'Perfil',
+      changePhoto: 'Cambiar foto',
+      removePhoto: 'Quitar foto',
+      photoType: 'Formato no soportado (usá PNG, JPG, WEBP o GIF).',
+      photoSize: 'La imagen supera 2 MB.',
       roleSection: 'Rol y permisos',
       adminRoleNote:
         'Este usuario es super administrador: tiene todos los permisos y no se le puede asignar un rol.',

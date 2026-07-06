@@ -3,6 +3,7 @@ import MailComposer from 'nodemailer/lib/mail-composer/index.js';
 import { createSmtpTransport } from './mail-transport.js';
 import type { IAccount } from '../models/Account.js';
 import type { IDraft } from '../models/Draft.js';
+import { User } from '../models/User.js';
 import { plainTextFromHtml } from '../lib/sanitizeHtml.js';
 import { providerForType } from './storage/index.js';
 
@@ -51,11 +52,18 @@ export async function sendDraft(
     const cc = draft.cc?.map((a) => a.address) ?? [];
     const bcc = draft.bcc?.map((a) => a.address) ?? [];
 
+    // Nombre visible del From = displayName del usuario (el que edita en su Perfil). Antes se usaba
+    // `account.name`, que al crear la cuenta quedó = el email → el correo salía como "admin@x <admin@x>".
+    // Fallback a account.name si el usuario no tiene nombre (no debería: displayName es required).
+    const user = await User.findById(account.userId).select('displayName').lean();
+    const dn = user?.displayName.trim();
+    const fromName = dn && dn.length > 0 ? dn : account.name;
+
     // OJO: el `bcc` NO va en las opciones del RAW — sólo en el envelope SMTP (entrega).
     // Si fuera al raw, MailComposer podría dejar una cabecera Bcc: y la copia a Sent
     // (APPEND del mismo raw) filtraría los destinatarios ocultos.
     const options: SendMailOptions = {
-      from: `${account.name} <${account.email}>`,
+      from: `${fromName} <${account.email}>`,
       to,
       cc: cc.length > 0 ? cc : undefined,
       subject: draft.subject,
