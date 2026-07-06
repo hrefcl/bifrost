@@ -36,6 +36,11 @@ export interface MailboxProvider {
   /** Construye la línea cruda `email|hash` para `password` (sin escribir). Para reescribir el hash
    *  guardado de un buzón suspendido. Lanza si el provider no puede crear buzones. */
   buildAccountLine(email: string, password: string): string;
+  /** Destino del catch-all (comodín `@dominio`) del sistema, o null si no hay. */
+  getCatchAll(): Promise<{ domain: string; target: string } | null>;
+  /** Configura el catch-all: escribe `@dominio → target` + un self-alias por cada buzón del dominio (para
+   *  que su correo NO caiga en el catch-all). `target=null` lo DESACTIVA. Preserva los alias de usuario. */
+  setCatchAll(target: string | null, mailboxes: string[]): Promise<void>;
 }
 
 /** El provider activo no puede crear buzones (providerType='none' o no configurado). */

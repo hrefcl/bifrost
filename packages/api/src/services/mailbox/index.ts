@@ -49,6 +49,12 @@ class NullMailboxProvider implements MailboxProvider {
   buildAccountLine(): string {
     throw new ProvisioningDisabledError();
   }
+  getCatchAll(): Promise<{ domain: string; target: string } | null> {
+    return Promise.resolve(null);
+  }
+  setCatchAll(): Promise<void> {
+    return Promise.reject(new ProvisioningDisabledError());
+  }
 }
 
 /** Provider de provisioning ACTIVO según la config del admin/seed. Nunca devuelve undefined. */

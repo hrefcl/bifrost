@@ -16,6 +16,11 @@ import {
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
 import { reconcileMailboxes, countServerMailboxes } from '../services/mailbox/reconcile.js';
 import {
+  getCatchAllConfig,
+  setCatchAllConfig,
+  CatchAllError,
+} from '../services/mailbox/catch-all.js';
+import {
   patchMailbox,
   getMailbox,
   resetMailboxPassword,
@@ -348,6 +353,39 @@ export default function adminRoutes(fastify: FastifyInstance) {
     async (request) => {
       const body = mailboxProvisioningSchema.parse(request.body);
       return setMailboxConfig(body, request.user.userId);
+    }
+  );
+
+  // ---- Catch-all ("cuenta receptora de todo"): el correo a direcciones inexistentes del dominio cae en
+  //      un buzón elegido, en vez de rebotar (protege reputación). Sólo modo nativo. Gated accounts.manage.
+  fastify.get('/config/catch-all', { config: { permission: 'accounts.manage' } }, async () => {
+    return getCatchAllConfig();
+  });
+  fastify.patch(
+    '/config/catch-all',
+    { config: { permission: 'accounts.manage' } },
+    async (request, reply) => {
+      const body = z
+        .object({
+          enabled: z.boolean(),
+          target: z.union([z.string().email(), z.null()]).optional(),
+        })
+        .strict()
+        .parse(request.body);
+      try {
+        return await setCatchAllConfig(body);
+      } catch (err) {
+        if (err instanceof CatchAllError) {
+          return reply
+            .code(400)
+            .send({ statusCode: 400, error: 'Bad Request', message: err.message });
+        }
+        return reply.code(502).send({
+          statusCode: 502,
+          error: 'Bad Gateway',
+          message: 'No se pudo aplicar el catch-all en el servidor de correo. Reintentá.',
+        });
+      }
     }
   );
 

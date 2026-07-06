@@ -219,11 +219,76 @@ export class DockerMailserverProvider implements MailboxProvider {
       const realMailboxes = new Set((await this.readLines()).map(emailOf).filter(Boolean));
       const realClash = clean.find((a) => a !== target && realMailboxes.has(a));
       if (realClash) throw new AliasConflictError(realClash);
-      // Conserva las líneas que NO apuntan a este email; agrega las nuevas.
-      const kept = rows.filter(
-        (l) => l.startsWith('#') || l.split(/\s+/)[1]?.toLowerCase() !== target
-      );
+      // Conserva las líneas que NO apuntan a este email; agrega las nuevas. NO toca las gestionadas por
+      // catch-all (comodín `@dominio` + self-aliases): aunque su destino sea este email (p.ej. el buzón
+      // receptor o el self-alias del propio email), las maneja setCatchAll — no deben perderse acá.
+      const kept = rows.filter((l) => {
+        if (l.startsWith('#')) return true;
+        const parts = l.split(/\s+/);
+        const [lhs, rhs] = parts;
+        if (!lhs || !rhs) return true;
+        if (DockerMailserverProvider.catchAllManaged(lhs, rhs)) return true;
+        return rhs.toLowerCase() !== target;
+      });
       const added = clean.map((a) => `${a} ${target}`);
+      const out = [...kept, ...added].join('\n') + '\n';
+      const tmp = `${this.virtualFile}.tmp-${String(process.pid)}`;
+      await fs.writeFile(tmp, out, { mode: 0o600 });
+      await fs.rename(tmp, this.virtualFile);
+    });
+  }
+
+  /** ¿Un alias es gestionado por el catch-all? Comodín (`@dominio…`) o self-alias (izq === der). Los
+   *  alias de usuario nunca son self-alias (setAliases los filtra), así que esto no colisiona con ellos. */
+  private static catchAllManaged(lhs: string, rhs: string): boolean {
+    return lhs.startsWith('@') || lhs.toLowerCase() === rhs.toLowerCase();
+  }
+
+  /** Destino del catch-all (`@dominio target`) del postfix-virtual.cf, o null. */
+  async getCatchAll(): Promise<{ domain: string; target: string } | null> {
+    for (const [alias, target] of await this.getAllAliases()) {
+      if (alias.startsWith('@')) return { domain: alias.slice(1), target };
+    }
+    return null;
+  }
+
+  /**
+   * Configura el catch-all del dominio en postfix-virtual.cf. En Postfix un comodín `@dominio` reescribe
+   * TODO el correo del dominio (¡incluidos los buzones reales!) salvo que exista un match más específico;
+   * por eso se escribe también un self-alias `mbx mbx` por cada buzón del dominio → su correo gana sobre el
+   * comodín y sólo lo NO-existente cae en `target`. `target=null` desactiva (quita comodín + self-aliases).
+   * PRESERVA los alias de usuario (izq≠der y que no empiezan con @). Escritura atómica bajo el mismo lock.
+   */
+  async setCatchAll(target: string | null, mailboxes: string[]): Promise<void> {
+    const t = target?.trim().toLowerCase() ?? '';
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (t && !EMAIL_RE.test(t)) throw new Error(`catch-all target inválido: ${t}`);
+    const domain = t ? t.split('@')[1] : null;
+    await this.withLock(async () => {
+      const content = await fs.readFile(this.virtualFile, 'utf8').catch((e: unknown) => {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
+        throw e;
+      });
+      // Conserva comentarios y alias de USUARIO; descarta las líneas gestionadas por catch-all (viejas).
+      const kept = content
+        .split('\n')
+        .map((l) => l.trim())
+        .filter(Boolean)
+        .filter((l) => {
+          if (l.startsWith('#')) return true;
+          const [lhs, rhs] = l.split(/\s+/);
+          if (!lhs || !rhs) return true;
+          return !DockerMailserverProvider.catchAllManaged(lhs, rhs);
+        });
+      const added: string[] = [];
+      if (t && domain) {
+        // self-aliases de los buzones del dominio (protegen su correo del comodín).
+        for (const mbx of mailboxes) {
+          const m = mbx.trim().toLowerCase();
+          if (m.endsWith(`@${domain}`)) added.push(`${m} ${m}`);
+        }
+        added.push(`@${domain} ${t}`); // el comodín (los específicos ganan por precedencia de Postfix).
+      }
       const out = [...kept, ...added].join('\n') + '\n';
       const tmp = `${this.virtualFile}.tmp-${String(process.pid)}`;
       await fs.writeFile(tmp, out, { mode: 0o600 });

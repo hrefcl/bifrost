@@ -6,6 +6,7 @@ import { Contact } from '../models/Contact.js';
 import { CalendarEvent } from '../models/CalendarEvent.js';
 import { User } from '../models/User.js';
 import { provisioningEnabled, getActiveMailboxProvider } from './mailbox/index.js';
+import { reapplyCatchAll } from './mailbox/catch-all.js';
 
 /** Falló la revocación del buzón REAL en el mailserver. El caller debe abortar (no borrar el registro). */
 export class MailboxRevokeError extends Error {
@@ -43,6 +44,9 @@ export async function deleteAccountCascade(account: {
     } catch (err) {
       throw new MailboxRevokeError(err);
     }
+    // Reaplicar el catch-all con la lista de buzones ya sin este (quita su self-alias; si ERA el receptor,
+    // el catch-all se apaga solo para no enviar a un buzón muerto). Best-effort: no aborta el borrado.
+    await reapplyCatchAll().catch(() => undefined);
   }
   await Account.deleteOne({ _id: account._id });
   await Promise.all([

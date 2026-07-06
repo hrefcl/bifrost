@@ -276,10 +276,45 @@ async function loadAccounts() {
     accounts.value = data.accounts;
     serverMailboxCount.value = data.serverMailboxCount;
     provisioning.value = data.provisioning ?? false;
+    if (provisioning.value) void loadCatchAll();
   } catch {
     accError.value = t('admin.accounts.errLoad');
   } finally {
     accLoading.value = false;
+  }
+}
+
+// ── Catch-all ("cuenta receptora de todo") ──
+const catchAll = ref<{ enabled: boolean; target: string | null }>({ enabled: false, target: null });
+const catchAllBusy = ref(false);
+const catchAllError = ref('');
+async function loadCatchAll() {
+  try {
+    const { data } = await api.get<{ enabled: boolean; target: string | null }>(
+      '/admin/config/catch-all'
+    );
+    catchAll.value = data;
+  } catch {
+    /* no bloquea la vista de cuentas */
+  }
+}
+async function saveCatchAll(enabled: boolean, target: string | null) {
+  catchAllBusy.value = true;
+  catchAllError.value = '';
+  try {
+    const { data } = await api.patch<{ enabled: boolean; target: string | null }>(
+      '/admin/config/catch-all',
+      { enabled, target }
+    );
+    catchAll.value = data;
+  } catch (err) {
+    catchAllError.value =
+      err instanceof AxiosError && err.response?.status === 400
+        ? ((err.response.data as { message?: string }).message ?? t('admin.catchAll.err'))
+        : t('admin.catchAll.err');
+    await loadCatchAll(); // re-vincula el estado real tras el fallo
+  } finally {
+    catchAllBusy.value = false;
   }
 }
 
@@ -1580,6 +1615,44 @@ async function save() {
                 </button>
               </div>
 
+              <!-- Catch-all: cuenta receptora de todo lo no-existente del dominio (sólo modo nativo). -->
+              <div v-if="provisioning" class="card catchall-card">
+                <div class="catchall-head">
+                  <div class="catchall-text">
+                    <strong>{{ t('admin.catchAll.title') }}</strong>
+                    <span class="muted">{{ t('admin.catchAll.desc') }}</span>
+                  </div>
+                  <label class="switch">
+                    <input
+                      type="checkbox"
+                      :checked="catchAll.enabled"
+                      :disabled="catchAllBusy || (!catchAll.enabled && accounts.length === 0)"
+                      @change="
+                        saveCatchAll(
+                          ($event.target as HTMLInputElement).checked,
+                          catchAll.target ?? accounts[0]?.email ?? null
+                        )
+                      "
+                    />
+                    <span class="switch-slider" />
+                  </label>
+                </div>
+                <div v-if="catchAll.enabled" class="catchall-target">
+                  <span>{{ t('admin.catchAll.target') }}</span>
+                  <select
+                    class="adminput"
+                    :value="catchAll.target ?? ''"
+                    :disabled="catchAllBusy"
+                    @change="saveCatchAll(true, ($event.target as HTMLSelectElement).value)"
+                  >
+                    <option v-for="a in accounts" :key="a.id" :value="a.email">
+                      {{ a.email }}
+                    </option>
+                  </select>
+                </div>
+                <p v-if="catchAllError" class="err-text">{{ catchAllError }}</p>
+              </div>
+
               <div class="card users-card">
                 <p v-if="accLoading" class="muted">{{ t('common.loading') }}</p>
                 <p v-else-if="accError" class="err-text">{{ accError }}</p>
@@ -2842,6 +2915,79 @@ async function save() {
 }
 .create-card {
   margin-bottom: 16px;
+}
+.catchall-card {
+  margin-bottom: 16px;
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.catchall-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.catchall-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.catchall-text .muted {
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.catchall-target {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.catchall-target select {
+  max-width: 320px;
+}
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 42px;
+  height: 24px;
+  flex-shrink: 0;
+}
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.switch-slider {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+.switch-slider::before {
+  content: '';
+  position: absolute;
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  top: 3px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.15s;
+}
+.switch input:checked + .switch-slider {
+  background: var(--accent);
+}
+.switch input:checked + .switch-slider::before {
+  transform: translateX(18px);
+}
+.switch input:disabled + .switch-slider {
+  opacity: 0.5;
+  cursor: default;
 }
 .user-table {
   display: flex;

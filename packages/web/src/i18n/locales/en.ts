@@ -268,6 +268,12 @@ export default {
   },
   admin: {
     title: 'Administration',
+    catchAll: {
+      title: 'Catch-all account',
+      desc: 'Mail sent to addresses that do not exist in the domain (e.g. juanito@) lands in this account instead of bouncing. Real mailboxes keep receiving their own mail normally.',
+      target: 'Delivers to',
+      err: 'Could not change the catch-all',
+    },
     step: 'Step 1 of 1 — Attachment storage',
     question: 'Where are attachments stored?',
     questionDesc:
