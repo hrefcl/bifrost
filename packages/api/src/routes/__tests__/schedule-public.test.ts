@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 import {
   setupTestDb,
@@ -22,8 +22,14 @@ describe('Fase 3.4 — rutas públicas de agenda', () => {
     await setupTestDb();
     app = await buildTestApp();
     await Promise.all([Booking.syncIndexes(), EventType.syncIndexes()]);
+    // Reloj FIJO a medianoche del día de prueba (sólo Date, no timers): el motor de slots excluye los
+    // huecos pasados respecto de `now`; sin congelar, este test fallaba cuando la fecha del entorno
+    // coincidía con la hardcodeada (2026-07-06) y el reloj real ya había pasado el primer hueco (14:00Z).
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-07-06T00:00:00.000Z'));
   });
   afterAll(async () => {
+    vi.useRealTimers();
     await app.close();
     await teardownTestDb();
   });
