@@ -1,8 +1,10 @@
 import {
   Route53Client,
   ListHostedZonesCommand,
+  ListResourceRecordSetsCommand,
   ChangeResourceRecordSetsCommand,
   type Change,
+  type RRType,
 } from '@aws-sdk/client-route-53';
 
 export interface HostedZone {
@@ -30,6 +32,45 @@ export async function listPublicHostedZones(r53: Route53Client): Promise<HostedZ
     marker = res.IsTruncated ? res.NextMarker : undefined;
   } while (marker);
   return zones;
+}
+
+/** Un ResourceRecordSet EXISTENTE en la zona, en su forma mínima (name FQDN minúsculas, type). */
+export interface ExistingRecord {
+  name: string;
+  type: string;
+}
+
+/**
+ * Lista los ResourceRecordSets EXISTENTES de una zona (paginado completo). Sólo (name,type) — es lo único
+ * que necesita el pre-flight de DNS para detectar choques con los registros que va a crear el stack. El
+ * paginado usa el cursor compuesto (NextRecordName, NextRecordType) que exige Route53. name en minúsculas.
+ */
+export async function listResourceRecordSets(
+  r53: Route53Client,
+  hostedZoneId: string
+): Promise<ExistingRecord[]> {
+  const out: ExistingRecord[] = [];
+  let startName: string | undefined;
+  let startType: RRType | undefined;
+  for (;;) {
+    const res = await r53.send(
+      new ListResourceRecordSetsCommand({
+        HostedZoneId: hostedZoneId,
+        StartRecordName: startName,
+        StartRecordType: startType,
+      })
+    );
+    for (const rr of res.ResourceRecordSets ?? []) {
+      if (rr.Name && rr.Type) out.push({ name: rr.Name.toLowerCase(), type: rr.Type });
+    }
+    if (res.IsTruncated && res.NextRecordName) {
+      startName = res.NextRecordName;
+      startType = res.NextRecordType;
+    } else {
+      break;
+    }
+  }
+  return out;
 }
 
 export interface HostedZoneMatch {
