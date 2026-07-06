@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { Contact, serializeContact } from '../models/Contact.js';
+import { parseContacts } from '../lib/contact-import.js';
 
 const objectIdSchema = z.string().regex(/^[a-f0-9]{24}$/i);
 
@@ -48,6 +49,65 @@ export default function contactRoutes(fastify: FastifyInstance) {
       source: 'local',
     });
     return serializeContact(contact);
+  });
+
+  // Importar contactos desde vCard (.vcf) o CSV (iPhone/Google/Outlook). El cliente lee el archivo y manda
+  // el texto; auto-detectamos el formato. Bulk con DEDUP por email primario (no duplica los ya existentes).
+  const importSchema = z.object({
+    content: z
+      .string()
+      .min(1)
+      .max(10 * 1024 * 1024), // hasta 10 MB de texto
+    format: z.enum(['vcard', 'csv']).optional(),
+  });
+  fastify.post('/import', async (request, reply) => {
+    const { content, format } = importSchema.parse(request.body);
+    let parsed;
+    try {
+      parsed = parseContacts(content, format);
+    } catch {
+      return reply
+        .code(400)
+        .send({ statusCode: 400, error: 'Bad Request', message: 'No se pudo parsear el archivo.' });
+    }
+    // Sólo importables los que tengan email válido (clave de dedup + de identidad del contacto).
+    const usable = parsed.filter((c) => c.email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email));
+    const total = parsed.length;
+    if (usable.length === 0) return { total, imported: 0, skipped: total };
+
+    // Emails ya existentes del usuario → no duplicar. Un solo query.
+    const wanted = [...new Set(usable.map((c) => c.email.toLowerCase()))];
+    const existing = new Set(
+      (
+        await Contact.find({ userId: request.user.userId, email: { $in: wanted } })
+          .select('email')
+          .lean()
+      ).map((c) => c.email.toLowerCase())
+    );
+    const seen = new Set(existing);
+    const toCreate = usable
+      .filter((c) => {
+        const key = c.email.toLowerCase();
+        if (seen.has(key)) return false; // ya existe o repetido en el archivo
+        seen.add(key);
+        return true;
+      })
+      .map((c) => ({
+        userId: request.user.userId,
+        fullName: c.fullName,
+        sortName: c.fullName.toLowerCase(),
+        email: c.email.toLowerCase(),
+        emails: c.emails,
+        phones: c.phones,
+        organization: c.organization,
+        jobTitle: c.jobTitle,
+        notes: c.notes,
+        isFrequent: false,
+        usageCount: 0,
+        source: 'imported' as const,
+      }));
+    if (toCreate.length > 0) await Contact.insertMany(toCreate, { ordered: false });
+    return { total, imported: toCreate.length, skipped: total - toCreate.length };
   });
 
   fastify.get('/:contactId', async (request, reply) => {

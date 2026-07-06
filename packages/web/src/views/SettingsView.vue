@@ -13,9 +13,10 @@ const settings = useSettingsStore();
 const auth = useAuthStore();
 const { t, locale } = useI18n();
 
-type Section = 'appearance' | 'signature' | 'security';
-const section = ref<Section>('appearance');
+type Section = 'profile' | 'appearance' | 'signature' | 'security';
+const section = ref<Section>('profile');
 const NAV: { id: Section; icon: IconName }[] = [
+  { id: 'profile', icon: 'user' },
   { id: 'appearance', icon: 'sun' },
   { id: 'signature', icon: 'pencil' },
   { id: 'security', icon: 'shield' },
@@ -104,7 +105,7 @@ const selectedTemplate = ref('');
 const includePhoto = ref(true);
 const previewHtml = ref('');
 const previewLoading = ref(false);
-const prof = ref({ jobTitle: '', department: '', phone: '' });
+const prof = ref({ displayName: '', jobTitle: '', department: '', phone: '' });
 const photoUrl = ref<string | null>(null);
 const profSaving = ref(false);
 
@@ -122,6 +123,7 @@ async function loadSigOptions() {
     selectedTemplate.value = data.policy.lockTemplate ? firstId : (chosen ?? firstId);
     includePhoto.value = cur?.includePhoto ?? true;
     prof.value = {
+      displayName: auth.user?.displayName ?? '',
       jobTitle: auth.user?.jobTitle ?? '',
       department: auth.user?.department ?? '',
       phone: auth.user?.phone ?? '',
@@ -187,15 +189,19 @@ async function saveProfile() {
   saved.value = false;
   try {
     const { data } = await api.patch<{
+      displayName?: string;
       jobTitle?: string;
       department?: string;
       phone?: string;
     }>('/auth/me/profile', {
+      // El nombre es required: sólo se manda si no está vacío (evita 400 y no lo borra sin querer).
+      ...(prof.value.displayName.trim() ? { displayName: prof.value.displayName.trim() } : {}),
       jobTitle: prof.value.jobTitle,
       department: prof.value.department,
       phone: prof.value.phone,
     });
     if (auth.user) {
+      if (data.displayName) auth.user.displayName = data.displayName;
       auth.user.jobTitle = data.jobTitle;
       auth.user.department = data.department;
       auth.user.phone = data.phone;
@@ -276,6 +282,58 @@ onMounted(() => {
 
       <!-- Contenido -->
       <div class="settings-content">
+        <!-- Perfil -->
+        <template v-if="section === 'profile'">
+          <h2 class="section-h">{{ t('settings.profile.title') }}</h2>
+          <p class="section-desc">{{ t('settings.profile.desc') }}</p>
+
+          <div class="prof-card">
+            <!-- Foto de perfil (la MISMA que se usa en la firma) -->
+            <div class="prof-photo">
+              <span class="photo-prev lg" :class="{ empty: !photoUrl }">
+                <img v-if="photoUrl" :src="photoUrl" alt="foto" />
+                <AppIcon v-else name="user" :size="34" />
+              </span>
+              <div class="prof-photo-actions">
+                <label class="ghost-btn file-btn">
+                  {{ t('settings.signature.pickPhoto') }}
+                  <input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp,image/gif"
+                    hidden
+                    @change="onPhotoPick"
+                  />
+                </label>
+                <button v-if="photoUrl" class="link-btn" @click="clearPhoto">
+                  {{ t('settings.signature.removePhoto') }}
+                </button>
+                <p class="hint">{{ t('settings.profile.photoHint') }}</p>
+              </div>
+            </div>
+
+            <label class="fld"
+              ><span>{{ t('settings.profile.name') }}</span
+              ><input
+                v-model="prof.displayName"
+                class="inp"
+                maxlength="120"
+                :placeholder="t('settings.profile.namePh')"
+            /></label>
+
+            <div class="actions">
+              <button
+                class="btn-primary"
+                :disabled="profSaving || !prof.displayName.trim()"
+                @click="saveProfile"
+              >
+                {{ profSaving ? t('settings.signature.saving') : t('settings.profile.save') }}
+              </button>
+              <span v-if="saved" class="ok-text">{{ t('settings.profile.saved') }}</span>
+              <span v-if="error" class="err-text">{{ error }}</span>
+            </div>
+          </div>
+        </template>
+
         <!-- Apariencia -->
         <template v-if="section === 'appearance'">
           <h2 class="section-h">{{ t('settings.appearance') }}</h2>
@@ -806,6 +864,41 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+.photo-prev.lg {
+  width: 84px;
+  height: 84px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-3);
+}
+.prof-card {
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.prof-photo {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.prof-photo-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+.prof-photo-actions .hint {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.ok-text {
+  color: var(--green);
+  font-size: 13px;
+  font-weight: 600;
 }
 .ghost-btn {
   padding: 7px 14px;

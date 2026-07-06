@@ -43,6 +43,8 @@ const preferencesPatchSchema = z
 // EXTERNALIZA a URL interna (`storeDataImage`) — nunca se acepta una URL remota (review H2).
 const profilePatchSchema = z
   .object({
+    // El usuario edita su propio nombre visible. `min(1)`: es `required` en el modelo → nunca se vacía.
+    displayName: z.string().trim().min(1).max(120).optional(),
     jobTitle: z.string().trim().max(120).optional(),
     department: z.string().trim().max(120).optional(),
     phone: z.string().trim().max(40).optional(),
@@ -261,6 +263,9 @@ export default function authRoutes(fastify: FastifyInstance) {
       if (t) set[key] = t;
       else unset[key] = '';
     };
+    // displayName es `required`: sólo se ACTUALIZA si viene con contenido; nunca se `unset` (no puede quedar vacío).
+    const dn = body.displayName?.trim();
+    if (dn) set.displayName = dn;
     text(body.jobTitle, 'jobTitle');
     text(body.department, 'department');
     text(body.phone, 'phone');
@@ -287,6 +292,7 @@ export default function authRoutes(fastify: FastifyInstance) {
         .send({ statusCode: 404, error: 'Not Found', message: 'User not found' });
     }
     return {
+      displayName: user.displayName,
       jobTitle: user.jobTitle,
       department: user.department,
       phone: user.phone,
