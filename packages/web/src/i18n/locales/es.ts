@@ -512,6 +512,15 @@ export default {
         'Se verifican las credenciales IMAP reales antes de crear la cuenta. Si son incorrectas, no se crea.',
       nativeHint:
         'El buzón se crea en el servidor de correo propio. No hace falta configurar IMAP/SMTP.',
+      aliasesTitle: 'Alias',
+      aliasesHint:
+        'Direcciones adicionales que entregan el correo a este buzón. No sirven para iniciar sesión ni enviar.',
+      aliasAddPh: 'agregar alias y Enter',
+      aliasSave: 'Guardar alias',
+      aliasSaving: 'Guardando…',
+      aliasRemove: 'Quitar alias',
+      aliasInvalid: 'Alias inválido: debe ser un email.',
+      aliasErr: 'No se pudieron guardar los alias.',
       create: 'Crear cuenta',
       creating: 'Creando…',
       colEmail: 'Cuenta',
