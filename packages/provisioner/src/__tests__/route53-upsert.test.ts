@@ -51,3 +51,38 @@ describe('upsertRecords', () => {
     expect(r53.commandCalls(ChangeResourceRecordSetsCommand)).toHaveLength(0);
   });
 });
+
+describe('listResourceRecordSets (paginado)', () => {
+  it('junta los records de todas las páginas y normaliza el name a minúsculas', async () => {
+    const { Route53Client, ListResourceRecordSetsCommand } =
+      await import('@aws-sdk/client-route-53');
+    const { listResourceRecordSets } = await import('../aws/route53.js');
+    const { mockClient } = await import('aws-sdk-client-mock');
+    const r53 = mockClient(Route53Client);
+    r53
+      .on(ListResourceRecordSetsCommand)
+      .resolvesOnce({
+        ResourceRecordSets: [
+          { Name: 'Acme.com.', Type: 'MX' },
+          { Name: 'acme.com.', Type: 'TXT' },
+        ],
+        IsTruncated: true,
+        NextRecordName: 'mail.acme.com.',
+        NextRecordType: 'A',
+      })
+      .resolvesOnce({
+        ResourceRecordSets: [{ Name: 'mail.acme.com.', Type: 'A' }],
+        IsTruncated: false,
+      });
+    const recs = await listResourceRecordSets(new Route53Client({ region: 'us-east-1' }), 'Z1');
+    expect(recs).toEqual([
+      { name: 'acme.com.', type: 'MX' },
+      { name: 'acme.com.', type: 'TXT' },
+      { name: 'mail.acme.com.', type: 'A' },
+    ]);
+    // El cursor compuesto de la 2ª página se pasó bien.
+    const call2 = r53.commandCalls(ListResourceRecordSetsCommand)[1].args[0].input;
+    expect(call2.StartRecordName).toBe('mail.acme.com.');
+    expect(call2.StartRecordType).toBe('A');
+  });
+});
