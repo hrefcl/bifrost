@@ -524,16 +524,22 @@ const aliasList = ref<string[]>([]);
 const aliasInput = ref('');
 const aliasBusy = ref(false);
 const aliasError = ref('');
+// `aliasLoaded`=false hasta que el GET traiga los alias OK. Guardar queda BLOQUEADO hasta entonces: si el
+// GET falla (blip de red) los chips quedan vacíos, y sin este gate un "Guardar" mandaría [] y BORRARÍA los
+// alias existentes (pérdida de datos). Con el gate, un fallo de carga se ve y no se puede pisar sin querer.
+const aliasLoaded = ref(false);
 async function loadAliases(id: string) {
   aliasList.value = [];
   aliasError.value = '';
   aliasInput.value = '';
+  aliasLoaded.value = false;
   if (!provisioning.value) return;
   try {
     const { data } = await api.get<{ aliases: string[] }>(`/admin/accounts/${id}/aliases`);
     aliasList.value = data.aliases;
+    aliasLoaded.value = true;
   } catch {
-    /* silencioso: si falla, queda vacío (se puede reintentar reabriendo la ficha) */
+    aliasError.value = t('admin.accounts.aliasLoadErr'); // no se marca `loaded` → Guardar bloqueado
   }
 }
 function addAliasChip() {
@@ -1333,7 +1339,11 @@ async function save() {
                     </div>
                     <p v-if="aliasError" class="err-text">{{ aliasError }}</p>
                     <div class="actions">
-                      <button class="btn-primary" :disabled="aliasBusy" @click="saveAliases">
+                      <button
+                        class="btn-primary"
+                        :disabled="aliasBusy || !aliasLoaded"
+                        @click="saveAliases"
+                      >
                         {{
                           aliasBusy
                             ? t('admin.accounts.aliasSaving')

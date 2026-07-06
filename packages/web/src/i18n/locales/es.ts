@@ -521,6 +521,7 @@ export default {
       aliasRemove: 'Quitar alias',
       aliasInvalid: 'Alias inválido: debe ser un email.',
       aliasErr: 'No se pudieron guardar los alias.',
+      aliasLoadErr: 'No se pudieron cargar los alias. Reabrí la ficha para reintentar.',
       create: 'Crear cuenta',
       creating: 'Creando…',
       colEmail: 'Cuenta',

@@ -518,6 +518,7 @@ export default {
       aliasRemove: 'Remove alias',
       aliasInvalid: 'Invalid alias: must be an email.',
       aliasErr: 'Could not save aliases.',
+      aliasLoadErr: 'Could not load aliases. Reopen the account to retry.',
       create: 'Create account',
       creating: 'Creating…',
       colEmail: 'Account',
