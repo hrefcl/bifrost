@@ -401,3 +401,62 @@ describe('admin: alias de buzón (delivery-only, F-alias A1)', () => {
     expect(put.statusCode).toBe(409);
   });
 });
+
+describe('admin: catch-all (cuenta receptora de todo)', () => {
+  const virtualFile = (): string => path.join(dir, 'postfix-virtual.cf');
+
+  it('activar escribe el comodín + self-aliases; target inexistente → 400; desactivar limpia', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email: 'admin@cleverty.info', password: 'x' },
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email: 'ana@cleverty.info', password: 'x' },
+    });
+
+    // target que no es buzón → 400
+    const bad = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/catch-all',
+      headers,
+      payload: { enabled: true, target: 'nadie@cleverty.info' },
+    });
+    expect(bad.statusCode).toBe(400);
+
+    // activar con receptor real → comodín + self-aliases de AMBOS buzones
+    const on = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/catch-all',
+      headers,
+      payload: { enabled: true, target: 'admin@cleverty.info' },
+    });
+    expect(on.statusCode).toBe(200);
+    const lines = (await fs.readFile(virtualFile(), 'utf8')).trim().split('\n');
+    expect(lines).toContain('@cleverty.info admin@cleverty.info');
+    expect(lines).toContain('admin@cleverty.info admin@cleverty.info');
+    expect(lines).toContain('ana@cleverty.info ana@cleverty.info');
+
+    // GET refleja el estado
+    const get = await app.inject({ method: 'GET', url: '/api/admin/config/catch-all', headers });
+    expect(get.json()).toEqual({ enabled: true, target: 'admin@cleverty.info' });
+
+    // desactivar → sin comodín ni self-aliases
+    const off = await app.inject({
+      method: 'PATCH',
+      url: '/api/admin/config/catch-all',
+      headers,
+      payload: { enabled: false },
+    });
+    expect(off.statusCode).toBe(200);
+    const after = (await fs.readFile(virtualFile(), 'utf8')).trim().split('\n').filter(Boolean);
+    expect(after).not.toContain('@cleverty.info admin@cleverty.info');
+    expect(after).not.toContain('ana@cleverty.info ana@cleverty.info');
+  });
+});

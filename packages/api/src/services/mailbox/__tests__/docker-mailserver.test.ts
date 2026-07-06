@@ -145,3 +145,56 @@ describe('setAliases — hardening (review MED-2/LOW-1)', () => {
     expect(await p.getAliases('ana@x.com')).toEqual(['ok@x.com']);
   });
 });
+
+describe('setCatchAll — catch-all seguro (comodín + self-aliases)', () => {
+  async function virtual(): Promise<string> {
+    return fs.readFile(path.join(dir, 'postfix-virtual.cf'), 'utf8');
+  }
+
+  it('escribe @dominio + self-aliases de los buzones del dominio y preserva alias de usuario', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await p.createMailbox('ana@x.com', 'pw');
+    await p.createMailbox('beto@x.com', 'pw');
+    await p.setAliases('ana@x.com', ['info@x.com']); // alias de usuario: info@ → ana@
+
+    await p.setCatchAll('ana@x.com', ['ana@x.com', 'beto@x.com', 'otro@y.com']);
+    const v = await virtual();
+    expect(v).toContain('@x.com ana@x.com'); // comodín
+    expect(v).toContain('ana@x.com ana@x.com'); // self-alias receptor
+    expect(v).toContain('beto@x.com beto@x.com'); // self-alias del otro buzón
+    expect(v).not.toContain('otro@y.com otro@y.com'); // dominio distinto → NO self-alias
+    expect(v).toContain('info@x.com ana@x.com'); // alias de USUARIO preservado
+    expect(await p.getCatchAll()).toEqual({ domain: 'x.com', target: 'ana@x.com' });
+  });
+
+  it('setAliases NO borra el catch-all aunque toque el buzón receptor', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await p.createMailbox('ana@x.com', 'pw');
+    await p.setCatchAll('ana@x.com', ['ana@x.com']);
+    // Cambiar los alias de ana (el receptor) NO debe borrar el comodín ni su self-alias.
+    await p.setAliases('ana@x.com', ['ventas@x.com']);
+    const v = await virtual();
+    expect(v).toContain('@x.com ana@x.com'); // comodín intacto
+    expect(v).toContain('ana@x.com ana@x.com'); // self-alias intacto
+    expect(v).toContain('ventas@x.com ana@x.com'); // nuevo alias de usuario
+    expect(await p.getCatchAll()).not.toBeNull();
+  });
+
+  it('desactivar quita comodín + self-aliases pero conserva los alias de usuario', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await p.createMailbox('ana@x.com', 'pw');
+    await p.setAliases('ana@x.com', ['info@x.com']);
+    await p.setCatchAll('ana@x.com', ['ana@x.com']);
+    await p.setCatchAll(null, ['ana@x.com']);
+    const lines = (await virtual()).trim().split('\n'); // por LÍNEA (evita colisión de substring)
+    expect(lines).not.toContain('@x.com ana@x.com'); // sin comodín
+    expect(lines).not.toContain('ana@x.com ana@x.com'); // sin self-alias
+    expect(lines).toContain('info@x.com ana@x.com'); // alias de usuario conservado
+    expect(await p.getCatchAll()).toBeNull();
+  });
+
+  it('target inválido lanza', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await expect(p.setCatchAll('no-es-email', ['a@x.com'])).rejects.toThrow(/inválido/);
+  });
+});

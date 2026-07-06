@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { loginOrRegister, type LoginInput } from '../auth.js';
+import { reapplyCatchAll } from './catch-all.js';
 import { getActiveMailboxProvider } from './index.js';
 import { ProvisioningDisabledError } from './types.js';
 
@@ -101,6 +102,9 @@ export async function provisionMailboxAccount(
           { ...transport, password, displayName: input.displayName },
           { allowAdminBootstrap: false }
         );
+        // Si el catch-all está activo, el buzón nuevo necesita su self-alias para NO caer en el comodín
+        // (recibir su propio correo). Best-effort: no falla el alta si la reaplicación falla.
+        await reapplyCatchAll().catch(() => undefined);
         return {
           user: res.user,
           account: res.account,
