@@ -28,23 +28,29 @@ test('contactos: crear y eliminar (CRUD real vía UI)', async ({ page }) => {
   await expect(page.getByRole('heading', { name: 'Contacts' })).toBeVisible({ timeout: 15_000 });
 
   await page.getByRole('button', { name: 'New contact' }).click();
-  await page.fill('input[placeholder="Full name"]', 'Elena Ruiz');
-  await page.fill('input[placeholder="Email"]', 'elena.ruiz@bifrost.io');
-  await page.fill('input[placeholder="Organization"]', 'Bifrost');
+  // Editor rico (modal): nombre, primer email y organización.
+  const modal = page.locator('.modal');
+  await expect(modal).toBeVisible();
+  await modal.locator('input[placeholder="Full name"]').fill('Elena Ruiz');
+  await modal.locator('input[placeholder="Email"]').first().fill('elena.ruiz@bifrost.io');
+  await modal.locator('input[placeholder="Organization"]').fill('Bifrost');
 
   const created = page.waitForResponse(
     (r) =>
       r.url().endsWith('/api/contacts') && r.request().method() === 'POST' && r.status() === 200
   );
-  await page.getByRole('button', { name: 'Save', exact: true }).click();
+  await modal.getByRole('button', { name: 'Save', exact: true }).click();
   await created;
 
   // El contacto aparece en la lista (cableado real al store + API).
   await expect(page.getByText('Elena Ruiz')).toBeVisible({ timeout: 15_000 });
   await expect(page.getByText('elena.ruiz@bifrost.io', { exact: false })).toBeVisible();
 
-  // Eliminar lo saca de la lista.
-  await page.getByRole('button', { name: 'Delete' }).click();
+  // Eliminar: abrir la ficha → botón Eliminar del modal (confirm() → aceptar) → sale de la lista.
+  page.once('dialog', (d) => void d.accept());
+  await page.getByText('Elena Ruiz').click();
+  await expect(page.locator('.modal')).toBeVisible();
+  await page.locator('.modal').getByRole('button', { name: 'Delete' }).click();
   await expect(page.getByText('Elena Ruiz')).toHaveCount(0);
 });
 

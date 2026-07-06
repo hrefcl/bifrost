@@ -249,7 +249,11 @@ onMounted(() => {
           <div class="modal-body">
             <label class="fld"
               ><span>{{ t('contacts.fullName') }}</span
-              ><input v-model="form.fullName" class="field" maxlength="200"
+              ><input
+                v-model="form.fullName"
+                class="field"
+                maxlength="200"
+                :placeholder="t('contacts.fullName')"
             /></label>
 
             <!-- Emails (varios, etiquetados) -->
@@ -294,7 +298,11 @@ onMounted(() => {
             <div class="grid2">
               <label class="fld"
                 ><span>{{ t('contacts.organization') }}</span
-                ><input v-model="form.organization" class="field" maxlength="200"
+                ><input
+                  v-model="form.organization"
+                  class="field"
+                  maxlength="200"
+                  :placeholder="t('contacts.organization')"
               /></label>
               <label class="fld"
                 ><span>{{ t('contacts.jobTitle') }}</span
