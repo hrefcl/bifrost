@@ -183,7 +183,17 @@ export class DockerMailserverProvider implements MailboxProvider {
   /** Reemplaza el set de aliases que apuntan a `email` en postfix-virtual.cf (escritura atómica). */
   async setAliases(email: string, aliases: string[]): Promise<void> {
     const target = email.trim().toLowerCase();
-    const clean = [...new Set(aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+    // Última barrera antes de escribir el virtual.cf (defensa en profundidad — review MED-2/LOW-1):
+    //  - se descarta el AUTO-alias (target→target, no-op) → paridad admin/máquina (el PUT del admin ya lo
+    //    veta con 400; la API máquina no, y sin esto escribiría una línea `self self` inútil).
+    //  - se VALIDA el formato acá, no sólo en los callers, para que ningún caller futuro pueda inyectar una
+    //    línea con espacios/saltos en el archivo (cada alias es UNA línea `alias target`).
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const clean = [...new Set(aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))].filter(
+      (a) => a !== target
+    );
+    const malformed = clean.find((a) => !EMAIL_RE.test(a));
+    if (malformed) throw new Error(`alias con formato inválido: ${malformed}`);
     await this.withLock(async () => {
       const content = await fs.readFile(this.virtualFile, 'utf8').catch((e: unknown) => {
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
