@@ -40,6 +40,9 @@ class NullMailboxProvider implements MailboxProvider {
   getAliases(): Promise<string[]> {
     return Promise.resolve([]);
   }
+  getAllAliases(): Promise<Map<string, string>> {
+    return Promise.resolve(new Map<string, string>());
+  }
   setAliases(): Promise<void> {
     return Promise.reject(new ProvisioningDisabledError());
   }

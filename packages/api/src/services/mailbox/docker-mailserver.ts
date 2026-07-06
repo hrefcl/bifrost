@@ -72,6 +72,9 @@ export class DockerMailserverProvider implements MailboxProvider {
     await this.withLock(async () => {
       const lines = await this.readLines();
       if (lines.some((l) => emailOf(l) === target)) throw new MailboxExistsError(target);
+      // Atómico (bajo el MISMO lock que setAliases): el email no puede ser YA un alias de otro buzón
+      // (colisión dirección real ↔ alias). Cierra el race create-vs-setAliases (review B).
+      if ((await this.getAllAliases()).has(target)) throw new AliasConflictError(target);
       lines.push(line);
       await this.writeLines(lines);
     });
@@ -161,10 +164,36 @@ export class DockerMailserverProvider implements MailboxProvider {
       .map((p) => p[0].toLowerCase());
   }
 
+  /** Todos los aliases como mapa `alias → destino` (una sola lectura del postfix-virtual.cf). */
+  async getAllAliases(): Promise<Map<string, string>> {
+    const content = await fs.readFile(this.virtualFile, 'utf8').catch((e: unknown) => {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
+      throw e;
+    });
+    const map = new Map<string, string>();
+    for (const line of content.split('\n')) {
+      const l = line.trim();
+      if (!l || l.startsWith('#')) continue;
+      const [alias, target] = l.split(/\s+/);
+      if (alias && target) map.set(alias.toLowerCase(), target.toLowerCase());
+    }
+    return map;
+  }
+
   /** Reemplaza el set de aliases que apuntan a `email` en postfix-virtual.cf (escritura atómica). */
   async setAliases(email: string, aliases: string[]): Promise<void> {
     const target = email.trim().toLowerCase();
-    const clean = [...new Set(aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))];
+    // Última barrera antes de escribir el virtual.cf (defensa en profundidad — review MED-2/LOW-1):
+    //  - se descarta el AUTO-alias (target→target, no-op) → paridad admin/máquina (el PUT del admin ya lo
+    //    veta con 400; la API máquina no, y sin esto escribiría una línea `self self` inútil).
+    //  - se VALIDA el formato acá, no sólo en los callers, para que ningún caller futuro pueda inyectar una
+    //    línea con espacios/saltos en el archivo (cada alias es UNA línea `alias target`).
+    const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    const clean = [...new Set(aliases.map((a) => a.trim().toLowerCase()).filter(Boolean))].filter(
+      (a) => a !== target
+    );
+    const malformed = clean.find((a) => !EMAIL_RE.test(a));
+    if (malformed) throw new Error(`alias con formato inválido: ${malformed}`);
     await this.withLock(async () => {
       const content = await fs.readFile(this.virtualFile, 'utf8').catch((e: unknown) => {
         if ((e as NodeJS.ErrnoException).code === 'ENOENT') return '';
@@ -184,6 +213,12 @@ export class DockerMailserverProvider implements MailboxProvider {
       );
       const conflict = clean.find((a) => ownedByOthers.has(a));
       if (conflict) throw new AliasConflictError(conflict);
+      // Un alias tampoco puede ser una dirección REAL de OTRO buzón (línea en accounts.cf). Autoritativo
+      // contra el archivo real (no Mongo, que puede estar desincronizado con buzones importados) y atómico
+      // bajo el mismo lock (review B). El propio `target` se excluye (la ruta ya veta alias==dirección propia).
+      const realMailboxes = new Set((await this.readLines()).map(emailOf).filter(Boolean));
+      const realClash = clean.find((a) => a !== target && realMailboxes.has(a));
+      if (realClash) throw new AliasConflictError(realClash);
       // Conserva las líneas que NO apuntan a este email; agrega las nuevas.
       const kept = rows.filter(
         (l) => l.startsWith('#') || l.split(/\s+/)[1]?.toLowerCase() !== target

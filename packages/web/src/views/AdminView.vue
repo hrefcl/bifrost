@@ -493,6 +493,7 @@ function openUser(a: AdminAccount) {
   showPwReset.value = false;
   pwResult.value = '';
   pwError.value = '';
+  void loadAliases(a.id);
 }
 function closeUser() {
   selectedUser.value = null;
@@ -515,6 +516,66 @@ async function saveProfile() {
     accError.value = t('admin.accounts.errSave');
   } finally {
     rowBusy.value = null;
+  }
+}
+
+// ── Alias del buzón (delivery-only; sólo modo nativo) ──
+const aliasList = ref<string[]>([]);
+const aliasInput = ref('');
+const aliasBusy = ref(false);
+const aliasError = ref('');
+// `aliasLoaded`=false hasta que el GET traiga los alias OK. Guardar queda BLOQUEADO hasta entonces: si el
+// GET falla (blip de red) los chips quedan vacíos, y sin este gate un "Guardar" mandaría [] y BORRARÍA los
+// alias existentes (pérdida de datos). Con el gate, un fallo de carga se ve y no se puede pisar sin querer.
+const aliasLoaded = ref(false);
+async function loadAliases(id: string) {
+  aliasList.value = [];
+  aliasError.value = '';
+  aliasInput.value = '';
+  aliasLoaded.value = false;
+  if (!provisioning.value) return;
+  try {
+    const { data } = await api.get<{ aliases: string[] }>(`/admin/accounts/${id}/aliases`);
+    // Guard anti-respuesta-vieja (review B): si el admin ya abrió OTRA ficha mientras esta petición
+    // volaba, NO pisar aliasList con datos de la cuenta anterior (un Guardar posterior borraría los del
+    // buzón equivocado). Sólo aplicar si sigue seleccionada la misma cuenta.
+    if (selectedUser.value?.id !== id) return;
+    aliasList.value = data.aliases;
+    aliasLoaded.value = true;
+  } catch {
+    if (selectedUser.value?.id === id) aliasError.value = t('admin.accounts.aliasLoadErr');
+  }
+}
+function addAliasChip() {
+  const v = aliasInput.value.trim().toLowerCase();
+  aliasInput.value = '';
+  if (!v) return;
+  // Validación básica en cliente; el backend es la autoridad (formato, unicidad, colisiones).
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v)) {
+    aliasError.value = t('admin.accounts.aliasInvalid');
+    return;
+  }
+  if (!aliasList.value.includes(v)) aliasList.value.push(v);
+  aliasError.value = '';
+}
+function removeAliasChip(a: string) {
+  aliasList.value = aliasList.value.filter((x) => x !== a);
+}
+async function saveAliases() {
+  const a = selectedUser.value;
+  if (!a) return;
+  aliasBusy.value = true;
+  aliasError.value = '';
+  try {
+    const { data } = await api.put<{ aliases: string[] }>(`/admin/accounts/${a.id}/aliases`, {
+      aliases: aliasList.value,
+    });
+    aliasList.value = data.aliases; // el backend devuelve el set normalizado
+  } catch (e) {
+    const msg = (e as { response?: { data?: { message?: string } } }).response?.data?.message;
+    aliasError.value = msg ?? t('admin.accounts.aliasErr');
+  } finally {
+    aliasBusy.value = false;
   }
 }
 
@@ -1255,6 +1316,45 @@ async function save() {
                       </div>
                     </div>
                     <p v-if="accError" class="err-text">{{ accError }}</p>
+                  </section>
+
+                  <!-- Alias del buzón (delivery-only): sólo en modo servidor nativo. -->
+                  <section v-if="provisioning" class="card user-panel">
+                    <h3>{{ t('admin.accounts.aliasesTitle') }}</h3>
+                    <p class="hint">{{ t('admin.accounts.aliasesHint') }}</p>
+                    <div class="alias-chips">
+                      <span v-for="a in aliasList" :key="a" class="alias-chip">
+                        {{ a }}
+                        <button
+                          type="button"
+                          class="alias-x"
+                          :aria-label="t('admin.accounts.aliasRemove')"
+                          @click="removeAliasChip(a)"
+                        >
+                          ×
+                        </button>
+                      </span>
+                      <input
+                        v-model="aliasInput"
+                        class="alias-input"
+                        :placeholder="t('admin.accounts.aliasAddPh')"
+                        @keydown.enter.prevent="addAliasChip"
+                      />
+                    </div>
+                    <p v-if="aliasError" class="err-text">{{ aliasError }}</p>
+                    <div class="actions">
+                      <button
+                        class="btn-primary"
+                        :disabled="aliasBusy || !aliasLoaded"
+                        @click="saveAliases"
+                      >
+                        {{
+                          aliasBusy
+                            ? t('admin.accounts.aliasSaving')
+                            : t('admin.accounts.aliasSave')
+                        }}
+                      </button>
+                    </div>
                   </section>
 
                   <section v-if="canManageRoles" class="card user-panel">
@@ -2860,6 +2960,46 @@ async function save() {
   margin-top: 14px;
   padding-top: 14px;
   border-top: 1px solid var(--border-1);
+}
+.alias-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--border-1);
+  border-radius: 8px;
+  margin: 8px 0;
+}
+.alias-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 999px;
+  background: var(--bg-2);
+  font-size: 13px;
+}
+.alias-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--text-2);
+  padding: 0 2px;
+}
+.alias-x:hover {
+  color: var(--danger, #dc2626);
+}
+.alias-input {
+  flex: 1;
+  min-width: 160px;
+  border: none;
+  background: none;
+  outline: none;
+  font-size: 13.5px;
+  color: var(--text-1);
 }
 .pw-row {
   display: flex;

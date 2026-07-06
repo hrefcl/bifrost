@@ -118,3 +118,30 @@ describe('DockerMailserverProvider', () => {
     expect(await p.mailboxExists('ana@cleverty.info')).toBe(true);
   });
 });
+
+describe('setAliases — hardening (review MED-2/LOW-1)', () => {
+  async function virtual(): Promise<string> {
+    return fs.readFile(path.join(dir, 'postfix-virtual.cf'), 'utf8');
+  }
+
+  it('descarta el auto-alias (target→target): no escribe una línea `self self`', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await p.createMailbox('ana@x.com', 'pw');
+    await p.setAliases('ana@x.com', ['ana@x.com', 'info@x.com']);
+    const v = await virtual();
+    expect(v).toContain('info@x.com ana@x.com');
+    expect(v).not.toContain('ana@x.com ana@x.com'); // el auto-alias se filtró
+    expect(await p.getAliases('ana@x.com')).toEqual(['info@x.com']);
+  });
+
+  it('rechaza un alias con formato inválido (defensa anti-inyección) sin escribir el archivo', async () => {
+    const p = new DockerMailserverProvider(accountsFile);
+    await p.createMailbox('ana@x.com', 'pw');
+    await p.setAliases('ana@x.com', ['ok@x.com']); // set inicial válido
+    await expect(p.setAliases('ana@x.com', ['evil@x.com hijack@y.com'])).rejects.toThrow(
+      /formato inválido/
+    );
+    // El archivo NO se tocó: sigue el set válido anterior (sin la línea inyectada).
+    expect(await p.getAliases('ana@x.com')).toEqual(['ok@x.com']);
+  });
+});

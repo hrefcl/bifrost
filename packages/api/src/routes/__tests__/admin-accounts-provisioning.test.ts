@@ -251,3 +251,153 @@ describe('admin: alta turnkey (Bifrost crea el buzón real)', () => {
     expect(await fs.readFile(accountsFile, 'utf8')).toContain('legacy@cleverty.info');
   });
 });
+
+describe('admin: alias de buzón (delivery-only, F-alias A1)', () => {
+  const virtualFile = (): string => path.join(dir, 'postfix-virtual.cf');
+  async function createAccount(headers: Record<string, string>, email: string): Promise<string> {
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json().id as string;
+  }
+
+  it('PUT setea aliases → los materializa en postfix-virtual.cf y el GET los devuelve', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const id = await createAccount(headers, 'ana@cleverty.info');
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${id}/aliases`,
+      headers,
+      payload: { aliases: ['ventas@cleverty.info', 'Info@cleverty.info'] },
+    });
+    expect(put.statusCode).toBe(200);
+    expect(put.json().aliases).toEqual(['ventas@cleverty.info', 'info@cleverty.info']); // normalizados
+
+    const virt = await fs.readFile(virtualFile(), 'utf8');
+    expect(virt).toContain('ventas@cleverty.info ana@cleverty.info');
+    expect(virt).toContain('info@cleverty.info ana@cleverty.info');
+
+    const get = await app.inject({
+      method: 'GET',
+      url: `/api/admin/accounts/${id}/aliases`,
+      headers,
+    });
+    expect(get.json().aliases.sort()).toEqual(['info@cleverty.info', 'ventas@cleverty.info']);
+  });
+
+  it('un alias == dirección REAL de otra cuenta → 409', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    await createAccount(headers, 'ana@cleverty.info');
+    const bobId = await createAccount(headers, 'bob@cleverty.info');
+
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${bobId}/aliases`,
+      headers,
+      payload: { aliases: ['ana@cleverty.info'] }, // ya es un buzón real
+    });
+    expect(put.statusCode).toBe(409);
+  });
+
+  it('un alias == la propia dirección del buzón → 400', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const id = await createAccount(headers, 'ana@cleverty.info');
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${id}/aliases`,
+      headers,
+      payload: { aliases: ['ana@cleverty.info'] },
+    });
+    expect(put.statusCode).toBe(400);
+  });
+
+  it('alias inválido (no email) → 400', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const id = await createAccount(headers, 'ana@cleverty.info');
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${id}/aliases`,
+      headers,
+      payload: { aliases: ['no-es-email'] },
+    });
+    expect(put.statusCode).toBe(400);
+  });
+
+  it('alias que ya pertenece a OTRO buzón → 409 (unicidad global)', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const anaId = await createAccount(headers, 'ana@cleverty.info');
+    const bobId = await createAccount(headers, 'bob@cleverty.info');
+    await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${anaId}/aliases`,
+      headers,
+      payload: { aliases: ['comun@cleverty.info'] },
+    });
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${bobId}/aliases`,
+      headers,
+      payload: { aliases: ['comun@cleverty.info'] },
+    });
+    expect(put.statusCode).toBe(409);
+  });
+
+  it('borrar la cuenta quita sus aliases del postfix-virtual.cf (no huérfanos)', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const id = await createAccount(headers, 'ana@cleverty.info');
+    await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${id}/aliases`,
+      headers,
+      payload: { aliases: ['ventas@cleverty.info'] },
+    });
+    expect(await fs.readFile(virtualFile(), 'utf8')).toContain('ventas@cleverty.info');
+
+    const del = await app.inject({ method: 'DELETE', url: `/api/admin/accounts/${id}`, headers });
+    expect(del.statusCode).toBe(200);
+    expect(await fs.readFile(virtualFile(), 'utf8')).not.toContain('ventas@cleverty.info');
+  });
+
+  it('crear una cuenta cuyo email YA es un alias → 409', async () => {
+    const headers = await seedAdmin();
+    await enableProvisioning();
+    const anaId = await createAccount(headers, 'ana@cleverty.info');
+    await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${anaId}/aliases`,
+      headers,
+      payload: { aliases: ['soporte@cleverty.info'] },
+    });
+    // Intentar crear un buzón real con esa misma dirección → conflicto.
+    const create = await app.inject({
+      method: 'POST',
+      url: '/api/admin/accounts',
+      headers,
+      payload: { email: 'soporte@cleverty.info' },
+    });
+    expect(create.statusCode).toBe(409);
+  });
+
+  it('sin provisioning (BYO) → PUT aliases responde 409', async () => {
+    const headers = await seedAdmin();
+    const { account } = await seedUserWithAccount({ email: 'byo@empresa.com' });
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/api/admin/accounts/${String(account._id)}/aliases`,
+      headers,
+      payload: { aliases: ['x@empresa.com'] },
+    });
+    expect(put.statusCode).toBe(409);
+  });
+});

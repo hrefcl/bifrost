@@ -74,6 +74,8 @@ export async function provisionMailboxAccount(
   const email = input.email.trim().toLowerCase();
   const provider = await getActiveMailboxProvider();
   if (provider.type === 'none') throw new ProvisioningDisabledError();
+  // Nota: la colisión "email nuevo == alias existente" la verifica `createMailbox` de forma ATÓMICA bajo
+  // el lock del provider (lanza AliasConflictError→409); no hace falta un preflight aquí (era racy, review B).
 
   const transport = resolveLocalTransport(email);
   if (!transport) {

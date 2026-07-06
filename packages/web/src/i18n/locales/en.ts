@@ -509,6 +509,16 @@ export default {
       imapHint:
         'Real IMAP credentials are verified before the account is created. If they are wrong, it is not created.',
       nativeHint: 'The mailbox is created on your own mail server. No IMAP/SMTP setup needed.',
+      aliasesTitle: 'Aliases',
+      aliasesHint:
+        'Extra addresses that deliver mail to this mailbox. They cannot be used to sign in or to send.',
+      aliasAddPh: 'add alias, then Enter',
+      aliasSave: 'Save aliases',
+      aliasSaving: 'Saving…',
+      aliasRemove: 'Remove alias',
+      aliasInvalid: 'Invalid alias: must be an email.',
+      aliasErr: 'Could not save aliases.',
+      aliasLoadErr: 'Could not load aliases. Reopen the account to retry.',
       create: 'Create account',
       creating: 'Creating…',
       colEmail: 'Account',
