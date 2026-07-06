@@ -8,6 +8,7 @@ import {
   moveEmailToTrash,
   moveEmailToFolder,
   ensureSpecialFolder,
+  syncFolderHeaders,
   type ParsedAttachment,
 } from '../services/imap.js';
 import { requireOwnedEmail, OwnershipError } from '../lib/authz.js';
@@ -295,6 +296,10 @@ export default function emailRoutes(fastify: FastifyInstance) {
     await moveEmailToTrash(account, folderPath, email.uid);
     await Email.deleteOne({ _id: email._id });
     await redis.del(`emailbody:${email._id.toString()}`);
+    // Sincronizar la Papelera en background para que el correo movido aparezca de inmediato al abrirla
+    // (sin esperar el poll de 45s). Best-effort: no afecta la respuesta del delete.
+    const trash = await Folder.findOne({ accountId: account._id.toString(), specialUse: 'trash' });
+    if (trash) void syncFolderHeaders(account, trash._id.toString()).catch(() => undefined);
     return { ok: true };
   });
 
@@ -339,6 +344,9 @@ export default function emailRoutes(fastify: FastifyInstance) {
     await moveEmailToFolder(account, folderPath, email.uid, target.path);
     await Email.deleteOne({ _id: email._id });
     await redis.del(`emailbody:${email._id.toString()}`);
+    // Sincronizar la carpeta destino (Archivo/etc.) en background → el correo movido aparece al abrirla
+    // sin esperar el poll. Best-effort: no afecta la respuesta.
+    void syncFolderHeaders(account, target._id.toString()).catch(() => undefined);
     return { ok: true };
   });
 
