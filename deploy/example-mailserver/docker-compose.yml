@@ -151,6 +151,13 @@ services:
       # Dir donde el API deja el MARKER de "actualizar" (Fase 2). El host-updater (fuera del contenedor)
       # lo lee y hace el pull+up. El API NUNCA toca el socket de Docker.
       UPDATE_TRIGGER_DIR: /app/update-trigger
+      # Rate limits por IP (defaults generosos en el código). El limitador keyea por la IP REAL del
+      # cliente (trustProxy + X-Forwarded-For de nginx), y una empresa entera comparte UNA IP de oficina
+      # (NAT) → estos topes aplican a TODA la oficina junta. Súbelos si tienes una organización grande
+      # tras un solo NAT; bájalos si expones a internet abierto. Vacío = usa el default del código.
+      RATE_LIMIT_MAX: ${RATE_LIMIT_MAX:-3000}
+      AUTH_LOGIN_RATE_MAX: ${AUTH_LOGIN_RATE_MAX:-100}
+      AUTH_REFRESH_RATE_MAX: ${AUTH_REFRESH_RATE_MAX:-600}
     secrets: [jwt_secret, encryption_key, compliance_hmac_secret, provision_api_key]
     volumes:
       # Marker de update (host↔API). El API SÓLO escribe el tag pedido acá; el host-updater lo valida.

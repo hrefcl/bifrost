@@ -126,14 +126,19 @@ export async function buildApp() {
     limits: { fileSize: 25 * 1024 * 1024, files: 1 },
   });
 
-  // Rate limit global por IP. Configurable por env para no estrangular el harness E2E (suite
-  // serial completa desde una sola IP = localhost, ~cientos de requests en una ventana de 1min);
-  // en prod el default 100/min se mantiene. NO afecta a los límites por-ruta de auth (login/refresh).
+  // Rate limit global por IP. OJO al modelo de Bifrost: es self-hosted per-tenant y una PYME entera
+  // (objetivo ~50 personas) suele compartir UNA sola IP pública de oficina (NAT). El limitador
+  // keyea por `request.ip` (la IP real del cliente vía trustProxy+X-Forwarded-For), así que TODA la
+  // oficina cuenta contra el MISMO cubo. Un usuario activo de webmail hace decenas de req/min (abrir
+  // un correo son varias) → con 50 usuarios tras un NAT el default histórico de 100/min se agotaba en
+  // segundos y devolvía 429 a TODA la empresa (no sólo en login). Default generoso (3000/min ≈ 50
+  // usuarios × ~60 req/min) y configurable por env; el operador que exponga a internet abierto puede
+  // bajarlo. Configurable también para no estrangular el harness E2E (suite serial desde una sola IP).
   // Validamos el env: un valor no numérico (typo) NO debe caer al default interno de fastify
-  // (1000/min) ni dejar el límite inoperante — cae al 100 declarado (review B+D).
-  const rateLimitMax = Number(process.env.RATE_LIMIT_MAX ?? '100');
+  // (1000/min) ni dejar el límite inoperante — cae al 3000 declarado.
+  const rateLimitMax = Number(process.env.RATE_LIMIT_MAX ?? '3000');
   await app.register(rateLimit, {
-    max: Number.isFinite(rateLimitMax) && rateLimitMax > 0 ? rateLimitMax : 100,
+    max: Number.isFinite(rateLimitMax) && rateLimitMax > 0 ? rateLimitMax : 3000,
     timeWindow: process.env.RATE_LIMIT_WINDOW ?? '1 minute',
     skipOnError: true,
   });
