@@ -86,6 +86,30 @@ describe('reconcileMailboxes (importar buzones brownfield)', () => {
     expect(await Account.countDocuments()).toBe(3);
   });
 
+  it('reporta HUÉRFANOS (en Mongo pero ya no en el servidor) sin borrarlos', async () => {
+    await enableProvisioning(['a@x.com', 'b@x.com']);
+    await reconcileMailboxes();
+    expect(await Account.countDocuments()).toBe(2);
+
+    // Gestión externa borra b@x.com del accounts.cf (queda sólo a@x.com en el servidor).
+    await writeLines(process.env.DMS_ACCOUNTS_FILE!, ['a@x.com']);
+
+    const r = await reconcileMailboxes();
+    expect(r.serverTotal).toBe(1);
+    expect(r.imported).toBe(0);
+    expect(r.orphans).toEqual(['b@x.com']);
+    // NO se borra el huérfano: sigue en Mongo para que el operador decida un DELETE explícito.
+    expect(await Account.countDocuments()).toBe(2);
+    expect(await Account.findOne({ email: 'b@x.com' })).not.toBeNull();
+  });
+
+  it('sin desfase → orphans vacío', async () => {
+    await enableProvisioning(['a@x.com']);
+    const r = await reconcileMailboxes();
+    expect(r.imported).toBe(1);
+    expect(r.orphans).toEqual([]);
+  });
+
   it('el barrido de sync SALTA los buzones importados sin credenciales', async () => {
     await enableProvisioning(['a@x.com']);
     await reconcileMailboxes();
