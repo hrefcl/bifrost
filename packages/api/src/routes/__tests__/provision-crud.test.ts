@@ -298,6 +298,35 @@ describe('provision CRUD', () => {
     expect(res.statusCode).toBe(401);
   });
 
+  it('CREATE rescata un buzón en limbo (existe en servidor, no en Mongo) aplicándole la password', async () => {
+    // Limbo: línea en accounts.cf sin Account en Mongo (rollback fallido o alta fuera de banda).
+    await fs.writeFile(accountsFile, 'limbo@cleverty.info|{BLF-CRYPT}$2y$10$viejohash\n');
+    expect(await Account.findOne({ email: 'limbo@cleverty.info' })).toBeNull();
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/api/provision/mailboxes',
+      headers: H(),
+      payload: { email: 'limbo@cleverty.info', password: 'rescate-123' },
+    });
+    // 200 (no 201): se reconcilió un buzón preexistente, no fue alta fresca.
+    expect(res.statusCode).toBe(200);
+    expect(res.json().rescued).toBe(true);
+    expect(res.json().email).toBe('limbo@cleverty.info');
+    // Ahora está registrado y vinculado en Mongo (gestionable).
+    expect(await Account.findOne({ email: 'limbo@cleverty.info' })).not.toBeNull();
+    // La password pedida quedó aplicada al buzón (hash nuevo válido en accounts.cf).
+    const cf = await fs.readFile(accountsFile, 'utf8');
+    expect(passwordMatches(cf, 'limbo@cleverty.info', 'rescate-123')).toBe(true);
+  });
+
+  it('CREATE de un duplicado GENUINO (ya vinculado) sigue devolviendo 409', async () => {
+    await create('dup@cleverty.info'); // queda vinculado (el mock IMAP verifica OK)
+    const res = await create('dup@cleverty.info');
+    expect(res.statusCode).toBe(409);
+    expect(res.json().rescued).toBeUndefined();
+  });
+
   // ── Regresiones de la revisión B/C/D del CRUD ──
 
   it('HIGH-1: si deleteMailbox falla al suspender, el hash queda a salvo y el retry completa la suspensión', async () => {

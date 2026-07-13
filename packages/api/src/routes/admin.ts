@@ -1062,6 +1062,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
 
       let user, account, isNew: boolean;
       let generatedPassword: string | undefined;
+      // `rescued`: el buzón existía en el servidor pero no estaba registrado/vinculado en Bifrost (limbo);
+      // provisionMailboxAccount lo reconcilió con la password pedida en vez de fallar → NO es un 409.
+      let rescued = false;
       try {
         if (provisioning) {
           // TURNKEY: Bifrost es la autoridad de cuentas → CREA el buzón real en el mailserver y registra.
@@ -1073,6 +1076,7 @@ export default function adminRoutes(fastify: FastifyInstance) {
             displayName: body.displayName,
           });
           ({ user, account, isNew } = res);
+          rescued = res.rescued;
           if (res.passwordGenerated) generatedPassword = res.password;
         } else {
           // BRING-YOUR-OWN: se verifica un buzón EXISTENTE → imap/smtp/password son obligatorios.
@@ -1126,8 +1130,9 @@ export default function adminRoutes(fastify: FastifyInstance) {
         }
         throw err;
       }
-      if (!isNew) {
-        // El email ya existía en Bifrost: no es un alta. Avisar en vez de fingir creación.
+      if (!isNew && !rescued) {
+        // El email ya existía en Bifrost (y vinculado): no es un alta. Avisar en vez de fingir creación.
+        // Excepción: `rescued` ⇒ existía un shell/línea en limbo que acabamos de reconciliar → es éxito.
         return reply.code(409).send({
           statusCode: 409,
           error: 'Conflict',
@@ -1142,13 +1147,15 @@ export default function adminRoutes(fastify: FastifyInstance) {
       if (body.displayName) {
         await User.updateOne({ _id: user._id }, { $set: { displayName: body.displayName } });
       }
-      return reply.code(201).send({
+      return reply.code(rescued ? 200 : 201).send({
         id: account._id.toString(),
         email: account.email,
         status: account.status,
         quotaBytes,
         // Sólo cuando Bifrost generó la contraseña: el admin la ve UNA vez (no se persiste en claro).
         ...(generatedPassword ? { generatedPassword } : {}),
+        // Confirmación: el buzón estaba en limbo (existía en el servidor, no en Bifrost) y se reconcilió.
+        ...(rescued ? { rescued: true } : {}),
       });
     }
   );

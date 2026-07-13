@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { loginOrRegister, type LoginInput } from '../auth.js';
+import { Account } from '../../models/Account.js';
 import { reapplyCatchAll } from './catch-all.js';
 import { getActiveMailboxProvider } from './index.js';
-import { ProvisioningDisabledError } from './types.js';
+import { MailboxExistsError, ProvisioningDisabledError } from './types.js';
 
 /**
  * Orquestación de alta de cuenta CON provisioning real del buzón. La usan por igual el panel /admin y
@@ -33,6 +34,13 @@ export interface ProvisionAccountResult {
   password: string;
   /** true si generamos nosotros la contraseña (para avisarle al operador que la copie). */
   passwordGenerated: boolean;
+  /**
+   * true si el buzón YA existía en el servidor pero NO estaba registrado/vinculado en Bifrost (limbo:
+   * típicamente un rollback fallido o un alta fuera de banda). En vez de un 409 muerto, se RESCATÓ:
+   * se le aplicó la contraseña pedida y se registró/vinculó → queda consistente y usable. Confirmación
+   * explícita para el llamador de que no fue un alta fresca sino un rescate.
+   */
+  rescued: boolean;
 }
 
 /** Transporte del mailserver propio (docker-mailserver): IMAPS 993 + SMTPS 465, TLS directo. */
@@ -89,8 +97,27 @@ export async function provisionMailboxAccount(
   const passwordGenerated = !trimmed;
   const password = trimmed && trimmed.length > 0 ? trimmed : generatePassword();
 
-  // 1) Crear el buzón real (lanza MailboxExistsError si ya existe → NO entra al try, no hay rollback).
-  await provider.createMailbox(email, password);
+  // 1) Crear el buzón real. Si el provider dice que YA existe, distinguimos dos casos para no dejar (ni
+  //    dejar atascado) un limbo:
+  //    - Registrado y VINCULADO en Bifrost (tiene credenciales de webmail) → duplicado genuino → 409.
+  //    - En el servidor pero SIN registro/vínculo en Mongo (rollback fallido, alta fuera de banda) → LIMBO
+  //      que nadie podía crear (409) ni borrar (404). RESCATE: aplicamos la contraseña pedida al buzón
+  //      existente y seguimos al paso 2 (loginOrRegister lo registra/vincula). No se hace rollback-delete
+  //      de un buzón que ya existía (no era nuestro para borrarlo).
+  let rescued = false;
+  try {
+    await provider.createMailbox(email, password);
+  } catch (err) {
+    if (!(err instanceof MailboxExistsError)) throw err;
+    const tracked = await Account.findOne({ email })
+      .select('imap.authCredentialsEncrypted.ciphertext')
+      .lean();
+    const linked = Boolean(tracked?.imap.authCredentialsEncrypted.ciphertext);
+    if (linked) throw err; // duplicado genuino y usable → el caller lo mapea a 409
+    // Limbo: reescribir el hash del buzón existente a la contraseña pedida para dejarlo en estado conocido.
+    await provider.setPassword(email, password);
+    rescued = true;
+  }
 
   try {
     // 2) Esperar a que el mailserver aplique el cambio (changedetector) y persistir. `loginOrRegister`
@@ -111,6 +138,7 @@ export async function provisionMailboxAccount(
           isNew: res.isNew,
           password,
           passwordGenerated,
+          rescued,
         };
       } catch (err) {
         const status = (err as { statusCode?: number }).statusCode;
@@ -123,8 +151,10 @@ export async function provisionMailboxAccount(
     }
   } catch (err) {
     // Rollback: el buzón se creó recién pero el alta falló → borrarlo para no dejar un buzón huérfano
-    // (sin User/Account) ni bloquear un reintento con 409. Best-effort.
-    await provider.deleteMailbox(email).catch(() => undefined);
+    // (sin User/Account) ni bloquear un reintento con 409. Best-effort. NO se borra si fue un RESCATE:
+    // el buzón ya existía antes de esta llamada (borrarlo destruiría un buzón/correo que no era nuestro);
+    // el reintento lo vuelve a rescatar de forma idempotente.
+    if (!rescued) await provider.deleteMailbox(email).catch(() => undefined);
     throw err;
   }
 }
