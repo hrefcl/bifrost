@@ -270,7 +270,7 @@ export default {
     title: 'Administración',
     catchAll: {
       title: 'Cuenta receptora de todo (catch-all)',
-      desc: 'El correo a direcciones que no existen en el dominio (ej. juanito@) cae en esta cuenta en vez de rebotar. Los buzones reales reciben su propio correo normalmente.',
+      desc: "El correo a direcciones que no existen en el dominio (ej. juanito{'@'}) cae en esta cuenta en vez de rebotar. Los buzones reales reciben su propio correo normalmente.",
       target: 'Recibe en',
       err: 'No se pudo cambiar el catch-all',
     },
