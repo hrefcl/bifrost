@@ -47,7 +47,10 @@ const router = createRouter({
       component: () => import('@/views/MeetHomeView.vue'),
     },
     {
-      path: '/admin',
+      // Sección por URL (deep-link + botón atrás): /admin/users, /admin/groups, /admin/role, /admin/brand…
+      // Param OPCIONAL: `router.push({ name: 'admin' })` (sin sección) sigue funcionando → AdminView
+      // redirige a la primera sección visible.
+      path: '/admin/:section?',
       name: 'admin',
       component: () => import('@/views/AdminView.vue'),
       meta: { requiresAdmin: true },

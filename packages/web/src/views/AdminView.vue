@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount, computed } from 'vue';
+import { ref, onMounted, onBeforeUnmount, computed, watch } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 import { AxiosError } from 'axios';
 import { useI18n } from 'vue-i18n';
 import AppLayout from '@/layouts/AppLayout.vue';
@@ -140,6 +141,25 @@ const SECTIONS: AdminSection[] = [
 ];
 const activeSection = computed(() => SECTIONS.find((s) => s.key === tab.value) ?? SECTIONS[0]);
 
+// ── Ruteo por URL ── Cada sección tiene su slug legible (/admin/<slug>) → deep-link + botón atrás del
+// navegador. Los slugs son estables (no cambian con i18n ni con el orden del menú).
+const TAB_SLUG: Record<Tab, string> = {
+  accounts: 'users',
+  groups: 'groups',
+  roles: 'role',
+  branding: 'brand',
+  signatures: 'signatures',
+  storage: 'storage',
+  provisioning: 'provisioning',
+  preferences: 'preferences',
+  gcal: 'google-calendar',
+  compliance: 'compliance',
+  scheduling: 'scheduling',
+};
+const SLUG_TAB = Object.fromEntries(
+  Object.entries(TAB_SLUG).map(([k, v]) => [v, k as Tab])
+) as Record<string, Tab>;
+
 // Grupos del sidebar (tipo Google Workspace Admin): cada grupo agrupa secciones bajo un encabezado.
 // `count` (opcional) es la clave de un contador reactivo mostrado como badge junto al item.
 interface NavGroup {
@@ -207,9 +227,32 @@ function onMq(e: MediaQueryListEvent | MediaQueryList) {
   isNarrow.value = e.matches;
   if (!e.matches) navOpen.value = false; // al pasar a desktop, el drawer no aplica
 }
+const route = useRoute();
+const router = useRouter();
+
+/** La URL (/admin/<slug>) es la fuente de verdad de la sección activa. Aplica el slug al `tab`; si falta,
+ *  es inválido o el usuario no tiene permiso para esa sección, redirige a la primera sección visible. */
+function applyRouteSection() {
+  const raw = route.params.section;
+  const slug = Array.isArray(raw) ? raw[0] : raw;
+  let target = slug ? SLUG_TAB[slug] : undefined;
+  if (!target || !canSee(target)) {
+    const fallback = SECTIONS.find((s) => canSee(s.key)) ?? SECTIONS[0];
+    if (slug !== TAB_SLUG[fallback.key]) {
+      // Corrige la URL; el watcher se re-dispara con el slug ya válido y fija el tab.
+      void router.replace({ name: 'admin', params: { section: TAB_SLUG[fallback.key] } });
+      return;
+    }
+    target = fallback.key;
+  }
+  tab.value = target;
+  navOpen.value = false; // al cambiar de sección se cierra el drawer (móvil)
+}
+watch(() => route.params.section, applyRouteSection);
+
+/** Elegir sección = cambiar la URL; el watcher de arriba sincroniza el `tab`. */
 function selectSection(key: Tab) {
-  tab.value = key;
-  navOpen.value = false; // al elegir sección se cierra el drawer (móvil)
+  void router.push({ name: 'admin', params: { section: TAB_SLUG[key] } });
 }
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Escape' && navOpen.value) navOpen.value = false;
@@ -257,6 +300,8 @@ const serverMailboxCount = ref<number | null>(null);
 // IMAP/SMTP. En modo trae-tu-propio (provisioning=false) sí se conecta a un IMAP/SMTP externo.
 const provisioning = ref(false);
 const importing = ref(false);
+// Resultado de la última sincronización manual (importados + huérfanos), como confirmación al operador.
+const syncResult = ref('');
 // Cuántos buzones existen en el servidor pero aún NO están registrados en Bifrost (brownfield).
 const unregisteredCount = computed(() =>
   serverMailboxCount.value === null
@@ -323,9 +368,18 @@ async function saveCatchAll(enabled: boolean, target: string | null) {
 async function importAccounts() {
   importing.value = true;
   accError.value = '';
+  syncResult.value = '';
   try {
-    await api.post('/admin/accounts/import');
+    const { data } = await api.post<{ imported: number; orphans?: string[] }>(
+      '/admin/accounts/import'
+    );
     await loadAccounts();
+    // Confirmación explícita (aunque no haya nada que hacer): cuántos se importaron y cuántos huérfanos
+    // (en Bifrost pero ya no en el servidor) se detectaron. Ver reconcileMailboxes (#70).
+    syncResult.value = t('admin.accounts.syncResult', {
+      imported: data.imported,
+      orphans: data.orphans?.length ?? 0,
+    });
   } catch {
     accError.value = t('admin.accounts.errImport');
   } finally {
@@ -1049,12 +1103,9 @@ function usagePct(a: AdminAccount): number {
 }
 
 onMounted(async () => {
-  // Si la sección inicial no es visible para este usuario (delegado sin accounts.manage), saltar a la
-  // primera sección que sí puede ver.
-  if (!canSee(tab.value)) {
-    const first = SECTIONS.find((s) => canSee(s.key));
-    if (first) tab.value = first.key;
-  }
+  // La sección activa la fija la URL (/admin/<slug>). Sincroniza el tab con el slug inicial (y redirige
+  // si falta/no es visible: p.ej. entrar a /admin pelado → /admin/users, o un delegado sin permiso).
+  applyRouteSection();
   window.addEventListener('keydown', onKeydown);
   mq = window.matchMedia('(max-width: 900px)');
   isNarrow.value = mq.matches;
@@ -1257,6 +1308,20 @@ async function save() {
             </h1>
             <p class="admin-section-desc">{{ t(activeSection.desc) }}</p>
           </div>
+          <!-- Sincronizar (forzar reconciliación con el servidor de correo). SIEMPRE visible en modo
+               nativo, no sólo cuando hay desfase: el operador gestiona buzones desde otro sistema y
+               quiere forzar el sync cuando quiera. Importa los que falten + detecta huérfanos (#70). -->
+          <button
+            v-if="tab === 'accounts' && !selectedUser && provisioning"
+            class="btn-ghost admin-head-action"
+            data-testid="admin-sync-accounts"
+            :disabled="importing"
+            :title="t('admin.accounts.syncHint')"
+            @click="importAccounts"
+          >
+            <AppIcon name="database" :size="16" />
+            {{ importing ? t('admin.accounts.importing') : t('list.sync') }}
+          </button>
           <button
             v-if="tab === 'accounts' && !selectedUser"
             class="btn-primary admin-head-action"
@@ -1288,6 +1353,15 @@ async function save() {
 
           <!-- ===================== USUARIOS ===================== -->
           <template v-if="tab === 'accounts'">
+            <!-- Confirmación de la última sincronización manual (importados/huérfanos). -->
+            <p
+              v-if="syncResult && !selectedUser"
+              class="sync-result"
+              data-testid="admin-sync-result"
+            >
+              <AppIcon name="database" :size="15" />
+              {{ syncResult }}
+            </p>
             <!-- Ficha de usuario (detalle, maqueta admin.html) -->
             <div v-if="selectedUser" class="user-detail" data-testid="user-detail">
               <button class="back-link" @click="closeUser">
@@ -3189,6 +3263,25 @@ async function save() {
   padding: 7px 14px;
   font-size: 13px;
   flex-shrink: 0;
+}
+/* Botón Sincronizar de la cabecera: icono + texto alineados inline. */
+[data-testid='admin-sync-accounts'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+/* Confirmación de la última sincronización manual. */
+.sync-result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13.5px;
+  color: var(--text-1);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface-1));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .pw-reset {
   margin-top: 14px;

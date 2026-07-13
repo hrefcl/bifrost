@@ -580,7 +580,10 @@ export default {
       importBanner:
         'The server has {total} mailboxes, but {n} are not registered in Bifrost (created outside the panel or migrated). Import them to manage them.',
       importBtn: 'Import mailboxes',
-      importing: 'Importing…',
+      importing: 'Syncing…',
+      syncHint:
+        'Force reconciliation with the mail server: imports mailboxes missing from Bifrost and detects orphans (registered in Bifrost but no longer on the server).',
+      syncResult: 'Synced: {imported} mailbox(es) imported, {orphans} orphan(s) detected.',
       unlinked: 'Unlinked',
       unlinkedHint:
         'Server mailbox imported into Bifrost. Nobody has signed into webmail with this account yet; you can still manage it (suspend, delete or change its password). It links automatically on first sign-in.',
