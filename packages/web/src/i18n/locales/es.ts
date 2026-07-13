@@ -588,7 +588,11 @@ export default {
       importBanner:
         'El servidor tiene {total} buzones, pero {n} no están registrados en Bifrost (creados fuera del panel o migrados). Importalos para poder gestionarlos.',
       importBtn: 'Importar buzones',
-      importing: 'Importando…',
+      importing: 'Sincronizando…',
+      syncHint:
+        'Fuerza la reconciliación con el servidor de correo: importa los buzones que falten en Bifrost y detecta huérfanos (registrados en Bifrost pero ya no en el servidor).',
+      syncResult:
+        'Sincronizado: {imported} buzón(es) importado(s), {orphans} huérfano(s) detectado(s).',
       unlinked: 'Sin vincular',
       unlinkedHint:
         'Buzón del servidor importado a Bifrost. Todavía nadie inició sesión en el webmail con esta cuenta; podés gestionarla igual (suspender, eliminar o cambiarle la clave). Se vincula sola al primer inicio de sesión.',
