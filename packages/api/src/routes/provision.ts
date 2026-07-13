@@ -8,6 +8,7 @@ import { AliasConflictError } from '../services/mailbox/types.js';
 import { provisionMailboxAccount } from '../services/mailbox/provision-account.js';
 import { deleteAccountCascade, MailboxRevokeError } from '../services/account-lifecycle.js';
 import { verifyProvisionKey, hasActiveProvisionKey } from '../services/provision-keys.js';
+import { reconcileMailboxes } from '../services/mailbox/reconcile.js';
 import {
   getMailbox,
   listMailboxes,
@@ -124,6 +125,25 @@ export default function provisionRoutes(fastify: FastifyInstance) {
         statusCode: 503,
         error: 'Service Unavailable',
         message: 'El provisioning de buzones no está habilitado en este servidor.',
+      });
+    }
+  });
+
+  // ── RECONCILIAR (force-sync brownfield) ──
+  // Importa a Bifrost los buzones que existen en el servidor de correo pero no están en Mongo, y REPORTA
+  // los huérfanos (en Mongo pero ya no en el servidor). Resuelve el limbo del CRUD cuando la gestión de
+  // buzones ocurre FUERA de Bifrost (otro sistema tocó el accounts.cf): sin esto, un buzón creado por fuera
+  // no aparece en `GET /mailboxes` (lee Mongo), `POST /mailboxes` da 409 "ya existe" y `DELETE` da 404 "no
+  // existe". Idempotente. NO borra huérfanos (arrastraría correo indexado) — los lista para que el llamador
+  // decida un DELETE explícito. Antes solo estaba en `/admin/accounts/import` (JWT), inalcanzable por API-key.
+  fastify.post('/reconcile', { config: { requiresAuth: false } }, async (_request, reply) => {
+    try {
+      return await reconcileMailboxes();
+    } catch (err) {
+      return reply.code(503).send({
+        statusCode: 503,
+        error: 'Service Unavailable',
+        message: (err as Error).message,
       });
     }
   });

@@ -249,6 +249,55 @@ describe('provision CRUD', () => {
     expect(retry.json().password).toBe(pw);
   });
 
+  it('POST /reconcile importa buzones creados FUERA de Bifrost y reporta huérfanos', async () => {
+    await create('tracked@cleverty.info'); // en Mongo + servidor
+    // Gestión externa: agrega una línea al accounts.cf SIN pasar por Bifrost (Mongo no lo conoce).
+    const cur = await fs.readFile(accountsFile, 'utf8');
+    await fs.writeFile(
+      accountsFile,
+      cur.trimEnd() + '\n' + 'oob@cleverty.info|{BLF-CRYPT}$2y$10$hash\n'
+    );
+
+    // Antes de reconciliar: el buzón out-of-band es INVISIBLE por la API máquina (lee Mongo).
+    const before = await app.inject({
+      method: 'GET',
+      url: '/api/provision/mailboxes?search=oob',
+      headers: H(),
+    });
+    expect(before.json().total).toBe(0);
+
+    const rec = await app.inject({ method: 'POST', url: '/api/provision/reconcile', headers: H() });
+    expect(rec.statusCode).toBe(200);
+    const body = rec.json();
+    expect(body.serverTotal).toBe(2);
+    expect(body.importedEmails).toContain('oob@cleverty.info');
+    expect(body.orphans).toEqual([]);
+
+    // Ahora SÍ aparece y es gestionable (el limbo se resuelve).
+    const after = await app.inject({
+      method: 'GET',
+      url: '/api/provision/mailboxes?search=oob',
+      headers: H(),
+    });
+    expect(after.json().total).toBe(1);
+    expect(after.json().items[0].email).toBe('oob@cleverty.info');
+
+    // Gestión externa borra tracked@ del servidor → reconcile lo reporta como huérfano (sin borrarlo).
+    await fs.writeFile(accountsFile, 'oob@cleverty.info|{BLF-CRYPT}$2y$10$hash\n');
+    const rec2 = await app.inject({
+      method: 'POST',
+      url: '/api/provision/reconcile',
+      headers: H(),
+    });
+    expect(rec2.json().orphans).toContain('tracked@cleverty.info');
+    expect(await Account.findOne({ email: 'tracked@cleverty.info' })).not.toBeNull();
+  });
+
+  it('POST /reconcile sin key → 401', async () => {
+    const res = await app.inject({ method: 'POST', url: '/api/provision/reconcile' });
+    expect(res.statusCode).toBe(401);
+  });
+
   // ── Regresiones de la revisión B/C/D del CRUD ──
 
   it('HIGH-1: si deleteMailbox falla al suspender, el hash queda a salvo y el retry completa la suspensión', async () => {

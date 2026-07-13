@@ -31,6 +31,14 @@ export interface ReconcileMailboxesResult {
   imported: number;
   /** Emails importados en esta corrida. */
   importedEmails: string[];
+  /**
+   * HUÉRFANOS: cuentas registradas en Bifrost (Mongo) cuyo buzón YA NO existe en el servidor (accounts.cf)
+   * — típicamente porque una gestión externa borró el buzón fuera de Bifrost. Se REPORTAN, no se borran:
+   * eliminar un Account arrastra su correo/carpetas indexados, y esa decisión (¿fue borrado a propósito o
+   * es un desfase temporal?) es del operador. Se limpian con un DELETE explícito (`/admin/accounts/:id` o
+   * `/api/provision/mailboxes/:email`), que es idempotente aunque el buzón ya no esté en el servidor.
+   */
+  orphans: string[];
 }
 
 /**
@@ -90,7 +98,13 @@ export async function reconcileMailboxes(): Promise<ReconcileMailboxesResult> {
   const tracked = await Account.countDocuments();
   if (!(await provisioningEnabled())) {
     // Sin provisioning Bifrost no es la autoridad de cuentas (modo bring-your-own): no hay accounts.cf.
-    return { serverTotal: 0, alreadyTracked: tracked, imported: 0, importedEmails: [] };
+    return {
+      serverTotal: 0,
+      alreadyTracked: tracked,
+      imported: 0,
+      importedEmails: [],
+      orphans: [],
+    };
   }
   const host = (process.env.MAIL_SERVER_HOST ?? '').trim();
   if (!host) {
@@ -100,10 +114,13 @@ export async function reconcileMailboxes(): Promise<ReconcileMailboxesResult> {
   }
   const provider = await getActiveMailboxProvider();
   const real = [...new Set((await provider.listMailboxes()).map((e) => e.trim().toLowerCase()))];
+  const realSet = new Set(real);
   const existing = new Set(
     (await Account.find().select('email').lean()).map((a) => a.email.toLowerCase())
   );
   const missing = real.filter((e) => e && !existing.has(e));
+  // Huérfanos: en Mongo pero NO en el servidor (buzón borrado fuera de Bifrost). Solo se reportan.
+  const orphans = [...existing].filter((e) => e && !realSet.has(e)).sort();
 
   const importedEmails: string[] = [];
   for (const email of missing) {
@@ -116,6 +133,7 @@ export async function reconcileMailboxes(): Promise<ReconcileMailboxesResult> {
     alreadyTracked: existing.size,
     imported: importedEmails.length,
     importedEmails,
+    orphans,
   };
 }
 
