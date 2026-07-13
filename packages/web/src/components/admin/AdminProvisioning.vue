@@ -41,6 +41,56 @@ const copied = ref(false);
 const baseUrl = computed(() => window.location.origin);
 const provisioningOn = computed(() => providerType.value !== 'none');
 
+// Catálogo COMPLETO de la API máquina-a-máquina (`/api/provision/*`). Documentación viva: refleja
+// exactamente los endpoints registrados en routes/provision.ts. Todos usan el header `X-Provision-Key`.
+interface ApiEndpoint {
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  path: string;
+  desc: string;
+}
+const ENDPOINTS: ApiEndpoint[] = [
+  {
+    method: 'POST',
+    path: '/api/provision/reconcile',
+    desc: 'Fuerza la sincronización con el servidor de correo: importa a Bifrost los buzones que existen en el servidor pero no están registrados, y reporta los huérfanos (registrados en Bifrost pero ya no en el servidor). Idempotente.',
+  },
+  {
+    method: 'GET',
+    path: '/api/provision/mailboxes',
+    desc: 'Lista los buzones (paginado + búsqueda). Query: ?page (1), ?pageSize (1–500, 50), ?search (email o nombre).',
+  },
+  {
+    method: 'POST',
+    path: '/api/provision/mailboxes',
+    desc: 'Crea un buzón. Si omitís password, se genera una y viene en la respuesta (una vez). Acepta header Idempotency-Key (reintento seguro). Si el buzón ya existía en el servidor sin registro en Bifrost, lo reconcilia y responde 200 con rescued:true en vez de 409.',
+  },
+  {
+    method: 'GET',
+    path: '/api/provision/mailboxes/:email',
+    desc: 'Consulta un buzón por email (404 si no existe). El email va URL-encoded (@ → %40).',
+  },
+  {
+    method: 'PATCH',
+    path: '/api/provision/mailboxes/:email',
+    desc: 'Edita el buzón: displayName, quotaBytes, aliases (array, reemplaza el set), active (false=suspende cortando IMAP/SMTP sin perder la clave; true=reactiva).',
+  },
+  {
+    method: 'PUT',
+    path: '/api/provision/mailboxes/:email/password',
+    desc: 'Fija una contraseña concreta para el buzón.',
+  },
+  {
+    method: 'POST',
+    path: '/api/provision/mailboxes/:email/reset-password',
+    desc: 'Genera una contraseña fuerte (o usa la que mandes) y la devuelve una sola vez.',
+  },
+  {
+    method: 'DELETE',
+    path: '/api/provision/mailboxes/:email',
+    desc: 'Elimina el buzón: revoca el acceso IMAP/SMTP en el servidor y borra la cuenta y sus datos.',
+  },
+];
+
 async function load() {
   loading.value = true;
   error.value = '';
@@ -209,27 +259,100 @@ onMounted(load);
       </p>
     </div>
 
-    <!-- Cómo se usa (autodocumentado) -->
+    <!-- Referencia de la API (autodocumentada desde ENDPOINTS) -->
     <div class="card">
-      <h3 class="prov__h">Cómo se usa</h3>
-      <p class="prov__muted">Mandá la key en el header <code>X-Provision-Key</code>.</p>
+      <h3 class="prov__h">Referencia de la API</h3>
+      <p class="prov__muted">
+        API máquina-a-máquina para gestionar buzones desde sistemas externos. Base:
+        <code>{{ baseUrl }}</code
+        >. Autenticá TODAS las llamadas con el header <code>X-Provision-Key: &lt;TU_KEY&gt;</code>.
+        El <code>:email</code> de la ruta va URL-encoded (<code>@</code> → <code>%40</code>).
+      </p>
+
+      <!-- Tabla de endpoints -->
+      <div class="prov__eptable">
+        <div v-for="ep in ENDPOINTS" :key="ep.method + ep.path" class="prov__eprow">
+          <span class="prov__method" :class="'prov__method--' + ep.method.toLowerCase()">{{
+            ep.method
+          }}</span>
+          <code class="prov__eppath">{{ ep.path }}</code>
+          <span class="prov__epdesc">{{ ep.desc }}</span>
+        </div>
+      </div>
+
+      <!-- Códigos de respuesta -->
+      <p class="prov__lbl">Códigos de respuesta</p>
+      <ul class="prov__codes">
+        <li>
+          <code>200</code> / <code>201</code> — OK (201 = creado; 200 = reconciliado/consulta).
+        </li>
+        <li><code>401</code> — key inválida o ausente.</li>
+        <li><code>404</code> — el buzón no existe.</li>
+        <li><code>409</code> — conflicto: ya existe, o el email ya es alias de otro buzón.</li>
+        <li>
+          <code>502</code> — falló el servidor de correo (los escritos son atómicos → reintentar es
+          seguro).
+        </li>
+        <li><code>503</code> — el provisioning de buzones está apagado en este servidor.</li>
+      </ul>
+
+      <!-- Ejemplos -->
       <p class="prov__lbl">
-        Crear un buzón (si omitís <code>password</code>, la respuesta trae una generada):
+        Sincronizar / reconciliar (importar los que falten + detectar huérfanos)
+      </p>
+      <pre class="prov__code">
+curl -X POST {{ baseUrl }}/api/provision/reconcile \
+  -H "X-Provision-Key: &lt;TU_KEY&gt;"
+# → {"serverTotal":34,"alreadyTracked":34,"imported":0,"importedEmails":[],"orphans":[]}</pre
+      >
+
+      <p class="prov__lbl">Listar buzones (paginado + búsqueda)</p>
+      <pre class="prov__code">
+curl "{{ baseUrl }}/api/provision/mailboxes?page=1&amp;pageSize=50&amp;search=juan" \
+  -H "X-Provision-Key: &lt;TU_KEY&gt;"</pre
+      >
+
+      <p class="prov__lbl">
+        Crear un buzón (si omitís <code>password</code>, la respuesta trae una generada; con
+        <code>Idempotency-Key</code> el reintento es seguro)
       </p>
       <pre class="prov__code">
 curl -X POST {{ baseUrl }}/api/provision/mailboxes \
   -H "X-Provision-Key: &lt;TU_KEY&gt;" \
   -H "Content-Type: application/json" \
-  -d '{"email":"nuevo@tudominio.com","displayName":"Nuevo"}'</pre
+  -H "Idempotency-Key: crea-juan-001" \
+  -d '{"email":"juan@tudominio.com","displayName":"Juan","quotaBytes":0}'</pre
       >
-      <p class="prov__lbl">Eliminar un buzón (revoca el acceso IMAP/SMTP y borra la cuenta):</p>
+
+      <p class="prov__lbl">Consultar un buzón</p>
       <pre class="prov__code">
-curl -X DELETE {{ baseUrl }}/api/provision/mailboxes/nuevo%40tudominio.com \
+curl {{ baseUrl }}/api/provision/mailboxes/juan%40tudominio.com \
   -H "X-Provision-Key: &lt;TU_KEY&gt;"</pre
       >
-      <p class="prov__lbl">Consultar si existe:</p>
+
+      <p class="prov__lbl">Editar: nombre, cuota, alias, suspender/reactivar</p>
       <pre class="prov__code">
-curl {{ baseUrl }}/api/provision/mailboxes/nuevo%40tudominio.com \
+curl -X PATCH {{ baseUrl }}/api/provision/mailboxes/juan%40tudominio.com \
+  -H "X-Provision-Key: &lt;TU_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"displayName":"Juan Pérez","aliases":["ventas@tudominio.com"],"active":false}'</pre
+      >
+
+      <p class="prov__lbl">Fijar o resetear la contraseña</p>
+      <pre class="prov__code">
+curl -X PUT {{ baseUrl }}/api/provision/mailboxes/juan%40tudominio.com/password \
+  -H "X-Provision-Key: &lt;TU_KEY&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"password":"&lt;UNA_CLAVE_FUERTE&gt;"}'
+
+curl -X POST {{ baseUrl }}/api/provision/mailboxes/juan%40tudominio.com/reset-password \
+  -H "X-Provision-Key: &lt;TU_KEY&gt;"
+# → {"email":"juan@tudominio.com","password":"&lt;generada-una-vez&gt;"}</pre
+      >
+
+      <p class="prov__lbl">Eliminar un buzón (revoca IMAP/SMTP y borra la cuenta)</p>
+      <pre class="prov__code">
+curl -X DELETE {{ baseUrl }}/api/provision/mailboxes/juan%40tudominio.com \
   -H "X-Provision-Key: &lt;TU_KEY&gt;"</pre
       >
     </div>
@@ -361,5 +484,80 @@ curl {{ baseUrl }}/api/provision/mailboxes/nuevo%40tudominio.com \
 .btn--sm {
   padding: 4px 10px;
   font-size: 12px;
+}
+/* Tabla de endpoints de la API */
+.prov__eptable {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  overflow: hidden;
+  margin: 10px 0 6px;
+}
+.prov__eprow {
+  display: grid;
+  grid-template-columns: 68px minmax(200px, auto) 1fr;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border, #e5e7eb);
+  font-size: 12.5px;
+}
+.prov__eprow:last-child {
+  border-bottom: none;
+}
+.prov__method {
+  font-weight: 700;
+  font-size: 11px;
+  text-align: center;
+  padding: 3px 0;
+  border-radius: 5px;
+  letter-spacing: 0.02em;
+}
+.prov__method--get {
+  background: #d1fae5;
+  color: #065f46;
+}
+.prov__method--post {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.prov__method--put,
+.prov__method--patch {
+  background: #fef3c7;
+  color: #92400e;
+}
+.prov__method--delete {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.prov__eppath {
+  font-family: monospace;
+  font-size: 12px;
+  color: var(--text-1, #111827);
+  word-break: break-all;
+  align-self: center;
+}
+.prov__epdesc {
+  color: var(--text-muted, #6b7280);
+  line-height: 1.45;
+}
+.prov__codes {
+  margin: 4px 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  color: var(--text-muted, #6b7280);
+  line-height: 1.7;
+}
+.prov__codes code {
+  font-family: monospace;
+}
+@media (max-width: 640px) {
+  .prov__eprow {
+    grid-template-columns: 60px 1fr;
+  }
+  .prov__epdesc {
+    grid-column: 1 / -1;
+  }
 }
 </style>
