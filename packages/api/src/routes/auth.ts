@@ -95,11 +95,18 @@ function rateMax(envVar: string, fallback: number): number {
 }
 
 export default function authRoutes(fastify: FastifyInstance) {
-  // Límites configurables por env: en prod los defaults estrictos (10 login / 30 refresh por
-  // minuto) se mantienen; el harness E2E (suite serial desde una sola IP) los eleva para no
-  // chocar el techo. Ver el límite global en app.ts (RATE_LIMIT_MAX).
-  const loginMax = rateMax('AUTH_LOGIN_RATE_MAX', 10);
-  const refreshMax = rateMax('AUTH_REFRESH_RATE_MAX', 30);
+  // Límites por IP configurables por env. CLAVE: el limitador keyea por `request.ip` (IP real vía
+  // trustProxy), y en el modelo self-hosted per-tenant de Bifrost una empresa entera comparte UNA IP
+  // pública de oficina (NAT). Los defaults históricos (10 login / 30 refresh por minuto) asumían
+  // 1 IP = 1 usuario y estrangulaban a toda la oficina: la entrada matinal de ~15 personas + los
+  // reintentos del SPA + el refresh de tokens superaban 10 logins/min desde esa única IP → 429 para
+  // TODOS (outage real en cleverty). Subimos a 100 login / 600 refresh por minuto por IP: holgado
+  // para una PYME (~50) tras un NAT, y sigue acotando la fuerza bruta (el login exige credenciales
+  // IMAP reales; el fail2ban del mailserver sólo ve la IP del contenedor API, así que ESTE límite
+  // por-IP-real es la defensa efectiva). El operador puede endurecerlo por env si lo necesita. El
+  // harness E2E (suite serial desde una sola IP) los eleva aún más. Global en app.ts (RATE_LIMIT_MAX).
+  const loginMax = rateMax('AUTH_LOGIN_RATE_MAX', 100);
+  const refreshMax = rateMax('AUTH_REFRESH_RATE_MAX', 600);
 
   fastify.post<{ Body: LoginRequest; Reply: LoginResponse }>(
     '/login',
