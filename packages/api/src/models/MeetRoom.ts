@@ -22,6 +22,12 @@ export interface IMeetRoom extends Document {
   allowExternalOverride?: boolean;
   /** per_event: `endAt + 30m`. La expiración se hace cumplir pasivamente (janitor + empty_timeout). */
   expiresAt?: Date;
+  /**
+   * Instante desde el que la sala tiene UN SOLO participante (la marca el janitor; `$unset` en cuanto
+   * vuelve a haber 2+ o el cliente confirma "sigo acá"). Es el reloj del auto-cierre por inactividad:
+   * `empty_timeout` de LiveKit NO cubre este caso porque la sala no está vacía, tiene 1 conectado.
+   */
+  soloSince?: Date;
   /** GC largo opcional (TTL index): purga la fila mucho después de expirar. */
   purgeAt?: Date;
   createdAt: Date;
@@ -42,6 +48,7 @@ const MeetRoomSchema = new Schema<IMeetRoom>(
     allowExternalOverride: { type: Boolean },
     expiresAt: { type: Date },
     purgeAt: { type: Date },
+    soloSince: { type: Date },
   },
   { timestamps: true }
 );

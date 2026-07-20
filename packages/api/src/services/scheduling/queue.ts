@@ -23,7 +23,8 @@ export type SchedulingJobName =
   | 'send-event-invite'
   | 'gcal-poll'
   | 'gcal-poll-all'
-  | 'gcal-window-refresh';
+  | 'gcal-window-refresh'
+  | 'meet-janitor';
 
 const isMock = (): boolean => env.REDIS_URL === 'mock';
 
@@ -98,7 +99,30 @@ export async function scheduleGooglePoll(): Promise<void> {
   await q.add(
     'gcal-window-refresh',
     {},
-    { repeat: { every: 86_400_000 }, jobId: 'gcal-window-refresh', removeOnComplete: true, removeOnFail: 50 }
+    {
+      repeat: { every: 86_400_000 },
+      jobId: 'gcal-window-refresh',
+      removeOnComplete: true,
+      removeOnFail: 50,
+    }
+  );
+}
+
+/**
+ * Programa el janitor de salas de Meet (cada 2 min): cierra las salas que quedaron con un solo
+ * participante (pestaña olvidada). No-op en mock/test. Llamar en el boot.
+ *
+ * El intervalo (2m) es mucho más chico que el umbral de cierre (20m) a propósito: el barrido es la
+ * frecuencia de MUESTREO del reloj `soloSince`, no el reloj mismo, así que el cierre cae dentro de los
+ * 20-22m reales. Barrer más seguido sólo agregaría un `listRooms` sin mover el umbral.
+ */
+export async function scheduleMeetJanitor(): Promise<void> {
+  const q = getQueue();
+  if (!q) return;
+  await q.add(
+    'meet-janitor',
+    {},
+    { repeat: { every: 120_000 }, jobId: 'meet-janitor', removeOnComplete: true, removeOnFail: 50 }
   );
 }
 

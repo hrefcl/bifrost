@@ -882,6 +882,11 @@ export default {
       shareScreen: 'Share screen',
       copyLink: 'Copy link',
       leave: 'Leave',
+      idleTitle: 'Are you still there?',
+      idleBody:
+        "You're the only one in this meeting. It will close automatically in {countdown} so the room isn't left open.",
+      idleStay: 'Stay in the call',
+      idleClosed: 'The meeting closed because you were alone and there was no activity.',
     },
   },
   pwa: {

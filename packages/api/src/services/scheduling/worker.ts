@@ -4,6 +4,7 @@ import { sendEventInvite } from './event-email.js';
 import { runReconcile } from './reconciler.js';
 import { syncEventToGoogle } from '../google/sync.js';
 import { pollUserCalendar, enqueueGooglePolls } from '../google/poll.js';
+import { runMeetJanitor } from '../meet/janitor.js';
 
 /**
  * Procesador de la cola de agenda — despacha por `job.name` (review B HIGH de Fase 3.0: el worker debe
@@ -47,6 +48,16 @@ export function schedulingProcessor(job: Job): Promise<void> {
     case 'gcal-window-refresh':
       // Fan-out repetible diario: gcal-poll FULL por usuario (renueva la ventana rolling).
       return enqueueGooglePolls(true).then(() => undefined);
+    case 'meet-janitor':
+      // Red de seguridad de las videollamadas: cierra salas con un solo participante colgado (pestaña
+      // olvidada). Se loguea sólo si cerró algo — es señal operativa, no ruido de cada barrido.
+      return runMeetJanitor().then((r) => {
+        if (r.closed > 0) {
+          console.warn(
+            `[meet] janitor cerró ${String(r.closed)} sala(s) inactiva(s) de ${String(r.seen)} viva(s)`
+          );
+        }
+      });
     case 'reconcile':
       // Observabilidad (auto-auditoría): el reconciler descartaba sus conteos. Si reparó algo, es señal
       // operativa de crashes/races entre Booking↔CalendarEvent — se loguea para no dejarlo invisible.
