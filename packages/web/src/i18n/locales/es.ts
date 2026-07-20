@@ -894,6 +894,11 @@ export default {
       shareScreen: 'Compartir pantalla',
       copyLink: 'Copiar enlace',
       leave: 'Salir',
+      idleTitle: '¿Sigues ahí?',
+      idleBody:
+        'Eres la única persona en la reunión. Se cerrará automáticamente en {countdown} para no dejar la sala abierta.',
+      idleStay: 'Seguir en la llamada',
+      idleClosed: 'La reunión se cerró porque quedaste solo y no hubo actividad.',
     },
   },
   pwa: {

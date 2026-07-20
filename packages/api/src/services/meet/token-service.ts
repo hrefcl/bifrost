@@ -311,7 +311,7 @@ export function clampMaxParticipants(
   return Math.max(2, Math.min(roomMax, settings.maxParticipants));
 }
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+export function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const t = setTimeout(() => {
       reject(new Error('timeout'));

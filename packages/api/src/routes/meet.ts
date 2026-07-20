@@ -23,6 +23,7 @@ import {
   LivekitCredsError,
   type MeetRole,
 } from '../services/meet/token-service.js';
+import { markMeetRoomAlive } from '../services/meet/janitor.js';
 import { isSafeS3Endpoint } from '../services/storage/s3.js';
 import { requireAdmin } from '../lib/authz.js';
 import { counters } from '../lib/metrics.js';
@@ -353,6 +354,39 @@ export default function meetRoutes(fastify: FastifyInstance) {
       const room = await MeetRoom.findOne({ slug: parsed.data.slug, status: 'active' });
       if (!room) return notFound(reply);
       return issueForRoom(request, reply, settings, room, 'external', body.displayName);
+    }
+  );
+
+  /**
+   * "Sigo acá": reinicia el reloj de inactividad del janitor. Lo pega el cliente cuando el usuario
+   * responde al aviso de "quedaste solo en la reunión" — sin esto, el barrido del servidor cortaría a
+   * los 20m a alguien que está esperando a un participante que llega tarde.
+   *
+   * Público (los invitados externos también deben poder confirmar) y 204 SIEMPRE, incluso con slug
+   * inválido o sala inexistente: igual que el resto de los endpoints públicos, no filtra qué salas
+   * existen. Que alguien con el slug pueda mantener vivo el reloj del servidor no agrega poder: con ese
+   * mismo slug puede unirse a la sala, y el corte de 15m del cliente sigue corriendo del lado del
+   * participante real.
+   */
+  fastify.post(
+    '/public/:slug/still-here',
+    {
+      config: {
+        requiresAuth: false,
+        rateLimit: {
+          max: 30,
+          timeWindow: '1 minute',
+          keyGenerator: (req) => {
+            const slug = (req.params as { slug?: string }).slug ?? '';
+            return `meet-alive|${req.ip}|${slug}`;
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      const parsed = slugParam.safeParse(request.params);
+      if (parsed.success) await markMeetRoomAlive(parsed.data.slug);
+      return reply.code(204).send();
     }
   );
 }

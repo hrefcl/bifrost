@@ -60,6 +60,74 @@ let manualCam = false;
 
 const participantCount = computed(() => tiles.value.length);
 
+/**
+ * Auto-cierre por inactividad (estilo Google Meet). Si quedás SOLO en la sala, a los 13m aparece el
+ * aviso "¿seguís ahí?" con cuenta regresiva y a los 15m nos desconectamos solos.
+ *
+ * Por qué existe: una pestaña olvidada mantiene un participante conectado para siempre — la sala nunca
+ * se vacía, así que el `empty_timeout` de LiveKit (que sólo cuenta con CERO participantes) no dispara y
+ * el media server sigue gastando CPU/ancho de banda. Pasó de verdad: una sala quedó viva dos días.
+ *
+ * El reloj se mide con deltas de `Date.now()`, NO contando ticks: los timers de una pestaña en segundo
+ * plano se estrangulan a ~1/min, así que contar ticks estiraría los 15m a horas. Con deltas, el tick
+ * lento sólo afecta la suavidad de la cuenta regresiva, no el umbral.
+ *
+ * Contra la pestaña con el JS del todo congelado no hay nada que hacer desde acá: para eso está el
+ * janitor del servidor (20m), que corta aunque este código nunca llegue a correr.
+ */
+const IDLE_PROMPT_MS = 13 * 60 * 1000;
+const IDLE_KICK_MS = 15 * 60 * 1000;
+
+const idlePromptOpen = ref(false);
+const idleSecondsLeft = ref(0);
+const leftReason = ref<'manual' | 'idle'>('manual');
+let aloneSince: number | null = null;
+let idleTicker: ReturnType<typeof setInterval> | null = null;
+
+function resetIdle() {
+  aloneSince = null;
+  idlePromptOpen.value = false;
+  idleSecondsLeft.value = 0;
+}
+
+function evaluateIdle() {
+  // Sólo contamos con la sala realmente conectada: durante 'reconnecting' la lista de remotos está
+  // desactualizada y podríamos echar a alguien por un blip de red. Conservador a propósito.
+  if (status.value !== 'connected') {
+    resetIdle();
+    return;
+  }
+  const remotes = room.value?.remoteParticipants.size ?? 0;
+  if (remotes > 0) {
+    resetIdle(); // llegó alguien → el reloj se reinicia (y el aviso se va solo)
+    return;
+  }
+  const now = Date.now();
+  aloneSince ??= now;
+  const alone = now - aloneSince;
+  if (alone >= IDLE_KICK_MS) {
+    leave('idle');
+    return;
+  }
+  if (alone >= IDLE_PROMPT_MS) {
+    idlePromptOpen.value = true;
+    idleSecondsLeft.value = Math.max(0, Math.ceil((IDLE_KICK_MS - alone) / 1000));
+  }
+}
+
+const idleCountdown = computed(() => {
+  const s = idleSecondsLeft.value;
+  return `${String(Math.floor(s / 60))}:${String(s % 60).padStart(2, '0')}`;
+});
+
+/** "Seguir en la llamada": reinicia el reloj local Y el del janitor del servidor. */
+function stayInCall() {
+  resetIdle();
+  aloneSince = Date.now();
+  // Fire-and-forget: si falla, el peor caso es que el servidor corte a los 20m y el usuario reingrese.
+  void api.post(`/meet/public/${props.slug}/still-here`).catch(() => undefined);
+}
+
 /** Marca un track como NO-reactivo (review C-M3): evitar que Vue lo envuelva en un Proxy (anti-patrón LiveKit). */
 function raw<T>(track: T | null | undefined): T | null {
   return track ? markRaw(track) : null;
@@ -310,7 +378,9 @@ async function copyLink() {
   }
 }
 
-function leave() {
+function leave(reason: 'manual' | 'idle' = 'manual') {
+  leftReason.value = reason;
+  resetIdle();
   status.value = 'left';
   // Invalidar cualquier publishLocalMedia pendiente (review B-MED): sin esto, un publish colgado podía
   // resolver DESPUÉS de salir (staleGen=false) y hacer refresh()/tocar una Room ya cerrada.
@@ -319,12 +389,19 @@ function leave() {
 }
 
 function rejoin() {
+  resetIdle(); // el reloj de inactividad arranca de cero en la nueva sesión
+  leftReason.value = 'manual';
   void connect();
 }
 
-onMounted(connect);
+onMounted(() => {
+  void connect();
+  idleTicker = setInterval(evaluateIdle, 1000);
+});
 onBeforeUnmount(() => {
   disposed = true; // corta cualquier connect en vuelo y evita publicar tras desmontar (review B-HIGH)
+  if (idleTicker) clearInterval(idleTicker);
+  idleTicker = null;
   void teardownRoom();
 });
 </script>
@@ -355,7 +432,7 @@ onBeforeUnmount(() => {
       v-else-if="status === 'left'"
       class="flex-1 flex flex-col items-center justify-center gap-3 text-neutral-400"
     >
-      <p>{{ t('meet.call.youLeft') }}</p>
+      <p>{{ leftReason === 'idle' ? t('meet.call.idleClosed') : t('meet.call.youLeft') }}</p>
       <button
         type="button"
         class="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white"
@@ -448,9 +525,33 @@ onBeforeUnmount(() => {
           <AppIcon name="users" :size="16" />
           <span>{{ participantCount }}</span>
         </div>
-        <button type="button" class="ctl ctl-leave" :title="t('meet.call.leave')" @click="leave">
+        <button type="button" class="ctl ctl-leave" :title="t('meet.call.leave')" @click="leave()">
           <AppIcon name="phone" :size="22" />
         </button>
+      </div>
+
+      <!-- Aviso de inactividad: quedaste solo en la sala y la llamada se va a cerrar sola. -->
+      <div v-if="idlePromptOpen" class="idle-backdrop">
+        <div
+          class="idle-card"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="idle-title"
+          aria-describedby="idle-body"
+        >
+          <h2 id="idle-title" class="idle-title">{{ t('meet.call.idleTitle') }}</h2>
+          <p id="idle-body" class="idle-body">
+            {{ t('meet.call.idleBody', { countdown: idleCountdown }) }}
+          </p>
+          <div class="idle-actions">
+            <button type="button" class="idle-btn idle-btn-ghost" @click="leave()">
+              {{ t('meet.call.leave') }}
+            </button>
+            <button type="button" class="idle-btn idle-btn-primary" @click="stayInCall">
+              {{ t('meet.call.idleStay') }}
+            </button>
+          </div>
+        </div>
       </div>
     </template>
   </div>
@@ -510,6 +611,63 @@ onBeforeUnmount(() => {
 .ctl-leave:hover {
   background: #f2534a;
 }
+/* Aviso de inactividad: modal centrado sobre la llamada, mismo lenguaje visual que Meet. */
+.idle-backdrop {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.6);
+  padding: 16px;
+}
+.idle-card {
+  background: #202124;
+  color: #e8eaed;
+  border-radius: 16px;
+  padding: 24px;
+  max-width: 22rem;
+  width: 100%;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+.idle-title {
+  font-size: 1.125rem;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.idle-body {
+  font-size: 0.9rem;
+  color: rgba(232, 234, 237, 0.75);
+  margin-bottom: 20px;
+}
+.idle-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+.idle-btn {
+  border: none;
+  border-radius: 9999px;
+  padding: 10px 20px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.idle-btn-ghost {
+  background: transparent;
+  color: #8ab4f8;
+}
+.idle-btn-ghost:hover {
+  background: rgba(138, 180, 248, 0.12);
+}
+.idle-btn-primary {
+  background: #8ab4f8;
+  color: #202124;
+}
+.idle-btn-primary:hover {
+  background: #a6c8fb;
+}
+
 /* Contador de participantes: sutil, con icono duotone. */
 .ctl-count {
   display: inline-flex;

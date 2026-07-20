@@ -14,6 +14,7 @@ import {
   closeScheduling,
   scheduleReconciler,
   scheduleGooglePoll,
+  scheduleMeetJanitor,
 } from './services/scheduling/queue.js';
 import { schedulingProcessor } from './services/scheduling/worker.js';
 
@@ -80,6 +81,11 @@ async function main() {
   });
   // Poll bidireccional de Google Calendar (import Google→Bifrost). No-op si la feature está apagada.
   await scheduleGooglePoll().catch((err: unknown) => {
+    app.log.error(err);
+  });
+  // Janitor de Meet: cierra salas con un solo participante colgado (pestaña olvidada). No-op si Meet
+  // está apagado — el propio job chequea `meetEnabled` en cada corrida.
+  await scheduleMeetJanitor().catch((err: unknown) => {
     app.log.error(err);
   });
 
