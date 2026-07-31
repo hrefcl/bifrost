@@ -143,6 +143,9 @@ export default {
     errLoad: 'Failed to load composer',
     errSave: 'Failed to save draft',
     errSend: 'Failed to send email',
+    errTooLarge:
+      'The email is too large to send (because of the attachments). Reduce the file sizes and try again.',
+    errQuota: 'No storage space available. Contact your administrator.',
     errUploadWait: 'Wait for attachments to finish uploading',
     errMax: 'Maximum {n} attachments',
     errAttach: 'Failed to attach: {names}',
