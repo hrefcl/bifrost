@@ -195,6 +195,9 @@ describe('buildUserData (cloud-init)', () => {
     // (frágil). Esto evita replicar el incidente del relay perdido a un nuevo usuario de la CLI.
     expect(s).toContain('config/user-patches.sh');
     expect(s).toContain("postconf -e 'relayhost = [$RELAY]:587'");
+    // El MTA debe aceptar correos del tamaño que la app permite (25 MB de adjunto → ~34 MB en base64):
+    // sin esto Postfix usa su default ~10 MB y "no se envía con adjunto". 40 MB = techo de SES.
+    expect(s).toContain("postconf -e 'message_size_limit = 41943040'");
     // Aplica YA en el contenedor corriendo (sin esperar restart) y flushea la cola atascada.
     expect(s).toContain('user-patches.sh || true');
     expect(s).toContain('postqueue -f');

@@ -5,6 +5,7 @@ import { useEditor, EditorContent } from '@tiptap/vue-3';
 import StarterKit from '@tiptap/starter-kit';
 import Link from '@tiptap/extension-link';
 import Placeholder from '@tiptap/extension-placeholder';
+import axios from 'axios';
 import AppIcon from '@/components/AppIcon.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
@@ -386,6 +387,23 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+/**
+ * Traduce un fallo de envío a un mensaje ACCIONABLE. Antes cualquier error (413 por tamaño, 507 por
+ * cuota, 5xx del MTA…) se colapsaba en un genérico "No se pudo enviar" → el usuario no sabía que el
+ * problema era, casi siempre, el TAMAÑO del adjunto (el MTA rechaza mensajes grandes). Prioriza el
+ * status HTTP conocido y, si no, muestra el `message` real del backend.
+ */
+function extractSendError(e: unknown): string {
+  if (axios.isAxiosError(e)) {
+    const status = e.response?.status;
+    if (status === 413) return t('composer.errTooLarge');
+    if (status === 507) return t('composer.errQuota');
+    const backendMsg = (e.response?.data as { message?: string } | undefined)?.message;
+    if (backendMsg && backendMsg.trim().length > 0) return backendMsg;
+  }
+  return t('composer.errSend');
+}
+
 async function send() {
   if (uploading.value) {
     error.value = t('composer.errUploadWait');
@@ -399,8 +417,8 @@ async function send() {
     await draftStore.updateDraft(draftId.value, composerState());
     await draftStore.sendDraft(draftId.value);
     composer.close();
-  } catch {
-    error.value = t('composer.errSend');
+  } catch (e) {
+    error.value = extractSendError(e);
   } finally {
     sending.value = false;
   }

@@ -398,6 +398,10 @@ umask 077
 {
   echo '#!/bin/bash'
   echo "postconf -e 'relayhost = [$RELAY]:587'"
+  # Tamaño máximo de mensaje: el default de Postfix (~10 MB) rechaza los correos con adjuntos que la app
+  # SÍ permite (25 MB por adjunto → ~34 MB en base64) → "no se envía con adjunto". 40 MB = techo de SES.
+  # Se persiste acá (user-patches corre en cada arranque del contenedor) y se aplica ya vía el exec.
+  echo "postconf -e 'message_size_limit = 41943040'"
   echo "postconf -e 'smtp_sasl_auth_enable = yes'"
   echo "postconf -e 'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd'"
   echo "postconf -e 'smtp_sasl_security_options = noanonymous'"

@@ -71,6 +71,10 @@ services:
       - SSL_DOMAIN=mail.example.com # ← el FQDN cuyo cert busca en acme.json
       - ONE_DIR=1
       - PERMIT_DOCKER=network
+      # Tamaño máximo de mensaje (MIME completo, ya en base64). El default de Postfix (~10 MB) rechazaba
+      # los correos con adjuntos que la app SÍ permite (tope de 25 MB por adjunto → ~34 MB en base64) →
+      # "no se envía con adjunto". 40 MB = techo de SES; deja holgura sobre los 25 MB + inflado base64.
+      - POSTFIX_MESSAGE_SIZE_LIMIT=41943040
     cap_add: [NET_ADMIN, SYS_PTRACE]
     labels:
       # Router "de emisión": sin un router que demande Host(mail.<dominio>), Traefik NO pide ese

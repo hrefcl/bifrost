@@ -143,6 +143,9 @@ export default {
     errLoad: 'No se pudo cargar el editor',
     errSave: 'No se pudo guardar el borrador',
     errSend: 'No se pudo enviar el correo',
+    errTooLarge:
+      'El correo es demasiado grande para enviarse (por los adjuntos). Reduce el tamaño de los archivos e inténtalo de nuevo.',
+    errQuota: 'No hay espacio de almacenamiento disponible. Contacta al administrador.',
     errUploadWait: 'Espera a que terminen de subir los adjuntos',
     errMax: 'Máximo {n} adjuntos',
     errAttach: 'No se pudieron adjuntar: {names}',
