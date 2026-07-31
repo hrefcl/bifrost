@@ -29,6 +29,15 @@
     "eslint-config-prettier": "^9.1.0",
     "@vitest/coverage-v8": "^2.1.8"
   },
+  "pnpm": {
+    "comment": "Overrides de seguridad: fuerzan la versión PARCHEADA de deps transitivas con CVE high, acotadas al MISMO major para no romper el paquete padre (un rango abierto saltaba a major nuevo con exports incompatibles → rompía markdown-it/fastify).",
+    "overrides": {
+      "fast-uri@>=3.0.0 <=3.1.3": ">=3.1.4 <4",
+      "linkify-it@<=5.0.1": ">=5.0.2 <6",
+      "find-my-way@<=9.6.0": ">=9.7.0 <10",
+      "postcss@<=8.5.17": ">=8.5.18 <9"
+    }
+  },
   "simple-git-hooks": {
     "pre-commit": "pnpm lint-staged"
   },
