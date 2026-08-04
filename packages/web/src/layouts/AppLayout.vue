@@ -234,8 +234,8 @@ async function onLogout() {
 
     <main class="main"><slot /></main>
 
-    <!-- Composer flotante estilo Gmail: overlay sobre cualquier vista, minimizable. -->
-    <ComposerWindow v-if="composer.open" :key="composer.instanceKey" />
+    <!-- Composers flotantes estilo Gmail: varias ventanas apiladas abajo-derecha, cada una minimizable. -->
+    <ComposerWindow v-for="(w, i) in composer.windows" :key="w.id" :win="w" :index="i" />
   </div>
 </template>
 

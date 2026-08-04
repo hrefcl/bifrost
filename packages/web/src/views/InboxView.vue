@@ -9,6 +9,7 @@ import ThreadMessage from '@/components/ThreadMessage.vue';
 import { api } from '@/lib/http';
 import { useUiStore } from '@/stores/ui';
 import { useComposerStore } from '@/stores/composer';
+import { useDraftStore } from '@/stores/drafts';
 import { colorFor } from '@/lib/people';
 import { buildEmailPrintHtml } from '@/lib/print-email';
 import type {
@@ -23,6 +24,7 @@ import type {
 
 const ui = useUiStore();
 const composer = useComposerStore();
+const draftStore = useDraftStore();
 const { t, locale } = useI18n();
 
 const accounts = ref<Account[]>([]);
@@ -70,14 +72,16 @@ interface StdItem {
   key: string;
   icon: IconName;
   special?: SpecialUse;
-  virtual?: 'starred' | 'snoozed';
+  virtual?: 'starred' | 'snoozed' | 'drafts';
 }
 const STANDARD: StdItem[] = [
   { key: 'inbox', icon: 'inbox', special: 'inbox' },
   { key: 'starred', icon: 'star', virtual: 'starred' },
   { key: 'snoozed', icon: 'clock', virtual: 'snoozed' },
   { key: 'sent', icon: 'send', special: 'sent' },
-  { key: 'drafts', icon: 'file', special: 'drafts' },
+  // Borradores = vista VIRTUAL sobre los drafts de Mongo (donde el composer los guarda), NO la carpeta
+  // IMAP: el composer nunca hacía APPEND a IMAP, así que la carpeta salía vacía ("no se guardan").
+  { key: 'drafts', icon: 'file', virtual: 'drafts' },
   { key: 'archive', icon: 'archive', special: 'archive' },
   { key: 'spam', icon: 'shield', special: 'junk' },
   { key: 'trash', icon: 'trash', special: 'trash' },
@@ -94,12 +98,48 @@ const STD_LABEL: Record<string, string> = {
 };
 
 const selectedKey = ref('inbox');
-const virtualView = ref<'starred' | 'snoozed' | null>(null);
+const virtualView = ref<'starred' | 'snoozed' | 'drafts' | null>(null);
+
+/** Filas de la vista Borradores (drafts de Mongo). El composer los guarda/edita; aquí se listan. */
+const draftRows = computed(() => draftStore.drafts);
+function draftRecipients(d: (typeof draftStore.drafts)[number]): string {
+  const names = d.to.map((a) => a.name ?? a.address).filter(Boolean);
+  return names.length > 0 ? names.join(', ') : t('composer.to');
+}
+function draftPreview(d: (typeof draftStore.drafts)[number]): string {
+  return (d.bodyHtml ?? '')
+    .replace(/<[^>]*>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 140);
+}
+function openDraft(id: string): void {
+  composer.openComposer({ draftId: id });
+}
+async function deleteDraftRow(id: string, ev: Event): Promise<void> {
+  ev.stopPropagation();
+  try {
+    await draftStore.deleteDraft(id);
+  } catch {
+    /* best-effort */
+  }
+  await draftStore.fetchDrafts().catch(() => undefined);
+}
+// Al cerrarse un composer (una ventana desaparece), refrescar la lista si estamos en Borradores → el
+// borrador recién guardado/actualizado aparece al instante (sin recargar la carpeta a mano).
+watch(
+  () => composer.windows.length,
+  (n, prev) => {
+    if (n < prev && virtualView.value === 'drafts')
+      void draftStore.fetchDrafts().catch(() => undefined);
+  }
+);
 
 function folderForSpecial(special?: SpecialUse): Folder | undefined {
   return special ? folders.value.find((f) => f.specialUse === special) : undefined;
 }
 function stdCount(item: StdItem): number {
+  if (item.virtual === 'drafts') return draftStore.drafts.length;
   if (item.virtual) return 0;
   return folderForSpecial(item.special)?.unseenMessages ?? 0;
 }
@@ -473,6 +513,19 @@ async function selectStandard(item: StdItem) {
         loadToken++; // invalida cualquier carga en vuelo antes de vaciar
         emails.value = [];
         loading.value = false; // no dejar el spinner pegado de una carga vieja
+      }
+    } else if (item.virtual === 'drafts') {
+      // Borradores: se listan los drafts de Mongo (donde el composer guarda), no una carpeta IMAP.
+      loadToken++;
+      emails.value = [];
+      loading.value = true;
+      error.value = '';
+      try {
+        await draftStore.fetchDrafts();
+      } catch {
+        error.value = t('errors.emails');
+      } finally {
+        loading.value = false;
       }
     } else {
       // Pospuestos: los emails snoozed del usuario (reaparecen en su carpeta al vencer).
@@ -967,7 +1020,7 @@ function onKey(e: KeyboardEvent) {
   const el = e.target as HTMLElement | null;
   const typing =
     el?.tagName === 'INPUT' || el?.tagName === 'TEXTAREA' || el?.isContentEditable === true;
-  if (typing || e.metaKey || e.ctrlKey || e.altKey || composer.open) return;
+  if (typing || e.metaKey || e.ctrlKey || e.altKey || composer.windows.length > 0) return;
   if (e.key === 'c') compose();
   else if (e.key === '/') {
     e.preventDefault();
@@ -1023,6 +1076,7 @@ async function pollNewMail() {
 
 onMounted(() => {
   void loadAccountsAndFolders();
+  void draftStore.fetchDrafts().catch(() => undefined); // contador de Borradores en el sidebar
   window.addEventListener('keydown', onKey);
   window.addEventListener('click', closeMenus);
   pollTimer = setInterval(() => void pollNewMail(), POLL_MS);
@@ -1180,6 +1234,31 @@ onBeforeUnmount(() => {
         <div class="rows">
           <p v-if="error" class="msg error">{{ error }}</p>
           <p v-else-if="loading || searching" class="msg">{{ t('common.loading') }}</p>
+          <!-- Borradores: lista de drafts de Mongo (click reabre en el composer). -->
+          <template v-else-if="virtualView === 'drafts'">
+            <div v-if="draftRows.length === 0" class="empty">
+              <AppIcon name="file" :size="48" :stroke-width="1.3" />
+              <div>{{ t('list.emptyDrafts') }}</div>
+            </div>
+            <div v-for="d in draftRows" v-else :key="d.id" class="row" @click="openDraft(d.id)">
+              <AppAvatar :name="draftRecipients(d)" :size="30" />
+              <div class="row-from">{{ draftRecipients(d) }}</div>
+              <div class="row-main">
+                <span class="row-subject">{{ d.subject || t('thread.noSubject') }}</span>
+                <span v-if="draftPreview(d)" class="row-preview"> — {{ draftPreview(d) }}</span>
+              </div>
+              <AppIcon v-if="d.attachments.length" name="paperclip" :size="15" class="row-clip" />
+              <div class="row-end">
+                <button
+                  class="icon-btn row-hover"
+                  :title="t('composer.discard')"
+                  @click="deleteDraftRow(d.id, $event)"
+                >
+                  <AppIcon name="trash" :size="17" />
+                </button>
+              </div>
+            </div>
+          </template>
           <div v-else-if="displayedEmails.length === 0" class="empty">
             <AppIcon name="inbox" :size="48" :stroke-width="1.3" />
             <div>{{ t('list.empty') }}</div>
