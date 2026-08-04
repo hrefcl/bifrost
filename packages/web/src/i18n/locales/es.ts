@@ -187,6 +187,8 @@ export default {
     forward: 'Reenviar',
     star: 'Destacar',
     to: 'para {name}',
+    toPrefix: 'Para: ',
+    noRecipient: '(sin destinatario)',
     me: 'mí',
     noSubject: '(sin asunto)',
     attachments: 'sin adjuntos | {n} adjunto | {n} adjuntos',

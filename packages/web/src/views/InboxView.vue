@@ -912,6 +912,26 @@ function forward() {
 
 const senderName = (e: Email) => (e.from.name?.trim() ? e.from.name : e.from.address);
 
+// En ENVIADOS (y Borradores, que es aparte) la lista debe mostrar a QUIÉN se envió, no el propio
+// remitente (que siempre soy yo) — como Gmail. Para el resto de carpetas se muestra el remitente.
+const isSentView = computed(() => {
+  if (inSearch.value) return false; // en búsqueda global mostramos siempre el remitente
+  if (selectedKey.value === 'sent') return true;
+  const f = folders.value.find((x) => x.id === selectedFolderId.value);
+  return f?.specialUse === 'sent';
+});
+/** Nombre a mostrar en la fila: destinatario(s) en Enviados, remitente en el resto. */
+function rowDisplayName(e: Email): string {
+  if (!isSentView.value) return senderName(e);
+  const names = e.to.map((a) => (a.name?.trim() ? a.name : a.address)).filter(Boolean);
+  if (names.length === 0) return t('thread.noRecipient');
+  return names.length === 1 ? names[0] : `${names[0]} +${String(names.length - 1)}`;
+}
+/** Address para el avatar de la fila: primer destinatario en Enviados, remitente en el resto. */
+function rowAvatarParty(e: Email): { name?: string; address: string } {
+  return isSentView.value ? (e.to[0] ?? e.from) : e.from;
+}
+
 /** Imprime el email abierto (estilo Gmail): abre una ventana con el mensaje y lanza el diálogo de
  *  impresión. Cabeceras escapadas; el cuerpo usa el sanitizedHtml ya saneado por el backend. */
 function printEmail() {
@@ -1284,12 +1304,13 @@ onBeforeUnmount(() => {
               />
             </button>
             <AppAvatar
-              :name="thread.latest.from.name"
-              :email="thread.latest.from.address"
+              :name="rowAvatarParty(thread.latest).name"
+              :email="rowAvatarParty(thread.latest).address"
               :size="30"
             />
             <div class="row-from">
-              {{ senderName(thread.latest) }}
+              <span v-if="isSentView" class="row-to-prefix">{{ t('thread.toPrefix') }}</span
+              >{{ rowDisplayName(thread.latest) }}
               <span v-if="thread.count > 1" class="row-count">{{ thread.count }}</span>
             </div>
             <div class="row-main">
@@ -1865,6 +1886,11 @@ onBeforeUnmount(() => {
   font-size: 13.5px;
   font-weight: 500;
   color: var(--text-1);
+}
+/* "Para:" en Enviados: etiqueta tenue delante del destinatario. */
+.row-to-prefix {
+  color: var(--text-3, var(--text-2));
+  font-weight: 400;
 }
 .row-count {
   display: inline-block;
