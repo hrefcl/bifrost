@@ -187,6 +187,8 @@ export default {
     forward: 'Forward',
     star: 'Star',
     to: 'to {name}',
+    toPrefix: 'To: ',
+    noRecipient: '(no recipient)',
     me: 'me',
     noSubject: '(no subject)',
     attachments: 'no attachments | {n} attachment | {n} attachments',
