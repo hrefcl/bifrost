@@ -4,7 +4,7 @@ import { Draft } from '../models/Draft.js';
 import { Account } from '../models/Account.js';
 import { User } from '../models/User.js';
 import { AttachmentBlob } from '../models/AttachmentBlob.js';
-import { sendDraft } from '../services/smtp.js';
+import { sendDraft, mapSmtpError } from '../services/smtp.js';
 import { checkOutboundLimit, maxRecipientsPerMessage } from '../services/outbound-limit.js';
 import { appendToSent, syncFolderHeaders } from '../services/imap.js';
 import { autoSaveContacts } from '../services/contacts.js';
@@ -443,7 +443,9 @@ export default function draftRoutes(fastify: FastifyInstance) {
         { _id: claimed._id },
         { $set: { status: 'failed' }, $unset: { sendingSince: 1 } }
       );
-      throw err;
+      // Mapea el error del SMTP a uno con statusCode útil (413 por tamaño, 502 rechazo, 504 timeout) para
+      // que el usuario vea el MOTIVO real en vez de un "Internal Server Error" opaco (review adjuntos).
+      throw mapSmtpError(err);
     }
   });
 }

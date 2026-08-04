@@ -9,19 +9,29 @@ import axios from 'axios';
 import AppIcon from '@/components/AppIcon.vue';
 import { api } from '@/lib/http';
 import { useDraftStore, type ReplyContext } from '@/stores/drafts';
-import { useComposerStore } from '@/stores/composer';
+import { useComposerStore, type ComposerWindowState } from '@/stores/composer';
 import type { Account, Draft, DraftAttachment, Email, EmailBody } from '@webmail6/shared';
 
 /**
  * Ventana de redacción flotante estilo Gmail (overlay sobre la vista actual, minimizable).
- * Reemplaza la ruta /compose. Lee el contexto (nuevo / borrador / reply / forward) del store.
+ * Cada instancia representa UNA ventana del store multi-composer: su contexto y su estado
+ * minimizado viven en `props.win`; `index` la posiciona apilada abajo-derecha.
  */
+const props = defineProps<{ win: ComposerWindowState; index: number }>();
+
 const draftStore = useDraftStore();
 const composer = useComposerStore();
 const { t, locale } = useI18n();
 
-const ctx = composer.context;
+const ctx = props.win.context;
 const draftId = ref<string | null>(ctx.draftId ?? null);
+
+// Posición apilada: cada ventana se corre a la izquierda por su índice (Gmail apila abajo-derecha). El
+// "slot" usa el ancho de la ventana COMPLETA (560+gap) para minimizadas Y abiertas — así una minimizada
+// (más angosta) no se solapa con una completa de otro índice; sólo deja hueco a su derecha.
+const stackStyle = computed(() => ({
+  right: `calc(24px + ${String(props.index)} * (560px + 12px))`,
+}));
 const accounts = ref<Account[]>([]);
 const error = ref('');
 const sending = ref(false);
@@ -332,10 +342,9 @@ async function doSaveDraft(silent: boolean): Promise<void> {
   }
 }
 
-async function onFileSelect(e: Event) {
-  const input = e.target as HTMLInputElement;
-  const files = input.files ? Array.from(input.files) : [];
-  if (files.length === 0) return;
+/** Sube una tanda de archivos (compartido por el input-file y el drag&drop). Autocontenida: nunca lanza. */
+async function uploadFiles(files: File[]) {
+  if (files.length === 0 || uploading.value) return;
   error.value = '';
   uploading.value = true;
   savedStatus.value = t('composer.uploading');
@@ -373,8 +382,32 @@ async function onFileSelect(e: Event) {
   } finally {
     uploading.value = false;
     savedStatus.value = '';
-    if (fileInput.value) fileInput.value.value = '';
   }
+}
+
+function onFileSelect(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const files = input.files ? Array.from(input.files) : [];
+  void uploadFiles(files);
+  if (fileInput.value) fileInput.value.value = ''; // permitir re-seleccionar el MISMO archivo luego
+}
+
+// ---- Drag & drop: arrastrar archivos a la ventana los adjunta (como Gmail) ----
+// Contador enter/leave (no un booleano): al pasar sobre hijos anidados se disparan leave/enter y un
+// booleano parpadearía. `dragActive` sólo es true mientras el cursor está DENTRO con archivos.
+const dragDepth = ref(0);
+const dragActive = computed(() => dragDepth.value > 0);
+function onDragEnter(e: DragEvent) {
+  if (!e.dataTransfer || !Array.from(e.dataTransfer.types).includes('Files')) return;
+  dragDepth.value++;
+}
+function onDragLeave() {
+  if (dragDepth.value > 0) dragDepth.value--;
+}
+function onDrop(e: DragEvent) {
+  dragDepth.value = 0;
+  const files = e.dataTransfer ? Array.from(e.dataTransfer.files) : [];
+  void uploadFiles(files);
 }
 
 function removeAttachment(blobId: string) {
@@ -416,7 +449,7 @@ async function send() {
   try {
     await draftStore.updateDraft(draftId.value, composerState());
     await draftStore.sendDraft(draftId.value);
-    composer.close();
+    composer.close(props.win.id);
   } catch (e) {
     error.value = extractSendError(e);
   } finally {
@@ -431,7 +464,7 @@ async function closeKeep(): Promise<void> {
   if (!uploading.value && dirty.value && hasContent()) {
     await saveDraft();
   }
-  composer.close();
+  composer.close(props.win.id);
 }
 
 /** Descartar (papelera): borra el borrador del servidor y cierra, sin guardar (review B/D). */
@@ -454,7 +487,7 @@ async function discard(): Promise<void> {
       /* best-effort: igual cerramos */
     }
   }
-  composer.close();
+  composer.close(props.win.id);
 }
 
 // beforeunload anti-pérdida (la navegación SPA no aplica: el composer es overlay).
@@ -473,7 +506,12 @@ onBeforeUnmount(() => {
 
 <template>
   <!-- Minimizado: barra compacta abajo-derecha -->
-  <div v-if="composer.minimized" class="cw-min" @click="composer.toggleMinimize()">
+  <div
+    v-if="props.win.minimized"
+    class="cw-min"
+    :style="stackStyle"
+    @click="composer.toggleMinimize(props.win.id)"
+  >
     <span class="cw-min-title">{{ form.subject || windowTitle }}</span>
     <button class="cw-head-btn" :title="t('common.close')" @click.stop="closeKeep()">
       <AppIcon name="x" :size="18" />
@@ -481,13 +519,26 @@ onBeforeUnmount(() => {
   </div>
 
   <!-- Ventana flotante -->
-  <div v-else class="cw">
+  <div
+    v-else
+    class="cw"
+    :style="stackStyle"
+    @dragenter.prevent="onDragEnter"
+    @dragover.prevent
+    @dragleave.prevent="onDragLeave"
+    @drop.prevent="onDrop"
+  >
+    <!-- Overlay de drop: aparece al arrastrar archivos encima -->
+    <div v-if="dragActive" class="cw-drop">
+      <AppIcon name="paperclip" :size="28" />
+      <span>{{ t('composer.dropHere') }}</span>
+    </div>
     <div class="cw-head">
       <span class="cw-title">{{ windowTitle }}</span>
       <button
         class="cw-head-btn"
         :title="t('composer.minimize')"
-        @click="composer.toggleMinimize()"
+        @click="composer.toggleMinimize(props.win.id)"
       >
         <AppIcon name="chevronDown" :size="18" />
       </button>
@@ -708,6 +759,23 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   z-index: 60;
+}
+/* Overlay de drag&drop: cubre la ventana mientras se arrastran archivos encima. */
+.cw-drop {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  border-radius: 12px 12px 0 0;
+  background: color-mix(in srgb, var(--accent, #6d28d9) 12%, var(--surface));
+  border: 2px dashed var(--accent, #6d28d9);
+  color: var(--accent, #6d28d9);
+  font-weight: 600;
+  pointer-events: none;
 }
 .cw-min {
   position: fixed;
