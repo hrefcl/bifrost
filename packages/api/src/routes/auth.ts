@@ -10,6 +10,7 @@ import {
 import { User } from '../models/User.js';
 import { Account } from '../models/Account.js';
 import { resolveAdminAccess } from '../lib/authz.js';
+import { needsProfileCompletion } from '../lib/profile.js';
 import { counters } from '../lib/metrics.js';
 import { env, jwtAccessTtlSeconds } from '../config/env.js';
 import { sanitizeEmailHtml } from '../lib/sanitizeHtml.js';
@@ -205,6 +206,7 @@ export default function authRoutes(fastify: FastifyInstance) {
       phone: user.phone,
       photoUrl: user.photoUrl,
       username: user.username,
+      needsProfileCompletion: needsProfileCompletion(user),
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),

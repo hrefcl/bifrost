@@ -1,6 +1,7 @@
 import { createImapClient } from './mail-transport.js';
 import { User, type IUser } from '../models/User.js';
 import { resolveAdminAccess } from '../lib/authz.js';
+import { needsProfileCompletion } from '../lib/profile.js';
 import { Account, type IAccount } from '../models/Account.js';
 import { redis } from '../config/redis.js';
 import { jwtAccessTtlSeconds } from '../config/env.js';
@@ -283,6 +284,7 @@ export async function toLoginResponse(
       phone: user.phone,
       photoUrl: user.photoUrl,
       username: user.username,
+      needsProfileCompletion: needsProfileCompletion(user),
       preferences: user.preferences,
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),

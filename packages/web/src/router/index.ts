@@ -60,6 +60,13 @@ const router = createRouter({
       name: 'compliance-gate',
       component: () => import('@/views/ComplianceGateView.vue'),
     },
+    {
+      // Gate de perfil: se fuerza al entrar si el nombre está autogenerado o falta el teléfono, para
+      // que las firmas corporativas salgan completas (nombre real + teléfono).
+      path: '/complete-profile',
+      name: 'profile-gate',
+      component: () => import('@/views/ProfileGateView.vue'),
+    },
     // ── Páginas PÚBLICAS de agenda (invitados externos; también accesibles logueado para previsualizar) ──
     {
       path: '/u/:userSlug',
@@ -122,6 +129,15 @@ router.beforeEach((to) => {
       return { name: 'compliance-gate' };
     }
     if (to.name === 'compliance-gate' && !hasBlocking) {
+      return { name: 'inbox' };
+    }
+    // Gate de perfil (DESPUÉS de compliance: compliance manda). Perfil incompleto → forzar la pantalla
+    // de completar datos; una vez completo, no se puede volver a entrar al gate (rebota al inbox).
+    const needsProfile = auth.user?.needsProfileCompletion === true;
+    if (needsProfile && to.name !== 'profile-gate' && to.name !== 'compliance-gate') {
+      return { name: 'profile-gate' };
+    }
+    if (to.name === 'profile-gate' && !needsProfile) {
       return { name: 'inbox' };
     }
   }

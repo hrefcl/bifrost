@@ -123,6 +123,18 @@ export const useAuthStore = defineStore('auth', () => {
     }
   }
 
+  /** Recarga el usuario actual (GET /auth/me) sin tocar el token. Se usa tras completar el perfil
+   *  para refrescar `needsProfileCompletion` y salir del gate. Devuelve false si falla (no desloguea). */
+  async function refreshUser(): Promise<boolean> {
+    try {
+      const { data } = await api.get<User>('/auth/me');
+      user.value = data;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   // Interceptor: si una request da 401 (access token vencido a los 15min), renueva con
   // refresh() (single-flight) y reintenta UNA vez. Sin esto la sesión moría a los 15min
   // pese a tener la cookie de refresh viva.
@@ -162,6 +174,7 @@ export const useAuthStore = defineStore('auth', () => {
     logout,
     refresh,
     restore,
+    refreshUser,
     setSession,
     clearSession,
   };

@@ -61,14 +61,22 @@ async function main(): Promise<void> {
   // 3) Conectar Mongo y levantar la app real.
   await mongoose.connect(process.env.MONGODB_URI);
 
-  // Seed: un usuario admin pre-existente para los flujos de administración E2E.
-  // loginOrRegister hace match por primaryEmail y NO toca `role` → al loguearse con este
-  // email se entra como admin (el resto de usuarios se crean como 'user' al primer login).
+  // Seed: usuarios pre-existentes para los flujos E2E, con PERFIL COMPLETO (nombre real + teléfono).
+  // Sin el teléfono/nombre, el gate de completar-perfil (needsProfileCompletion) los atraparía al entrar
+  // y todos los flujos login→inbox fallarían. loginOrRegister hace match por primaryEmail y NO toca
+  // `role`/`displayName` de un usuario existente ($setOnInsert), así que estos valores se conservan.
   const { User } = await import('../src/models/User.js');
   await User.create({
     primaryEmail: 'admin-e2e@example.com',
     displayName: 'Admin E2E',
+    phone: '+56 9 0000 0001',
     role: 'admin',
+  });
+  await User.create({
+    primaryEmail: 'e2e@example.com',
+    displayName: 'Usuario E2E',
+    phone: '+56 9 0000 0002',
+    role: 'user',
   });
 
   const { buildApp } = await import('../src/app.js');
