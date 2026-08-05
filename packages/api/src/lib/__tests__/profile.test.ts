@@ -28,17 +28,17 @@ describe('needsProfileCompletion', () => {
     ).toBe(true);
   });
 
-  it('nombre real pero SIN teléfono → incompleto', () => {
+  it('nombre real SIN teléfono → COMPLETO (el gate NO dispara por teléfono, decisión de producto)', () => {
     expect(
       needsProfileCompletion({ displayName: 'Francisco Arenas', primaryEmail: 'f.arenas@x.com' })
-    ).toBe(true);
+    ).toBe(false);
     expect(
       needsProfileCompletion({
         displayName: 'Francisco Arenas',
         primaryEmail: 'f.arenas@x.com',
         phone: '  ',
       })
-    ).toBe(true);
+    ).toBe(false);
   });
 
   it('nombre real + teléfono → COMPLETO', () => {
