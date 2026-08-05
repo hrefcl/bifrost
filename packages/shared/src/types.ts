@@ -70,6 +70,8 @@ export interface User {
   photoUrl?: string;
   /** Slug público para la agenda (`/u/:username`). Opcional; el usuario lo define en Ajustes. */
   username?: string;
+  /** Perfil incompleto (nombre autogenerado o sin teléfono) → el webmail fuerza a completarlo al entrar. */
+  needsProfileCompletion?: boolean;
   preferences: UserPreferences;
   createdAt: string;
   updatedAt: string;
