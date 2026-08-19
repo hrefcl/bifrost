@@ -398,10 +398,15 @@ umask 077
 {
   echo '#!/bin/bash'
   echo "postconf -e 'relayhost = [$RELAY]:587'"
-  # Tamaño máximo de mensaje: el default de Postfix (~10 MB) rechaza los correos con adjuntos que la app
-  # SÍ permite (25 MB por adjunto → ~34 MB en base64) → "no se envía con adjunto". 40 MB = techo de SES.
-  # Se persiste acá (user-patches corre en cada arranque del contenedor) y se aplica ya vía el exec.
+  # Tamano maximo de mensaje en DOS capas que deben ir sincronizadas (el compose ya setea la env var
+  # POSTFIX_MESSAGE_SIZE_LIMIT, que docker-mailserver aplica a ambas; esto es defensa por si el compose
+  # de la instalacion quedara sin ella; el default de docker-mailserver es 10 MB en las dos):
+  #   1) Postfix message_size_limit: el ENVIO por SMTP (sin esto, "no se envia con adjunto").
+  #   2) Dovecot quota_max_mail_size: el GUARDADO en Enviados (APPEND IMAP de la copia a Sent). Sin
+  #      esto el correo con adjuntos SI sale pero NO queda en Enviados (bug real en cleverty). 40 MB = SES.
   echo "postconf -e 'message_size_limit = 41943040'"
+  echo "sed -i 's/quota_max_mail_size = .*/quota_max_mail_size = 40M/' /etc/dovecot/conf.d/90-quota.conf 2>/dev/null || true"
+  echo "doveadm reload 2>/dev/null || true"
   echo "postconf -e 'smtp_sasl_auth_enable = yes'"
   echo "postconf -e 'smtp_sasl_password_maps = hash:/etc/postfix/sasl_passwd'"
   echo "postconf -e 'smtp_sasl_security_options = noanonymous'"

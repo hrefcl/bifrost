@@ -198,6 +198,9 @@ describe('buildUserData (cloud-init)', () => {
     // El MTA debe aceptar correos del tamaño que la app permite (25 MB de adjunto → ~34 MB en base64):
     // sin esto Postfix usa su default ~10 MB y "no se envía con adjunto". 40 MB = techo de SES.
     expect(s).toContain("postconf -e 'message_size_limit = 41943040'");
+    // Y Dovecot debe aceptar el mismo tamaño para GUARDAR la copia en Enviados (APPEND IMAP): sin esto
+    // el correo con adjuntos sale pero NO queda en Enviados (bug real). Los dos límites van sincronizados.
+    expect(s).toContain('quota_max_mail_size = 40M');
     // Aplica YA en el contenedor corriendo (sin esperar restart) y flushea la cola atascada.
     expect(s).toContain('user-patches.sh || true');
     expect(s).toContain('postqueue -f');
